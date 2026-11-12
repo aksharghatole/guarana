@@ -69,6 +69,9 @@ struct BuiltinPatch {
     // Applies only with NVIDIA DLSS on at this quality in docked mode, and is not listed in
     // Add-Ons.
     std::optional<Settings::NvidiaDlssQuality> dlss_quality{};
+    // A built-in chosen by a setting instead of the Add-Ons list: applied only while this
+    // returns true, and not listed in Add-Ons.
+    bool (*selected)() = nullptr;
 };
 
 constexpr std::string_view MAX_RESOLUTION_NAME = "Max Resolution (built-in)";
@@ -403,6 +406,41 @@ constexpr std::array FPS_UNLOCK_RECORDS{
     BuiltinPatchRecord{0x3C46B30, CLOTH_DT_ROUTINE_S2, {}, true},
 };
 
+// Text speed (port of NotRexed/Hookshot#402): main+0xAFE140 steps a text pane's letter
+// animation. At 0xAFE1B4, the start of the letters' block, s0 holds the frame time that moves
+// the letters' clock (+0x60 += rate * time) and counts down pauses (+0x58 -= time); the
+// auto-advance timer before it keeps the game's time. The site branches to a cave that scales
+// s0 (s16 is unused in the function), redoes the displaced ldrh and branches back.
+constexpr size_t TEXT_SPEED_SITE = 0xAFE1B4;
+constexpr size_t TEXT_SPEED_CAVE = 0x3C46F00;
+constexpr std::array<u8, 4> TEXT_SPEED_ORIGINAL{0x69, 0xDE, 0x40, 0x79}; // ldrh w9, [x19, #0x6e]
+constexpr std::array<u8, 4> TEXT_SPEED_BRANCH{0x53, 0x23, 0xC5, 0x14};   // b 0x3C46F00
+// ldr s16, scale ; fmul s0, s0, s16 ; ldrh w9, [x19, #0x6e] ; b 0xAFE1B8 ; scale (float)
+#define TEXT_SPEED_CAVE_CODE                                                                       \
+    0x90, 0x00, 0x00, 0x1C, 0x00, 0x08, 0x30, 0x1E, 0x69, 0xDE, 0x40, 0x79, 0xAB, 0xDC, 0x3A, 0x17
+constexpr std::array<u8, 20> TEXT_SPEED_2X_CAVE{TEXT_SPEED_CAVE_CODE, 0x00, 0x00, 0x00, 0x40};
+constexpr std::array<u8, 20> TEXT_SPEED_4X_CAVE{TEXT_SPEED_CAVE_CODE, 0x00, 0x00, 0x80, 0x40};
+// 1e6: a page at once (a frame per pause), like the game's own skip on A.
+constexpr std::array<u8, 20> TEXT_SPEED_INSTANT_CAVE{TEXT_SPEED_CAVE_CODE, 0x00, 0x24, 0x74, 0x49};
+#undef TEXT_SPEED_CAVE_CODE
+constexpr std::array TEXT_SPEED_2X_RECORDS{
+    BuiltinPatchRecord{TEXT_SPEED_SITE, TEXT_SPEED_BRANCH, TEXT_SPEED_ORIGINAL},
+    BuiltinPatchRecord{TEXT_SPEED_CAVE, TEXT_SPEED_2X_CAVE, {}, true},
+};
+constexpr std::array TEXT_SPEED_4X_RECORDS{
+    BuiltinPatchRecord{TEXT_SPEED_SITE, TEXT_SPEED_BRANCH, TEXT_SPEED_ORIGINAL},
+    BuiltinPatchRecord{TEXT_SPEED_CAVE, TEXT_SPEED_4X_CAVE, {}, true},
+};
+constexpr std::array TEXT_SPEED_INSTANT_RECORDS{
+    BuiltinPatchRecord{TEXT_SPEED_SITE, TEXT_SPEED_BRANCH, TEXT_SPEED_ORIGINAL},
+    BuiltinPatchRecord{TEXT_SPEED_CAVE, TEXT_SPEED_INSTANT_CAVE, {}, true},
+};
+
+template <Settings::TextSpeed speed>
+bool TextSpeedSelected() {
+    return Settings::values.text_speed.GetValue() == speed;
+}
+
 constexpr std::array BUILTIN_PATCHES{
     // Ocarina of Time takes its "dynamic resolution disabled" path, so the 3D renders at full scale
     // instead of following the GPU-time controller down to its 480p floor.
@@ -470,6 +508,31 @@ constexpr std::array BUILTIN_PATCHES{
         .build_id = "E0F3CCFAF50065AE4EA01EB5AEB13B1A45DA3348",
         .records = RENDER_ULTRA_RECORDS,
         .dlss_quality = Settings::NvidiaDlssQuality::UltraPerformance,
+    },
+    // Text speed: picked with Settings text_speed (Configure > System), not in Add-Ons.
+    BuiltinPatch{
+        .name = "Text Speed 2x (built-in)",
+        .title_id = 0x0400486024DEC000,
+        .module = "main",
+        .build_id = "E0F3CCFAF50065AE4EA01EB5AEB13B1A45DA3348",
+        .records = TEXT_SPEED_2X_RECORDS,
+        .selected = TextSpeedSelected<Settings::TextSpeed::Double>,
+    },
+    BuiltinPatch{
+        .name = "Text Speed 4x (built-in)",
+        .title_id = 0x0400486024DEC000,
+        .module = "main",
+        .build_id = "E0F3CCFAF50065AE4EA01EB5AEB13B1A45DA3348",
+        .records = TEXT_SPEED_4X_RECORDS,
+        .selected = TextSpeedSelected<Settings::TextSpeed::Quadruple>,
+    },
+    BuiltinPatch{
+        .name = "Text Speed Instant (built-in)",
+        .title_id = 0x0400486024DEC000,
+        .module = "main",
+        .build_id = "E0F3CCFAF50065AE4EA01EB5AEB13B1A45DA3348",
+        .records = TEXT_SPEED_INSTANT_RECORDS,
+        .selected = TextSpeedSelected<Settings::TextSpeed::Instant>,
     },
 };
 
@@ -917,6 +980,9 @@ std::vector<u8> PatchManager::PatchNSO(const std::vector<u8>& nso, const std::st
     bool max_resolution_applied = false;
     for (const auto& patch : BUILTIN_PATCHES) {
         if (patch.title_id != title_id || patch.module != name) {
+            continue;
+        }
+        if (patch.selected != nullptr && !patch.selected()) {
             continue;
         }
         if (std::find(disabled.cbegin(), disabled.cend(), patch.name) != disabled.cend()) {
@@ -1623,7 +1689,7 @@ std::vector<Patch> PatchManager::GetPatches(VirtualFile update_raw) const {
     }
 
     for (const auto& patch : BUILTIN_PATCHES) {
-        if (patch.title_id != title_id || patch.dlss_quality) {
+        if (patch.title_id != title_id || patch.dlss_quality || patch.selected != nullptr) {
             continue;
         }
         const auto is_disabled = [&](std::string_view name) {
