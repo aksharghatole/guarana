@@ -49,6 +49,12 @@ Pull requests to zortos293/Lichii that were not merged upstream when we took the
 | [#1558](https://github.com/zortos293/Lichii/pull/1558) | [BrunoSilvestre00](https://github.com/BrunoSilvestre00) | The loading screen no longer freezes in borderless fullscreen on Windows |
 | [#779](https://github.com/zortos293/Lichii/pull/779) | [dylan-hachmann](https://github.com/dylan-hachmann) | Guest HMMA on Intel's 8x16x16 cooperative matrices as two 8-row products through shared memory (closed unmerged upstream; carried behind `EDEN_NX2_INTEL_COOP_MATRIX`, with Fritchii-Intel-Fixes 0007 and 0008) |
 | [issue #1431](https://github.com/zortos293/Lichii/issues/1431) (a patch in an issue, not a pull request) | [ronaldpena007-ops](https://github.com/ronaldpena007-ops) | The mesh emulation's compute dispatches of a draw run before the render pass they draw in, instead of cutting the pass (`EDEN_NX2_MESH_BEFORE_PASS`) |
+| [#1835](https://github.com/zortos293/Lichii/pull/1835) | [anthonyloukinas](https://github.com/anthonyloukinas) | A refused stream buffer wrap keeps its position, so the first region is not handed out while the GPU still reads it (Ocarina of Time: a white or false-colour 3D view after a load) |
+| [#1890](https://github.com/zortos293/Lichii/pull/1890) | [zortos293](https://github.com/zortos293) | Images are not scaled past the device's 2D image and framebuffer limits (Ocarina of Time's 12288x12288 sun shadow map at 1.5x and 2x lost the device on AMD) |
+| [#1860](https://github.com/zortos293/Lichii/pull/1860) | [zortos293](https://github.com/zortos293) | The texture cache's retention limit follows the lowest driver budget read lately instead of the last one |
+| [#1799](https://github.com/zortos293/Lichii/pull/1799) | [Reiixan](https://github.com/Reiixan) | A compute pipeline dropped before its build ran counts as done, so "Building: N shader(s)" returns to zero |
+| [#1908](https://github.com/zortos293/Lichii/pull/1908) | [lethevimlet](https://github.com/lethevimlet) | Native compute launches clear the pending upload list, which grew for the whole session in Ocarina of Time (768 MiB after 90 minutes) |
+| [Eglantine c40fca7da4](https://github.com/Eglantine-Community/Eglantine/commit/c40fca7da4) | kraibse | Swapchain image, surface format and present mode queries are repeated on VK_INCOMPLETE instead of aborting (moving the window during play) |
 
 When one of these is merged upstream, the next upstream sync brings the upstream version, and this table says so.
 
