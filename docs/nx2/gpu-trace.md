@@ -15,7 +15,7 @@ guarana-cli --replay <trace> --out <dir> [--frames N] [--device N] [--no-images]
 
 `--no-images` writes no PNG files: `frames.json` still has every hash and time.
 
-The window is a `VK_EXT_headless_surface` surface (`WindowSystemType::Headless`), so any Vulkan driver with that extension works, Mesa's lavapipe included.
+The window is a `VK_EXT_headless_surface` surface (`WindowSystemType::Headless`), so any Vulkan driver with that extension works, Mesa's lavapipe included. On Windows, where the loader lists no such extension (Intel's driver 32.0.101.9175 on an Arc 140T has none), the replay makes a window that is never shown and presents to it without vertical sync, with `EDEN_NX2_FLUID` and `EDEN_NX2_EXTRAPOLATE` set to 0 unless the environment already sets them.
 
 `guarana-cli --gpu-trace-sample <trace>` writes a synthetic trace that needs no game: one Switch 2 channel whose four frames are two CPU-written images and two sets of 3D engine clears (whole and scissored). The unit tests read it back (`[gpu_trace]`).
 

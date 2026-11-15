@@ -12,6 +12,13 @@
 #include <unordered_map>
 #include <vector>
 
+#ifdef _WIN32
+#include <cstdlib>
+#include <string_view>
+
+#include <windows.h>
+#endif
+
 #include <fmt/format.h>
 #include <nlohmann/json.hpp>
 
@@ -37,6 +44,9 @@
 #include "video_core/nx2.h"
 #include "video_core/rasterizer_interface.h"
 #include "video_core/renderer_base.h"
+#ifdef _WIN32
+#include "video_core/vulkan_common/vulkan.h"
+#endif
 
 namespace VideoCommon::GpuTrace {
 namespace {
@@ -44,11 +54,68 @@ using Clock = std::chrono::steady_clock;
 
 class HeadlessContext final : public Core::Frontend::GraphicsContext {};
 
+#ifdef _WIN32
+/// Whether the Vulkan loader lists an instance extension, asked of the loader itself: the replay
+/// has no instance yet when it makes its window.
+bool HasInstanceExtension(std::string_view name) {
+    const HMODULE loader = LoadLibraryW(L"vulkan-1.dll");
+    if (loader == nullptr) {
+        return false;
+    }
+    using Enumerate = VkResult(VKAPI_PTR*)(const char*, uint32_t*, VkExtensionProperties*);
+    const auto enumerate = reinterpret_cast<Enumerate>(reinterpret_cast<void*>(
+        GetProcAddress(loader, "vkEnumerateInstanceExtensionProperties")));
+    bool found = false;
+    uint32_t count = 0;
+    if (enumerate != nullptr && enumerate(nullptr, &count, nullptr) == VK_SUCCESS) {
+        std::vector<VkExtensionProperties> extensions(count);
+        const VkResult result = enumerate(nullptr, &count, extensions.data());
+        if (result == VK_SUCCESS || result == VK_INCOMPLETE) {
+            extensions.resize(count);
+            found = std::ranges::any_of(extensions, [name](const VkExtensionProperties& entry) {
+                return name == entry.extensionName;
+            });
+        }
+    }
+    FreeLibrary(loader);
+    return found;
+}
+#endif
+
 class HeadlessWindow final : public Core::Frontend::EmuWindow {
 public:
     HeadlessWindow(u32 width, u32 height) {
         window_info.type = Core::Frontend::WindowSystemType::Headless;
+#ifdef _WIN32
+        // Intel's Windows driver has no VK_EXT_headless_surface (32.0.101.9175 on an Arc 140T
+        // lists none), so the replay could not start on it. A window that is never shown gives it
+        // a surface there. Its presents must not wait for the display: no vertical sync, and
+        // none of the presenters a title's switch defaults turn on.
+        if (!HasInstanceExtension(VK_EXT_HEADLESS_SURFACE_EXTENSION_NAME)) {
+            hidden = CreateWindowExW(0, L"STATIC", L"GPU trace replay", WS_POPUP, 0, 0,
+                                     static_cast<int>(width), static_cast<int>(height), nullptr,
+                                     nullptr, GetModuleHandleW(nullptr), nullptr);
+        }
+        if (hidden != nullptr) {
+            window_info.type = Core::Frontend::WindowSystemType::Windows;
+            window_info.render_surface = hidden;
+            Settings::values.vsync_mode.SetValue(Settings::VSyncMode::Immediate);
+            for (const char* name : {"EDEN_NX2_FLUID", "EDEN_NX2_EXTRAPOLATE"}) {
+                if (std::getenv(name) == nullptr) {
+                    _putenv_s(name, "0");
+                }
+            }
+        }
+#endif
         UpdateCurrentFramebufferLayout(width, height);
+    }
+
+    ~HeadlessWindow() override {
+#ifdef _WIN32
+        if (hidden != nullptr) {
+            DestroyWindow(hidden);
+        }
+#endif
     }
 
     std::unique_ptr<Core::Frontend::GraphicsContext> CreateSharedContext() const override {
@@ -58,6 +125,11 @@ public:
     bool IsShown() const override {
         return true;
     }
+
+private:
+#ifdef _WIN32
+    HWND hidden{};
+#endif
 };
 
 struct HashKey {
