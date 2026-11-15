@@ -415,6 +415,7 @@ TEST_CASE("The driver verdict compares the logged version with the versions the 
     const auto old_nvidia = AssessDriver(gpu(0x10DE, 4, "580.119.1.0"), GpuFamily::None);
     CHECK(old_nvidia.verdict == DriverVerdict::Outdated);
     CHECK(old_nvidia.wanted == "580.119.02");
+    CHECK(old_nvidia.workaround);
     CHECK(AssessDriver(gpu(0x10DE, 4, "572.16.0.0"), GpuFamily::None).verdict ==
           DriverVerdict::Outdated);
     // RADV (3): three numbers
@@ -433,6 +434,8 @@ TEST_CASE("The driver verdict compares the logged version with the versions the 
     const auto old_intel = AssessDriver(gpu(0x8086, 5, "101.6452"), GpuFamily::IntelArrowLakeH);
     CHECK(old_intel.verdict == DriverVerdict::Outdated);
     CHECK(old_intel.wanted == "32.0.101.9175");
+    // Only the version the numbers were measured on: logged, not shown
+    CHECK_FALSE(old_intel.workaround);
     CHECK(AssessDriver(gpu(0x8086, 5, "101.5590"), GpuFamily::None).verdict ==
           DriverVerdict::Unknown);
     // No finding is not a verdict: AMD's own driver, Mesa's Intel driver, an unreadable version

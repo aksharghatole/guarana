@@ -1073,17 +1073,20 @@ void RendererVulkan::Report() const {
     machine.gpu.driver = GetDriverVersion(device);
     LOG_INFO(Render_Vulkan, "Device profile: {}",
              Common::DescribeDeviceProfile(machine, start_profile.classification));
-    // What is known about the driver's version: a warning for an old one, which the frontend
-    // also shows once.
+    // What is known about the driver's version. An old driver the renderer works around is a
+    // warning, which the frontend also shows once; one that is only untested is a log line.
     const Common::DriverAssessment driver_assessment =
         Common::AssessDriver(machine.gpu, start_profile.classification.gpu_family);
     std::string driver_advice = Common::DescribeDriverAdvice(machine.gpu, driver_assessment);
-    if (!driver_advice.empty()) {
+    if (!driver_advice.empty() && driver_assessment.workaround) {
         LOG_WARNING(Render_Vulkan, "{}", driver_advice);
+    } else if (!driver_advice.empty()) {
+        LOG_INFO(Render_Vulkan, "{}", driver_advice);
     } else if (driver_assessment.verdict == Common::DriverVerdict::Current) {
         LOG_INFO(Render_Vulkan, "Driver version: at or above {}", driver_assessment.wanted);
     }
-    Common::SetDriverAdvice(std::move(driver_advice));
+    Common::SetDriverAdvice(driver_assessment.workaround ? std::move(driver_advice)
+                                                         : std::string{});
     if (VideoCommon::RenderTrace::Enabled()) {
         LOG_INFO(Render_Vulkan, "Render trace enabled: interval=600 frames, log_filter={}",
                  Settings::values.log_filter.GetValue());
