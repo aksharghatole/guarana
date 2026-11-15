@@ -176,6 +176,41 @@ struct DeviceClassification {
 [[nodiscard]] std::string DescribeDeviceProfile(const DeviceProfile& profile,
                                                 const DeviceClassification& classification);
 
+/// What is known about the version of the installed GPU driver.
+enum class DriverVerdict : u8 {
+    Unknown,  ///< Nothing is known about this driver, or its version cannot be read
+    Current,  ///< At or above the version the finding names
+    Outdated, ///< Older than it: the finding says what that costs
+};
+
+struct DriverAssessment {
+    DriverVerdict verdict{DriverVerdict::Unknown};
+    /// The version to have, as the vendor writes it; empty for Unknown.
+    std::string_view wanted;
+    /// What a driver older than `wanted` costs, without a final period; empty for Unknown.
+    std::string_view finding;
+};
+
+/// Compares the driver version the renderer logs (GpuProfile::driver) with the versions the code
+/// works around and the measurements were taken on:
+/// - NVIDIA's own driver before 580.119.02: dynamic vertex input is turned off (vulkan_device.cpp).
+/// - Mesa RADV before 26.2.5: native mesh shaders take a workaround (vk_pipeline_cache.cpp).
+/// - Intel's Windows driver on a GPU family of the current driver branch (every Intel
+///   GpuFamily) before 32.0.101.9175, the driver the Intel numbers were measured on. Older Intel
+///   GPUs have their own driver branch with lower numbers, so they get no verdict.
+/// Every other driver is Unknown: having no finding is not a verdict.
+[[nodiscard]] DriverAssessment AssessDriver(const GpuProfile& gpu, GpuFamily family);
+
+/// The assessment as one sentence for the log and the player, such as "The NVIDIA driver
+/// 572.16.0.0 is older than 580.119.02: ..."; empty unless the verdict is Outdated.
+[[nodiscard]] std::string DescribeDriverAdvice(const GpuProfile& gpu,
+                                               const DriverAssessment& assessment);
+
+/// The advice for the device the renderer last started on (DescribeDriverAdvice), kept for the
+/// frontend to show once; empty when there is none.
+void SetDriverAdvice(std::string advice);
+[[nodiscard]] std::string DriverAdvice();
+
 /// The host's part of the profile: CPU, RAM, power source and NPU. The GPU and the display are
 /// left for the renderer to fill in. The CPU, RAM and NPU are read once per process, the power
 /// source on every call.

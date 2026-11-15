@@ -148,6 +148,7 @@ static FileSys::VirtualFile VfsDirectoryCreateFileWrapper(const FileSys::Virtual
 
 // Common //
 #include "common/boot_timing.h"
+#include "common/device_profile.h"
 #include "common/fs/fs.h"
 #include "common/logging.h"
 #include "lichii/configuration/controller_auto_configure.h"
@@ -3860,6 +3861,16 @@ bool MainWindow::ConfirmShutdownGame() {
 
 void MainWindow::OnLoadComplete() {
     loading_screen->OnLoadComplete();
+
+    // An old graphics driver is named once per run of the program, not at every game start.
+    static bool driver_advice_shown = false;
+    if (const std::string advice = Common::DriverAdvice();
+        !advice.empty() && !std::exchange(driver_advice_shown, true)) {
+        if (guarana_toast == nullptr) {
+            guarana_toast = new Guarana::Toast(this);
+        }
+        guarana_toast->ShowMessage(QString::fromStdString(advice), 12000, render_window);
+    }
 
     perf_overlay = new PerformanceOverlay(this);
     perf_overlay->setVisible(ui->action_Show_Performance_Overlay->isChecked());
