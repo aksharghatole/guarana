@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Tests trace_replay.py's PNG reader and frame comparison."""
+"""Tests trace_replay.py's PNG reader, frame comparison and paired bench."""
 
 import math
 import struct
@@ -88,6 +88,93 @@ class TraceReplayTest(unittest.TestCase):
             self.assertFalse(rows[0]["equal"])
             self.assertEqual(rows[0]["difference"]["max"], 6)
             self.assertTrue(trace_replay.compare_runs(base, frames, base, frames)[0]["equal"])
+
+
+def frames(hashes, times, key="replay_ms"):
+    return {"renderer": "Test GPU", "program_id": "0000000000000001",
+            "frames": [{"index": index, "hash": value, "ms": time + 5.0, key: time}
+                       for index, (value, time) in enumerate(zip(hashes, times))]}
+
+
+class BenchTest(unittest.TestCase):
+    def test_parse_variant(self):
+        self.assertEqual(trace_replay.parse_variant("base"), ("base", {}))
+        self.assertEqual(trace_replay.parse_variant("gm0=EDEN_NX2_GM=0,EDEN_NX2_SPLIT=2"),
+                         ("gm0", {"EDEN_NX2_GM": "0", "EDEN_NX2_SPLIT": "2"}))
+        for bad in ("=EDEN_NX2_GM=0", "gm0=EDEN_NX2_GM"):
+            with self.assertRaises(ValueError, msg=bad):
+                trace_replay.parse_variant(bad)
+
+    def test_percentile(self):
+        self.assertIsNone(trace_replay.percentile([], 0.5))
+        self.assertEqual(trace_replay.percentile([4.0], 0.95), 4.0)
+        self.assertEqual(trace_replay.percentile([1.0, 3.0, 2.0], 0.5), 2.0)
+        self.assertAlmostEqual(trace_replay.percentile([1.0, 2.0, 3.0, 4.0], 0.5), 2.5)
+
+    def test_variants_run_in_turn_and_are_compared_with_the_baseline(self):
+        order = []
+
+        def run(cli, trace, out, extra, switches):
+            order.append((Path(out).parent.name, Path(out).name, cli, tuple(extra)))
+            fast = switches.get("EDEN_NX2_GM") == "11"
+            changed = switches.get("EDEN_NX2_BROKEN") == "1"
+            hashes = ["a", "b", "x" if changed else "c", "d"]
+            return frames(hashes, [50.0, 8.0 if fast else 10.0, 8.0 if fast else 10.0,
+                                   8.0 if fast else 10.0])
+
+        variants = [{"name": "base", "cli": "cli-a", "switches": {}},
+                    {"name": "gm", "cli": "cli-a", "switches": {"EDEN_NX2_GM": "11"}},
+                    {"name": "broken", "cli": "cli-b", "switches": {"EDEN_NX2_BROKEN": "1"}}]
+        with tempfile.TemporaryDirectory() as directory:
+            report = trace_replay.bench(variants, "scene.lxtrace", directory, repeat=2, skip=1,
+                                        extra=["--no-images"], run=run)
+        self.assertEqual([entry[:2] for entry in order],
+                         [("base", "run-1"), ("gm", "run-1"), ("broken", "run-1"),
+                          ("base", "run-2"), ("gm", "run-2"), ("broken", "run-2")])
+        self.assertEqual(order[2][2:], ("cli-b", ("--no-images",)))
+        self.assertEqual(report["timing"], "replay_ms")
+        base, gm, broken = report["variants"]
+        self.assertEqual((base["median_ms"], gm["median_ms"]), (10.0, 8.0))
+        self.assertAlmostEqual(gm["change_percent"], -20.0)
+        self.assertTrue(gm["identical_to_baseline"])
+        self.assertFalse(broken["identical_to_baseline"])
+        self.assertEqual(broken["differing_frames"], [2])
+        self.assertNotIn("change_percent", base)
+        table = trace_replay.bench_table(report)
+        self.assertIn("identical", table[3])
+        self.assertIn("1 frames differ", table[4])
+
+    def test_a_variant_whose_runs_differ_is_not_identical(self):
+        calls = []
+
+        def run(cli, trace, out, extra, switches):
+            calls.append(out)
+            return frames(["a", "b" if len(calls) < 2 else "z"], [9.0, 9.0])
+
+        with tempfile.TemporaryDirectory() as directory:
+            report = trace_replay.bench([{"name": "base", "cli": "cli", "switches": {}}],
+                                        "scene.lxtrace", directory, repeat=2, skip=0, run=run)
+        self.assertFalse(report["variants"][0]["repeats_itself"])
+        self.assertFalse(report["variants"][0]["identical_to_baseline"])
+        self.assertIn("its own runs differ", trace_replay.bench_table(report)[2])
+
+    def test_older_builds_are_timed_by_ms(self):
+        def run(cli, trace, out, extra, switches):
+            return frames(["a", "b"], [9.0, 9.0], key="replay_ms" if cli == "new" else "other")
+
+        with tempfile.TemporaryDirectory() as directory:
+            report = trace_replay.bench([{"name": "base", "cli": "old", "switches": {}},
+                                         {"name": "head", "cli": "new", "switches": {}}],
+                                        "scene.lxtrace", directory, repeat=1, skip=0, run=run)
+        self.assertEqual(report["timing"], "ms")
+        self.assertEqual(report["variants"][1]["median_ms"], 14.0)
+
+    def test_frames_without_images_compare_by_hash(self):
+        base = {"frames": [{"index": 0, "hash": "a"}]}
+        head = {"frames": [{"index": 0, "hash": "b"}]}
+        rows = trace_replay.compare_runs("base", base, "head", head)
+        self.assertFalse(rows[0]["equal"])
+        self.assertNotIn("difference", rows[0])
 
 
 if __name__ == "__main__":
