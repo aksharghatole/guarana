@@ -153,6 +153,8 @@ private:
 
     nlohmann::json frames = nlohmann::json::array();
     Clock::time_point last_frame;
+    /// When the work of the frame being replayed began: after the frame before it was saved
+    Clock::time_point frame_begin;
     u32 presents = 0;
     bool stop = false;
 };
@@ -372,6 +374,7 @@ bool Replayer::BringUp(std::string& error) {
     states.clear();
     std::filesystem::create_directories(options.out);
     last_frame = Clock::now();
+    frame_begin = last_frame;
     return true;
 }
 
@@ -543,31 +546,40 @@ bool Replayer::Present(const Record& record, std::string& error) {
     for (size_t i = 0; i < pixels.size(); i += 4) {
         std::swap(pixels[i], pixels[i + 2]);
     }
-    const std::string name = fmt::format("frame-{:04}.png", presents);
-    const auto path = options.out / name;
-    std::vector<u8> png;
-    const auto append = [](void* context, void* data, int size) {
-        auto& out = *static_cast<std::vector<u8>*>(context);
-        const auto* bytes = static_cast<const u8*>(data);
-        out.insert(out.end(), bytes, bytes + size);
-    };
-    std::ofstream file{path, std::ios::binary};
-    if (stbi_write_png_to_func(append, &png, static_cast<int>(width), static_cast<int>(height), 4,
-                               pixels.data(), static_cast<int>(width * 4)) == 0 ||
-        !file.write(reinterpret_cast<const char*>(png.data()),
-                    static_cast<std::streamsize>(png.size()))) {
-        error = "can't write " + path.string();
-        return false;
-    }
-    frames.push_back({
+    // "ms" is the time since the frame before was composited, so it holds that frame's hash and
+    // PNG encoding too. "replay_ms" is only this frame's commands, composite and read-back: the
+    // number to compare two replays by.
+    nlohmann::json frame{
         {"index", presents},
-        {"file", name},
         {"width", width},
         {"height", height},
         {"hash", HashString(HashBytes(pixels))},
         {"ms", std::chrono::duration<double, std::milli>(now - last_frame).count()},
-    });
+        {"replay_ms", std::chrono::duration<double, std::milli>(now - frame_begin).count()},
+    };
+    if (options.images) {
+        const std::string name = fmt::format("frame-{:04}.png", presents);
+        const auto path = options.out / name;
+        std::vector<u8> png;
+        const auto append = [](void* context, void* data, int size) {
+            auto& out = *static_cast<std::vector<u8>*>(context);
+            const auto* bytes = static_cast<const u8*>(data);
+            out.insert(out.end(), bytes, bytes + size);
+        };
+        std::ofstream file{path, std::ios::binary};
+        if (stbi_write_png_to_func(append, &png, static_cast<int>(width),
+                                   static_cast<int>(height), 4, pixels.data(),
+                                   static_cast<int>(width * 4)) == 0 ||
+            !file.write(reinterpret_cast<const char*>(png.data()),
+                        static_cast<std::streamsize>(png.size()))) {
+            error = "can't write " + path.string();
+            return false;
+        }
+        frame["file"] = name;
+    }
+    frames.push_back(std::move(frame));
     last_frame = now;
+    frame_begin = Clock::now();
     ++presents;
     if (options.max_frames != 0 && presents >= options.max_frames) {
         stop = true;

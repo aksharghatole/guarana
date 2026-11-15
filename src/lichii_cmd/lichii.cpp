@@ -629,7 +629,7 @@ static bool WarmPipelines(SdlState& state, const Core::LaunchParams& lp) {
 }
 
 /// GPU trace replay (docs/nx2/gpu-trace.md):
-///   eden-cli --replay <trace> --out <dir> [--frames N] [--device N]
+///   eden-cli --replay <trace> --out <dir> [--frames N] [--device N] [--no-images]
 ///                     [--record <trace> --record-from <present> --record-presents N]
 ///   eden-cli --gpu-trace-sample <trace>: writes the synthetic trace.
 static bool ReplayGpuTrace(Core::System& system, int argc, char** argv) {
@@ -657,6 +657,8 @@ static bool ReplayGpuTrace(Core::System& system, int argc, char** argv) {
             options.record_presents = static_cast<u32>(std::strtoul(argv[++i], nullptr, 10));
         } else if (argument == "--device" && has_value) {
             Settings::values.vulkan_device.SetValue(std::atoi(argv[++i]));
+        } else if (argument == "--no-images") {
+            options.images = false;
         } else if (options.trace.empty()) {
             options.trace = Common::FS::ToU8String(argv[i]);
         } else {
@@ -665,7 +667,8 @@ static bool ReplayGpuTrace(Core::System& system, int argc, char** argv) {
         }
     }
     if (options.trace.empty() || options.out.empty()) {
-        fmt::print(stderr, "usage: --replay <trace> --out <dir> [--frames N] [--device N]\n");
+        fmt::print(stderr,
+                   "usage: --replay <trace> --out <dir> [--frames N] [--device N] [--no-images]\n");
         return false;
     }
     std::string error;
