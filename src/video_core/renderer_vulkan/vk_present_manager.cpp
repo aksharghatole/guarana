@@ -83,7 +83,7 @@ static_assert(MAX_FRAMES_IN_FLIGHT <= LSFG_MAX_TARGETS);
 #endif
 
 // Sleeps until the deadline, without spinning: it may pass by up to a timer tick (about 0.5 ms
-// on Windows), well within a refresh, and the next deadline counts from the actual present.
+// on Windows), well within a refresh, and the next deadline counts from this one.
 //
 // EDEN_NX2_PRESENT_SPIN=1: sleep in ticks until the deadline is within 2 ms, then spin the last
 // stretch (YieldProcessor) so the wake lands on the deadline instead of up to a tick past it.
@@ -963,15 +963,19 @@ void PresentManager::PresentThread(std::stop_token token) try {
             // before the queue lock goes out of scope. This way the swapchain
             // lock in WaitPresent is guaranteed to occur after here.
             void(std::exchange(lock, std::unique_lock{swapchain_mutex}));
-            const bool trace = Common::DkbFrameTrace::Enabled();
-            const auto ready = trace ? std::chrono::steady_clock::now()
-                                     : std::chrono::steady_clock::time_point{};
+            const auto ready = std::chrono::steady_clock::now();
+            // The spacing counts from when this present was due, not from when it returned. A
+            // present that waits for vblank has already spent part of the spacing; counting it
+            // again cost each generated frame an extra refresh, which lengthened the measured
+            // frame interval and with it the spacing, until the game ran at a fraction of its
+            // speed (#1772).
+            const auto start = (std::max)(next_present, ready);
             present_operation = "copying/presenting queued frame";
-            SleepUntil(next_present);
+            SleepUntil(start);
             CopyToSwapchain(frame);
-            const auto presented = std::chrono::steady_clock::now();
-            next_present = presented + frame->present_spacing;
-            if (trace) {
+            next_present = start + frame->present_spacing;
+            if (Common::DkbFrameTrace::Enabled()) {
+                const auto presented = std::chrono::steady_clock::now();
                 LogPacing(frame, presented - ready, presented);
             }
             NoteShownFrame();

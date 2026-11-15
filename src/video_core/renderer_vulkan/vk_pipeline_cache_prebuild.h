@@ -21,8 +21,8 @@
 namespace Vulkan {
 
 /// Shader cache v2: cached pipelines built in the background as Background jobs of one batch. A
-/// lookup of one still queued or building raises it to NeedNow and waits for it, so that it is
-/// built once.
+/// lookup of one still queued drops it, so the caller builds it as it builds any pipeline it lacks
+/// (without holding its thread where the draw allows); one a worker is building is waited for.
 template <typename Key, typename Pipeline>
 class ScheduledPrebuild {
     struct Entry {
@@ -57,10 +57,11 @@ public:
     /// unless one of its key is queued or the captures queued would pass the limit
     /// `done` is called once when the job ends without a Take of it waiting (built, failed,
     /// translated to nothing or stopped by a request); a job cancelled before it ran calls nothing.
+    /// `job` gets its job.
     bool Add(const Key& key, u64 capture_bytes, u64 cpu_bytes, u64 driver_bytes,
              Translate translate,
              VideoCommon::ShaderJobPriority priority = VideoCommon::ShaderJobPriority::Background,
-             Common::UniqueFunction<void> done = {}) {
+             Common::UniqueFunction<void> done = {}, VideoCommon::ShaderJobHandle* job = nullptr) {
         std::scoped_lock lock{mutex};
         if (stopped || entries.contains(key)) {
             return false;
@@ -119,12 +120,15 @@ public:
                 },
             },
             &batch);
+        if (job) {
+            *job = entry->job;
+        }
         entries.emplace(key, std::move(entry));
         return true;
     }
 
-    /// The pipeline of `key`, built here or waited for while it builds (`waited` gets how long
-    /// when it was still queued or building); null when there is none or it didn't build
+    /// The pipeline of `key`, waited for while a worker builds it (`waited` gets how long); null
+    /// when there is none, it didn't build, or it was still queued (then dropped)
     std::unique_ptr<Pipeline> Take(
         const Key& key, std::optional<std::chrono::steady_clock::duration>* waited = nullptr) {
         std::shared_ptr<Entry> entry;
@@ -138,6 +142,16 @@ public:
             entries.erase(it);
         }
         const bool unfinished = !entry->job.Ready();
+        if (unfinished) {
+            if (const auto cancelled = jobs.CancelQueued(entry->job)) {
+                if (*cancelled == VideoCommon::ShaderJobStatus::Queued) {
+                    Translated();
+                }
+                std::scoped_lock lock{mutex};
+                ++taken_unfinished;
+                return nullptr;
+            }
+        }
         const auto begin = std::chrono::steady_clock::now();
         jobs.RunOrWait(entry->job);
         std::scoped_lock lock{mutex};
