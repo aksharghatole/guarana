@@ -188,7 +188,7 @@ Driver version: at or above 32.0.101.9175
 The NVIDIA driver 572.16.0.0 is older than 580.119.02: dynamic vertex input is turned off on older ones, so more pipeline variants are built. Updating the graphics driver is worth it.
 ```
 
-The second form is a warning, and the window shows it once per run of the program. A driver gets a verdict only where the code or a measurement names a version:
+The second form is logged for an old driver. Where the renderer works around the old driver (the first two rows) it is a warning and the window shows it once per run of the program; the Intel row is a log line only, because its version is the one measured on, not a known defect. A driver gets a verdict only where the code or a measurement names a version:
 
 | Driver | Version to have | What an older one costs |
 |---|---|---|

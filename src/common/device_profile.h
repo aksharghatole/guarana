@@ -189,6 +189,9 @@ struct DriverAssessment {
     std::string_view wanted;
     /// What a driver older than `wanted` costs, without a final period; empty for Unknown.
     std::string_view finding;
+    /// The renderer does something else on an older driver. False where `wanted` is only the
+    /// version the numbers were measured on: that is worth a log line, not a message.
+    bool workaround{};
 };
 
 /// Compares the driver version the renderer logs (GpuProfile::driver) with the versions the code
@@ -206,8 +209,8 @@ struct DriverAssessment {
 [[nodiscard]] std::string DescribeDriverAdvice(const GpuProfile& gpu,
                                                const DriverAssessment& assessment);
 
-/// The advice for the device the renderer last started on (DescribeDriverAdvice), kept for the
-/// frontend to show once; empty when there is none.
+/// The advice the frontend shows once: DescribeDriverAdvice for the device the renderer last
+/// started on, where the old driver has a workaround; empty when there is none.
 void SetDriverAdvice(std::string advice);
 [[nodiscard]] std::string DriverAdvice();
 

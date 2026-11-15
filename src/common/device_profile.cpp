@@ -629,6 +629,7 @@ DriverAssessment AssessDriver(const GpuProfile& gpu, GpuFamily family) {
         std::array<u32, 4> wanted;
         std::string_view wanted_text;
         std::string_view finding;
+        bool workaround;
     };
     std::optional<Rule> rule;
     switch (gpu.driver_id) {
@@ -636,12 +637,14 @@ DriverAssessment AssessDriver(const GpuProfile& gpu, GpuFamily family) {
         rule = Rule{{580, 119, 2, 0},
                     "580.119.02",
                     "dynamic vertex input is turned off on older ones, so more pipeline variants "
-                    "are built"};
+                    "are built",
+                    true};
         break;
     case DriverMesaRadv:
         rule = Rule{{26, 2, 5, 0},
                     "26.2.5",
-                    "native mesh shaders take a slower workaround on older ones"};
+                    "native mesh shaders take a slower workaround on older ones",
+                    true};
         break;
     case DriverIntelProprietaryWindows:
         // The renderer writes Intel's Windows version as its last two numbers: "101.9175".
@@ -649,7 +652,8 @@ DriverAssessment AssessDriver(const GpuProfile& gpu, GpuFamily family) {
             rule = Rule{{101, 9175, 0, 0},
                         "32.0.101.9175",
                         "it is the driver the Intel numbers were measured on, and older ones are "
-                        "not tested"};
+                        "not tested",
+                        false};
         }
         break;
     default:
@@ -663,6 +667,7 @@ DriverAssessment AssessDriver(const GpuProfile& gpu, GpuFamily family) {
         .verdict = *version < rule->wanted ? DriverVerdict::Outdated : DriverVerdict::Current,
         .wanted = rule->wanted_text,
         .finding = rule->finding,
+        .workaround = rule->workaround,
     };
 }
 
