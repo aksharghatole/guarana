@@ -179,6 +179,25 @@ class or a family comes only with a paired run on a verified scene of that class
 ([AGENTS.md](../AGENTS.md), rule 1). The line holds no paths or names from your machine, so you
 can paste it into a report as it is.
 
+## The driver verdict in the log
+
+Right after the `Device profile:` line the engine says what it knows about the graphics driver's version (`Common::AssessDriver` in `src/common/device_profile.cpp`):
+
+```text
+Driver version: at or above 32.0.101.9175
+The NVIDIA driver 572.16.0.0 is older than 580.119.02: dynamic vertex input is turned off on older ones, so more pipeline variants are built. Updating the graphics driver is worth it.
+```
+
+The second form is a warning, and the window shows it once per run of the program. A driver gets a verdict only where the code or a measurement names a version:
+
+| Driver | Version to have | What an older one costs |
+|---|---|---|
+| NVIDIA's own driver | 580.119.02 | Dynamic vertex input is turned off, so more pipeline variants are built |
+| Mesa RADV | 26.2.5 | Native mesh shaders take a slower workaround |
+| Intel's Windows driver, on the Core Ultra and Arc B-series integrated families (every Intel `gpu_family`) | 32.0.101.9175 | It is the driver the Intel numbers were measured on; older ones are not tested |
+
+Every other driver has no line: no finding is not a verdict. Older Intel GPUs have their own driver branch with lower numbers and are left out on purpose. A new row needs the same evidence as these: a version the code tests for, or one a measurement was taken on.
+
 ## The resolution line in the log
 
 After the device profile, the log gets one `Core` Info line that starts `Resolution:`. It says what
