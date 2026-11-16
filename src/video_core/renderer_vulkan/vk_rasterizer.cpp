@@ -1243,6 +1243,8 @@ void RasterizerVulkan::PrepareDraw(bool is_indexed, Func&& draw_func, bool is_in
         }
         return;
     }
+    // Upstream's bypass reads its source from the output pass (#1875); EDEN_NX2_OOT_BYPASS_ANY
+    // still copies from the tonemap tracked here.
     if (VideoCommon::OotNetwork::BypassEnabled(Settings::GetCurrentProgramID())) {
         TrackOotTonemappedImage(*pipeline);
     }

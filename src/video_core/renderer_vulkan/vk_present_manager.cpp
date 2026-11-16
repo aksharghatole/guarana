@@ -2126,7 +2126,6 @@ void PresentManager::SubmitFluidCopy(Frame* frame, VkImage image, VkExtent2D ext
         break;
     case VK_ERROR_DEVICE_LOST:
         device.ReportLoss();
-        [[fallthrough]];
     default:
         vk::Check(result);
         break;
@@ -2289,7 +2288,6 @@ void PresentManager::SubmitFluidCompose(Frame* frame, VkExtent2D extent,
         break;
     case VK_ERROR_DEVICE_LOST:
         device.ReportLoss();
-        [[fallthrough]];
     default:
         vk::Check(result);
         break;
@@ -2565,7 +2563,6 @@ void PresentManager::CopyToSwapchainImpl(Frame* frame, PresentSync::FrameSubmiss
                 break;
             case VK_ERROR_DEVICE_LOST:
                 device.ReportLoss();
-                [[fallthrough]];
             default:
                 vk::Check(result);
                 break;
