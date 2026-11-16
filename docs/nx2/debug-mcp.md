@@ -354,8 +354,7 @@ frame) and `frame_gen_extrapolate` (one frame predicted from the game's motion v
 `EDEN_NX2_EXTRAPOLATE`). With `EDEN_NX2_FLUID_INTERP` a sampled frame has one
 `frame_gen_process` and one `frame_gen_interpolate` per in-between frame made: five on the 144 Hz
 set while real frames keep to their six slots, more when a real frame comes late, fewer when no
-swapchain frame is free. With `EDEN_NX2_FLUID_SPLIT_SUBMIT` a real frame's predictions are
-recorded after its frame ends, so they count in the next sampled frame.
+swapchain frame is free.
 What the driver's compiler made of those shaders is a launch option, not a tool:
 `EDEN_NX2_PIPELINE_STATS=<dir>` enables VK_KHR_pipeline_executable_properties, builds every guest
 graphics and compute pipeline with `VK_PIPELINE_CREATE_CAPTURE_STATISTICS_BIT_KHR` and appends one

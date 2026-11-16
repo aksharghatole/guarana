@@ -128,21 +128,8 @@ void SleepUntil(std::chrono::steady_clock::time_point deadline) {
 }
 
 /// EDEN_NX2_FLUID: a slot's frame is presented this long after the vblank before the slot, so a
-/// present a few ms early or late still lands on the slot's vblank. EDEN_NX2_FLUID_OFFSET_US=<us>
-/// (500 to 8000) moves it: with the DXGI vblank wait the wake already follows the vblank, so about
-/// 1000 gives the screen copy 7.3 ms before its flip at 120 Hz instead of 4.8.
-[[nodiscard]] std::chrono::nanoseconds FluidPresentOffsetFor() {
-    static const std::chrono::nanoseconds offset = [] {
-        const char* value = std::getenv("EDEN_NX2_FLUID_OFFSET_US");
-        if (value == nullptr) {
-            return std::chrono::nanoseconds{3'500'000};
-        }
-        const long us = std::clamp(std::strtol(value, nullptr, 10), 500L, 8000L);
-        LOG_INFO(Render_Vulkan, "EDEN_NX2_FLUID_OFFSET_US={}: slot frames go out {} us after the vblank before them", us, us);
-        return std::chrono::nanoseconds{static_cast<s64>(us) * 1000};
-    }();
-    return offset;
-}
+/// present a few ms early or late still lands on the slot's vblank.
+constexpr std::chrono::nanoseconds FluidPresentOffset{3'500'000};
 
 /// EDEN_NX2_FLUID_QUEUE_HOST_WAIT=1: with the screen copy on its own queue (EDEN_NX2_FLUID_QUEUE
 /// 3 or 5), the present thread waits on the copy's fence before presenting on the graphics queue,
@@ -167,21 +154,11 @@ void SleepUntil(std::chrono::steady_clock::time_point deadline) {
     return on;
 }
 
-/// EDEN_NX2_FLUID_HOST_WAIT_US=<us> (500 to 16000): how long that wait lasts at most, by default
-/// 12000 at 60 shown frames a second and 4000 above 75 (at 120 a slot is 8.3 ms: a longer wait makes
-/// the present thread sleep through the next slot). FluidSlots::CopyWaitNs cuts it to end before
-/// the next slot's wake at other refresh rates too.
+/// EDEN_NX2_FLUID_QUEUE_HOST_WAIT: the longest the present thread waits for the screen copy, 12 ms
+/// at 60 shown frames a second and 4 ms above 75 (at 120 a slot is 8.3 ms: a longer wait makes the
+/// present thread sleep through the next slot). FluidSlots::CopyWaitNs cuts it to end before the
+/// next slot's wake at other refresh rates too.
 [[nodiscard]] u64 FluidHostWaitNs(f64 shown_rate) {
-    static const u64 limit = [] {
-        const char* value = std::getenv("EDEN_NX2_FLUID_HOST_WAIT_US");
-        return value == nullptr
-                   ? u64{0}
-                   : static_cast<u64>(std::clamp(std::strtol(value, nullptr, 10), 500L, 16000L)) *
-                         1000;
-    }();
-    if (limit != 0) {
-        return limit;
-    }
     return shown_rate > 75.0 ? 4'000'000 : 12'000'000;
 }
 /// Real frames whose GPU work is watched at once.
@@ -1079,7 +1056,7 @@ bool PresentManager::FluidPresentThread(std::stop_token token) {
         if (VideoCore::ShownGovernor::Enabled()) {
             FluidGovern(wake, period);
         }
-        const auto offset = (std::min)(FluidPresentOffsetFor(), period * 42 / 100);
+        const auto offset = (std::min)(FluidPresentOffset, period * 42 / 100);
         // A screen copy wait from this wake ends in time for the next slot's wake.
         fluid.copy_wait_due = wake + FluidSlots::CopyWaitDue(period, fluid.vblank, fluid.divisor);
         {
