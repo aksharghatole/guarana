@@ -1035,22 +1035,30 @@ TEST_CASE("A try-take gives nothing for a key without a build and drops the ende
     REQUIRE(prebuild.Add(2, 0, 0, 0, [&] { return std::make_unique<TestPipeline>(builds); }));
 }
 
-TEST_CASE("A take after a pending try-take builds the prebuild once", "[video_core][shader_jobs]") {
+TEST_CASE("A take after a pending try-take drops the queued prebuild, which counts as ended",
+          "[video_core][shader_jobs]") {
     ShaderJobScheduler scheduler{Config(1, 1)};
     Gate gate;
     const auto blocker = Block(scheduler, gate);
     std::atomic<int> builds{};
+    std::atomic<int> ended{};
     TestPrebuild prebuild{scheduler};
     SCOPE_EXIT { gate.Open(); };
-    REQUIRE(prebuild.Add(1, 0, 0, 0, [&] { return std::make_unique<TestPipeline>(builds); }));
+    REQUIRE(prebuild.Add(1, 0, 0, 0, [&] { return std::make_unique<TestPipeline>(builds); },
+                         ShaderJobPriority::Background, [&ended] { ++ended; }));
     bool pending = false;
     REQUIRE(prebuild.TryTake(1, pending) == nullptr);
     REQUIRE(pending);
 
-    REQUIRE(prebuild.Take(1) != nullptr);
-    REQUIRE(builds == 1);
+    // Still queued behind the held worker: the lookup drops it and the caller builds the
+    // pipeline itself (upstream #1803). The build that will never run has ended, once.
+    REQUIRE(prebuild.Take(1) == nullptr);
+    REQUIRE(builds == 0);
+    REQUIRE(ended == 1);
     gate.Open();
     scheduler.RunOrWait(blocker);
+    REQUIRE(builds == 0);
+    REQUIRE(ended == 1);
 }
 
 TEST_CASE("A prebuild's job ends once its pipeline is built or dropped",
