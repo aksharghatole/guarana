@@ -42,6 +42,7 @@ add_executable(tests
     lichii/performance_overlay_model.cpp
     core/game_presets.cpp
     core/game_resolver.cpp
+    core/community_evidence.cpp
     core/service_auto_stub.cpp
     core/key_derivation.cpp
     common/boot_split.cpp

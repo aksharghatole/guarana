@@ -12,6 +12,7 @@
 
 #include "common/common_types.h"
 #include "common/device_profile.h"
+#include "core/community_evidence.h"
 #include "core/game_settings.h"
 
 // Settings a game is known to run better with on a kind of GPU, for the ones the user left alone.
@@ -226,6 +227,9 @@ struct ResolveInput {
     UserChoices user;
     bool want_settings{true}; ///< Resolve the settings and add-ons.
     bool want_switches{true}; ///< Resolve the switches.
+    /// The community's paired measurements (CommunityEvidence::Embedded at boot). They are cited in
+    /// the entries' `community` text and change no value.
+    std::span<const CommunityEvidence::Effect> community{};
 };
 
 struct SettingEntry {
@@ -236,6 +240,9 @@ struct SettingEntry {
     std::string current;  ///< The user's value where decision is UserPerGame or UserGlobal.
     std::string_view reason;
     Evidence evidence;
+    /// The community's paired measurement of this value on this GPU family and title
+    /// (CommunityEvidence::Describe); empty without one.
+    std::string community;
 };
 
 struct AddonEntry {
@@ -253,6 +260,8 @@ struct SwitchEntry {
     std::optional<std::string> shipped; ///< The value the shipped nx2_switches.txt alone gave it.
     std::string_view reason;
     Evidence evidence;
+    /// As SettingEntry::community.
+    std::string community;
 };
 
 /// What the resolver was given, as it logs it. The output size against the GPU's size is recorded

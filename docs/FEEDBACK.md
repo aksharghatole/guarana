@@ -189,6 +189,15 @@ within 2 ms in points, per device and over devices), each with its issues; and t
 family is unresolved or none. Rows of different reports are never compared, absolute fps is never
 averaged, and battery stays apart from mains power. Nothing reads the file to change a default.
 
+Each build carries the copy its source tree had (`src/core/CMakeLists.txt` embeds it as bytes,
+`Core::CommunityEvidence` reads it). The resolver cites it: where a preset or switch default sets a
+value that a paired effect measured on the player's GPU family and game (that switch or setting
+alone, at that value), the boot `Resolution:` line adds `[community: ...]` after it, for example
+`EDEN_NX2_GM=11 against EDEN_NX2_GM=0 in oot-hyrule-field: game fps +48.0% median (+31.0% to
++55.0%), p99 -40.0%, 3 devices, 4 pairs, v20.5.0, mains, community reports #12 #40 #52`, and the
+debug server's `status.resolution` has it as `community`. Of several, the effect with the most
+devices is cited. The value stays what the preset or the pacing set says.
+
 ## 5. From data to work
 
 A maintainer turns what the leaderboard and the issues show into

@@ -392,6 +392,7 @@ std::string Apply(u64 title_id, const GpuInfo& gpu) {
     input.gpu = gpu;
     input.user = ReadUserChoices();
     input.want_switches = false;
+    input.community = CommunityEvidence::Embedded();
     const Resolution resolution = Resolve(input);
     LOG_INFO(Core, "Resolution: {}", DescribeResolution(Record(resolution, false)));
     if (resolution.preset_reason.empty()) {
@@ -657,6 +658,19 @@ constexpr std::array SWITCH_REASONS{
     return {};
 }
 
+/// The community's paired measurement of `name` at `value` on this GPU's family and the title.
+[[nodiscard]] std::string CommunityText(const ResolveInput& input, std::string_view name,
+                                        std::string_view value) {
+    const CommunityEvidence::Effect* const effect = CommunityEvidence::Find(
+        input.community, input.gpu.gpu_family, input.title_id, name, value);
+    return effect != nullptr ? CommunityEvidence::Describe(*effect) : std::string{};
+}
+
+/// " [community: ...]" after an entry that has a community measurement.
+[[nodiscard]] std::string CommunitySuffix(const std::string& community) {
+    return community.empty() ? std::string{} : fmt::format(" [community: {}]", community);
+}
+
 [[nodiscard]] std::string SwitchText(const SwitchEntry& entry) {
     switch (entry.decision) {
     case SwitchDecision::Set:
@@ -762,6 +776,7 @@ Resolution Resolve(const ResolveInput& input) {
                 entry.value = item.value;
                 entry.reason = item.reason.empty() ? preset->reason : item.reason;
                 entry.evidence = item.evidence.where.empty() ? PRESET_NOT_MEASURED : item.evidence;
+                entry.community = CommunityText(input, entry.label, entry.value);
                 SettingState state;
                 state.known = true;
                 if (user.setting) {
@@ -800,6 +815,7 @@ Resolution Resolve(const ResolveInput& input) {
             entry.value = item.value;
             entry.reason = ReasonOfSwitch(item.name, item.value);
             entry.evidence = evidence;
+            entry.community = CommunityText(input, entry.name, entry.value);
             std::optional<std::string> current;
             if (user.environment) {
                 current = user.environment(item.name);
@@ -859,6 +875,7 @@ std::string DescribeResolution(const Resolution& resolution) {
             text += ' ';
             text += used ? SettingText(entry)
                          : fmt::format("{}={} (not used)", entry.label, entry.value);
+            text += CommunitySuffix(entry.community);
         }
         for (const AddonEntry& addon : resolution.addons) {
             const char* const state = !used           ? "not used"
@@ -879,6 +896,7 @@ std::string DescribeResolution(const Resolution& resolution) {
             text += resolution.presets_enabled
                         ? SwitchText(entry)
                         : fmt::format("{}={} (not used)", entry.name, entry.value);
+            text += CommunitySuffix(entry.community);
         }
     }
     return text;
@@ -948,6 +966,7 @@ std::string ApplySwitchDefaults(u64 title_id, const GpuInfo& gpu, const DisplayI
     input.display = display;
     input.user = ReadUserChoices();
     input.want_settings = false;
+    input.community = CommunityEvidence::Embedded();
     const Resolution resolution = Resolve(input);
     Record(resolution, true);
     const PacingSet pacing = resolution.pacing;
