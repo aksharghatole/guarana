@@ -3791,15 +3791,21 @@ void PipelineCache::EvictUnusedPipelines() {
 
 PipelineCache::PendingDrawPolicy PipelineCache::CurrentPendingDrawPolicy() const {
     // EDEN_NX2_ASYNC_DISCARD=1: skip native draws whose pipeline is still building instead of
-    // waiting for it (experimental; the draw may be missing for a frame or more).
-    static const bool discard_native = [] {
+    // waiting for it (experimental; the draw may be missing for a frame or more). =2 (Fritchii
+    // a962f20533): skip only those into render targets the frame clears and redraws; draws into
+    // a target cleared for the first time, or not cleared this frame, wait.
+    static const int discard_mode = [] {
         const char* value = std::getenv("EDEN_NX2_ASYNC_DISCARD");
-        const bool enabled = value != nullptr && value[0] == '1';
-        if (enabled) {
+        const int mode = value == nullptr ? 0 : value[0] == '1' ? 1 : value[0] == '2' ? 2 : 0;
+        if (mode == 1) {
             LOG_INFO(Render_Vulkan, "EDEN_NX2_ASYNC_DISCARD: native draws skip unbuilt pipelines");
+        } else if (mode == 2) {
+            LOG_INFO(Render_Vulkan, "EDEN_NX2_ASYNC_DISCARD=2: native draws skip unbuilt "
+                                    "pipelines only into render targets cleared every frame");
         }
-        return enabled;
+        return mode;
     }();
+    const bool discard_native = discard_mode != 0;
     const auto& draw_state = maxwell3d->draw_manager.draw_state;
     const bool native = maxwell3d->GetNativeMacroEngine().native_turing;
     NativePendingMode mode = NativePendingMode::Wait;
@@ -3818,9 +3824,17 @@ PipelineCache::PendingDrawPolicy PipelineCache::CurrentPendingDrawPolicy() const
             mode = NativePendingMode::Skip;
         }
     }
+    // Classified only when a native draw could otherwise be skipped: it takes the texture cache's
+    // lock and looks up the bound targets.
+    bool recurring_target = true;
+    if (discard_mode == 2 && native && mode != NativePendingMode::Wait) {
+        recurring_target =
+            texture_cache.ClassifyDrawTargets().kind == VideoCommon::DrawTargetClass::Recurring;
+    }
     const bool can_discard = CanDiscardPendingDraw(
         native, maxwell3d->regs.zeta_enable != 0, draw_state.draw_element_count,
-        draw_state.draw_element_count, native && mode != NativePendingMode::Wait);
+        draw_state.draw_element_count, native && mode != NativePendingMode::Wait,
+        recurring_target);
     return {.native = native, .mode = mode, .can_discard = can_discard};
 }
 
