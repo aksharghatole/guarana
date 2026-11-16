@@ -34,25 +34,38 @@ counted once.
 
 | At (ms since process start) | Phase ends | Took (ms) | What can take it off |
 |---:|---|---:|---|
-| 4084 | Logging starts (the startup check child process runs before it) | 4084 | Nothing yet: step B2 finds out what it is |
+| 4084 | Logging starts (the startup Vulkan check runs before it) | 4084 | Step B2 |
 | 8108 | Frontend Vulkan instance created (the settings' device list) | 3642 | `EDEN_NX2_VULKAN_INSTANCE_ONCE` (step B1) |
 | 12597 | Renderer Vulkan instance created | 3664 | `EDEN_NX2_VULKAN_INSTANCE_ONCE`, `EDEN_NX2_BOOT_ASYNC` (step B1) |
 | 14201 | Shader cache log and driver cache read | 1790 | `EDEN_NX2_CACHE_MMAP`, `EDEN_NX2_BOOT_ASYNC` (step B3) |
 | 20053 | Shader cache load done: the boot builds (6007 pipelines) | 5852 | `EDEN_NX2_BOOT_ASYNC` for graphics; compute still waits (step B4) |
 | 20718 | RomFS patch done | 265 | Small |
-| 24746 | First guest frame | 4028 | Nothing yet: step B5 finds out what it is |
+| 24746 | First guest frame | 4028 | Step B5 |
 
-What the table does not say, and where it comes from:
+What the table does not say, and where it comes from (code reading unless marked):
 
+- The 4.08 s before logging is the startup Vulkan check (`lichii/startup_checks.cpp`): on Windows it
+  starts a child copy of `guarana.exe` that creates its own Vulkan instance, and waits for it, unless
+  `vulkan_check.txt` matches the driver key and the last session ended cleanly. A session that was
+  killed (a crash, a lab script, `taskkill`) makes the next start run it again: about one more
+  instance creation. Its Debug setting cannot turn it off, because `perform_vulkan_check` is read
+  before the configuration is loaded.
+- A direct launch (`guarana.exe -g <game>`, a shortcut, the launcher, the bench) does not list the
+  Vulkan devices at startup; #46 was a launch from the game list, which does. So the frontend's
+  3.6 s instance is a game-list launch's only, and on a direct launch `EDEN_NX2_VULKAN_INSTANCE_ONCE`
+  can only overlap the renderer's instance with the kernel and process set-up.
+- Between the end of the load and the first frame the frontend runs nothing in sequence: the guest
+  starts, opens its RomFS (the patch marks), reads its assets, and every pipeline its first frames
+  need that the boot did not build is built then (section 4).
 - `vkCreateInstance` takes about 3.6 s on this driver each time. [warm-up.md](warm-up.md) says the
   Intel driver reads its own shader cache (about 450 MB) at instance creation, so the time grows
   with that cache. A cold driver cache makes the instance faster: the suite records whether
   the driver's cache folder was cleared.
 - Issue [#12](https://github.com/karimalsalah/guarana/issues/12)'s "gap of about 7 s before the
   RomFS patch" has the length of the two shader phases above (1.8 + 5.9 s), and the RomFS patch is
-  marked when the game opens its RomFS, which it does only once the guest runs. So the gap is
-  probably the shader load, not the container. This is an inference from the marks, not a
-  measurement. Parsing a NUP once per session came with #3.
+  reached only from the game's first RomFS open, after the shader load and the guest release. So
+  the gap is the shader load, not the container: an inference from the marks and the code order,
+  not a measurement. Parsing a NUP once per session came with #3.
 - A second run of the same boot with a different build (warm-up.md, "Measuring boot and warm-up":
   guest released at 12.26 s, first frame at 19.56 s, instance 4.15 s) is not added to this table: its
   zero and its build differ.
@@ -118,19 +131,22 @@ boot.
 
 ## 4. What the image does when a pipeline is not ready
 
-Today's defaults: asynchronous shaders off, native draws Wait. A draw whose pipeline is not built
-stops its frame until the build ends: 400-1000 ms for a full build on Intel, a fraction of a
-millisecond for a fast link of two built libraries.
+Today's defaults: native draws Wait. Asynchronous shaders are off in code and seeded on in a new
+configuration, but they only let a draw be skipped when it is not native, and every Switch 2
+channel runs native, so for a Switch 2 game a draw whose pipeline is not built stops its frame
+until the build ends: 400-1000 ms for a full build on Intel, a fraction of a millisecond for a fast
+link of two built libraries. Bounded and Skip (`native_async_draws`) apply to native draws only
+when depth is on.
 
 | Case | Default | Bounded or Skip (`native_async_draws`), asynchronous shaders on | Image meanwhile |
 |---|---|---|---|
 | New pipeline, both libraries built (`EDEN_NX2_GPL`) | Fast link on the spot | Same | Correct; fast-linked code until the optimized link replaces it |
 | New pipeline, a library to build | The frame waits for the build | Bounded: waits up to what is left of 8 ms this frame, then skips; Skip: skips at once | Skipped: the object is missing until it is built, one frame or more |
 | Cached pipeline still queued in the background prebuild | Built inline on the GPU thread (#103) | Same; `EDEN_NX2_PREBUILD_NO_INLINE` skips instead | As above |
-| New compute pipeline | The dispatch waits | Waits | Correct, late |
+| New compute pipeline | The dispatch waits | Waits: a dispatch is never skipped | Correct, late |
 
-No path draws with a substitute pipeline (code reading); the fallback is a skip. That is the rule a skip must
-respect: a draw into a target the game draws again next frame (scene geometry with depth) may be
+No path draws with a substitute pipeline (code reading): a draw waits for its own pipeline or is
+dropped. That is the rule a skip must respect: a draw into a target the game draws again next frame (scene geometry with depth) may be
 skipped, it reappears once built; a draw that is made once (a menu, a loading screen's text, a
 target that is written once and read later) must wait, because a skipped one is lost for the
 session. Eglantine #874's test (depth-tested draws into targets that are redrawn) is that rule, so
@@ -142,13 +158,13 @@ Each is one pull request with its switch and row; "Saves" is the expected effect
 
 | Step | What | Saves | Switch | Status |
 |---|---|---|---|---|
-| M1 | `tools/bench` boot matrix: cold, second and warm caches, the baseline against each switch, one command | Makes the rest measurable | none | This round |
+| M1 | `tools/bench` boot matrix: cold, second and warm caches, the baseline against each switch, one command | Makes the rest measurable | none | [#222](https://github.com/karimalsalah/guarana/pull/222) |
 | B1 | One Vulkan instance per boot | 3.6 s on a list launch (#46); 0.5-1 s direct (estimate) | `EDEN_NX2_VULKAN_INSTANCE_ONCE` (exists) | Measure (M1) |
-| B2 | What runs in the 4.1 s before logging starts: the startup check child process and the loader | Up to 4.1 s if the check runs when it need not (estimate, upper bound) | Boot marks first | Find out |
+| B2 | The startup Vulkan check: make its Debug setting take effect (read it once the configuration is loaded). It stays on by default: after an unclean exit or a driver change it is what survives a crashing driver | Up to 4.1 s on a start after a killed session (#46's trace) for a player who turns it off; none after a clean exit, which skips it already | The existing setting | Next code step |
 | B3 | Map the log, decode in parallel | Part of 1.79 s (#46) | `EDEN_NX2_CACHE_MMAP` (exists) | Measure (M1) |
 | B4 | Boot builds behind the first frame, compute included | Up to 5.85 s (#46), less the builds the first frames wait for | `EDEN_NX2_BOOT_ASYNC` (exists); compute: new | Measure graphics; compute is the next code step |
-| B5 | What runs in the 4.0 s from the load to the first frame | Not known | Boot marks first | Find out |
-| B6 | Save the driver pipeline cache at the end of the load on Intel (port of Lichii #1838) | The next boot finds the session's driver builds even after a crash or kill; costs 1-2 s at load end (#1838) | New, default off | Port |
+| B5 | The 4.0 s from the load to the first frame: the guest's start plus the pipelines its first frames build | Not known: the suite's `at_first_frame` (held draws and builds at the first frame) says how much is pipelines | none | Measure (M1) |
+| B6 | Save the driver pipeline cache at the end of the load on Intel (port of Lichii #1838) | The next boot finds the session's driver builds even after a crash or kill; costs 1-2 s at load end (#1838) | `EDEN_NX2_LOAD_SAVE` | [#224](https://github.com/karimalsalah/guarana/pull/224) |
 | B7 | Persisted SPIR-V ([X2](../ROADMAP.md#x2-persisted-spir-v)) | Translation of every cached pipeline at each boot; the share of the 5.85 s is not known (measure with `EDEN_NX2_PIPELINE_BUILD_TRACE` against the boot builds' span) | New | After B4 |
 | F1 | First-play rows: GPL on and off, async shaders, Bounded, Skip | The first-play numbers this page lacks | Settings, `EDEN_NX2_GPL=0` | Measure (M1) |
 | F2 | Library builds in parallel, waited-for builds raised, unoptimized first | Shorter stalls, not fewer | `EDEN_NX2_GPL_PARALLEL_PARTS`, `EDEN_NX2_WAIT_BOOST`, `EDEN_NX2_UNOPT_FIRST` (exist) | Measure (M1) |
