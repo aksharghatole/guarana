@@ -1,1 +1,0 @@
-- Switch registry: document the Intel 8x16x16 cooperative path and its shared-memory scratch requirement for full HMMA subgroups (#105).

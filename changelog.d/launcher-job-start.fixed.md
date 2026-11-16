@@ -1,1 +1,0 @@
-- Launcher: assign workers to their Windows job immediately after normal startup, document the brief pre-assignment containment gap, and fix Windows paths in the containment tests.
