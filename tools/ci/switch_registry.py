@@ -56,8 +56,9 @@ REMOVED_SECTION = "Removed experiments"
 # Literals that start like a switch name but are not one, as (path, literal): a name built from
 # them at run time would escape the check, so each is listed here with why it does not read one.
 RUNTIME_PREFIXES = {
-    # Filters the lines of nx2_switches.txt by prefix before they are put in the environment.
-    ("src/lichii/nx2_switches.h", "EDEN_NX2_"),
+    # Filters the lines of nx2_switches.txt by prefix before they are put in the environment (the
+    # Qt frontend and the Android app both read the file through it).
+    ("src/common/nx2_switch_file.h", "EDEN_NX2_"),
     # The doctor filters switch-file lines and environment variables by prefix to report them;
     # it reads no switch of its own.
     ("launcher/src-tauri/src/hygiene.rs", "EDEN_NX2_"),
