@@ -583,7 +583,9 @@ MainWindow::MainWindow(bool has_broken_vulkan)
     }
     Common::BootTiming::Mark("frontend: content providers and keys ready, game list scan started");
 
-    if (whats_new_pending && !UISettings::values.first_start.GetValue() &&
+    // The launcher shows a version's notes in its own Updates screen; a launcher session goes
+    // straight to the game.
+    if (whats_new_pending && !launcher_session && !UISettings::values.first_start.GetValue() &&
         UISettings::values.show_whats_new.GetValue()) {
         QTimer::singleShot(0, this, &MainWindow::OnWhatsNew);
     }
@@ -1679,7 +1681,11 @@ void MainWindow::RestoreUIState() {
         UISettings::values.show_perf_overlay.GetValue());
     if (perf_overlay)
         perf_overlay->setVisible(ui->action_Show_Performance_Overlay->isChecked());
-    Debugger::ToggleConsole();
+    // A game the launcher starts is the one window on screen: no debug console beside it ("Show
+    // Log in Console" in Configure > Debug). This runs before `launcher_session` is set.
+    if (!QApplication::arguments().contains(QStringLiteral("--launcher-session"))) {
+        Debugger::ToggleConsole();
+    }
 }
 
 void MainWindow::OnAppFocusStateChanged(Qt::ApplicationState state) {

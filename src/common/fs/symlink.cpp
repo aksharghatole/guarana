@@ -4,7 +4,7 @@
 #include "symlink.h"
 
 #ifdef _WIN32
-#include <fmt/format.h>
+#include <string>
 #include <windows.h>
 #endif
 
@@ -38,10 +38,29 @@ bool CreateSymlink(fs::path from, fs::path to)
     fs::create_directory_symlink(from, to, ec);
 #ifdef _WIN32
     if (ec) {
-        const std::string command = fmt::format("mklink /J \"{}\" \"{}\"",
-                                                to.string(),
-                                                from.string());
-        return system(command.c_str()) == 0;
+        // mklink is built into cmd. Run it from the system folder and without a window: system()
+        // flashed a console in front of the emulator.
+        wchar_t system_dir[MAX_PATH]{};
+        const UINT length = GetSystemDirectoryW(system_dir, MAX_PATH);
+        if (length == 0 || length >= MAX_PATH) {
+            return false;
+        }
+        const std::wstring shell = std::wstring(system_dir, length) + L"\\cmd.exe";
+        std::wstring command =
+            L"cmd.exe /d /c mklink /J \"" + to.wstring() + L"\" \"" + from.wstring() + L"\"";
+        STARTUPINFOW startup{};
+        startup.cb = sizeof(startup);
+        PROCESS_INFORMATION process{};
+        if (!CreateProcessW(shell.c_str(), command.data(), nullptr, nullptr, FALSE,
+                            CREATE_NO_WINDOW, nullptr, nullptr, &startup, &process)) {
+            return false;
+        }
+        WaitForSingleObject(process.hProcess, INFINITE);
+        DWORD code = 1;
+        GetExitCodeProcess(process.hProcess, &code);
+        CloseHandle(process.hThread);
+        CloseHandle(process.hProcess);
+        return code == 0;
     }
 #endif
 

@@ -246,7 +246,9 @@ below still follow the original worker process; a crash does not automatically r
   **1** once its error dialog is closed. A crash ends the process with the crash code, as before. A
   restart or a game that starts its own sub-program boots again and does not end the session;
 - shows its dialogs (load errors, confirmations, applets such as the software keyboard) as before,
-  above the fullscreen window or, before the window appears, on their own.
+  above the fullscreen window or, before the window appears, on their own. It skips the debug
+  console ("Show Log in Console" in Configure > Debug) and the What's New dialog after an update:
+  the game stays the one window, and the launcher's Updates screen has the notes.
 
 ### Pads and the log while a game runs
 
