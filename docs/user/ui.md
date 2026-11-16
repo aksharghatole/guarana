@@ -33,14 +33,20 @@ All of them can be changed in Settings > General > Hotkeys.
 
 ## The performance overlay
 
-Off by default. Switch it on with Ctrl + V or the View menu. The default **compact** overlay shows:
+Off by default. Switch it on with Ctrl + V or the View menu. Drag it to move it. Right-click it and check **Detailed trace** for the larger one (the same switch as `guarana_overlay_compact=false` in the config file).
 
-- the game's own frame rate, big;
+Both sizes show:
+
+- the game's own frame rate, big, easing toward the measured value;
 - the frame rate that reaches the screen once generated frames are added ("shown");
-- a line of the last 2 seconds of frame times: flat is even, a red stretch is a hitch;
-- frame generation as `FG off`, `FG on` or `FG on +N` (N generated frames per second), and the current frame time.
+- the 1% low of the trace: the slowest 1% of presents, written as a frame rate;
+- frame time, guest-to-wall speed, and a short read of the limit: steady, cpu bound, gpu bound, uneven, or compiling;
+- the presents themselves. Each bar is one present. Its width is the time since the previous present, and its height is that same time. The color runs from mint (120 Hz or faster) through ice (60 Hz) and amber (45 Hz) to red (30 Hz or slower). A faint band is the 16.7 ms budget. The lines that drift left are one-second marks, so a flat 60 Hz ribbon still moves;
+- how those presents spread across the same budgets (the row of bars labeled in Hz);
+- host threads as a heat strip, and how busy the GPU was during the frame. The detailed trace names the threads: C0–C5, SC (single core), GC (GPU command), GB (GPU backend), VK (Vulkan worker);
+- frame generation (`FG off`, `FG on`, `FG on +N`), shaders being built, and the upscaler, when they are on.
 
-The detailed overlay (CPU and GPU load, 5 second graph with min, median and max, upscaler tags) is still there: set `guarana_overlay_compact=false` in the config file. Drag the overlay to move it.
+The border flashes when the newest present is slower than 1.2× the median. The detailed trace also lists the minimum, median and maximum game frame rate over the last few samples. The overlay stops drawing when it is hidden.
 
 ## The Guarana settings page
 

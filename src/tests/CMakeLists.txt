@@ -34,6 +34,7 @@ add_executable(tests
     core/nx2_frame_interval.cpp
     core/ldn_lan_protocol.cpp
     core/perf_stats.cpp
+    lichii/performance_overlay_model.cpp
     core/game_presets.cpp
     core/game_resolver.cpp
     core/key_derivation.cpp

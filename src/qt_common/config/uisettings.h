@@ -231,8 +231,8 @@ struct Values {
 
     // perf overlay
     Setting<bool> show_perf_overlay{linkage, false, "show_perf_overlay", Category::UiGameList};
-    // Compact brand overlay (fps, shown fps, 2 s frame times, frame generation); off = the
-    // detailed overlay as before
+    // Compact corner instrument (2 s trace). Off = the detailed trace: 5 s, named cores,
+    // frame-time spread. The overlay's right-click menu writes this.
     Setting<bool> guarana_overlay_compact{linkage, true, "guarana_overlay_compact",
                                           Category::UiGameList};
 
