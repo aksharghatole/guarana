@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -52,6 +53,11 @@ public:
      */
     void CloseStreams() override;
 
+    /// Opening a microphone can wait on a permission prompt (see Sink::InputOpenMayBlock).
+    bool InputOpenMayBlock() const override {
+        return true;
+    }
+
     /**
      * Get the device volume. Set from calls to the IAudioDevice service.
      *
@@ -80,6 +86,8 @@ private:
     std::string input_device;
     /// Vector of streams managed by this sink
     std::vector<SinkStreamPtr> sink_streams;
+    /// Guards sink_streams and device_volume: input streams are opened on helper threads
+    mutable std::mutex streams_mutex;
 };
 
 /**

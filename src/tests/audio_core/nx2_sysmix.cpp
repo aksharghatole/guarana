@@ -3,7 +3,9 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <limits>
+#include <memory>
 #include <thread>
 #include <vector>
 #include <catch2/catch_test_macros.hpp>
@@ -82,9 +84,10 @@ TEST_CASE("sysmix input captures silence when the host microphone cannot open", 
     SysmixOutput stream{
         context.system, *context.process, context.sink, 2, Context::Base, Context::Size, 2, true};
     REQUIRE(stream.Open(2, 1, 48000, 4096, 0, 0).IsSuccess());
+    REQUIRE(context.sink.closed == 0);
+    REQUIRE(stream.SetEngaged(true).IsSuccess());
     REQUIRE(context.sink.last == nullptr);
     REQUIRE(context.sink.closed == 1);
-    REQUIRE(stream.SetEngaged(true).IsSuccess());
     REQUIRE(stream.GetState() == 2);
     const auto advance = [&] {
         context.system.CoreTiming().cpu_ticks += Common::WallClock::CPUTickFreq / 200;
@@ -117,8 +120,9 @@ TEST_CASE("sysmix input captures silence when the host microphone cannot start",
     SysmixOutput stream{
         context.system, *context.process, context.sink, 2, Context::Base, Context::Size, 2, true};
     REQUIRE(stream.Open(2, 1, 48000, 1024, 0, 0).IsSuccess());
-    REQUIRE(context.sink.last != nullptr);
+    REQUIRE(context.sink.streams.empty());
     REQUIRE(stream.SetEngaged(true).IsSuccess());
+    REQUIRE(context.sink.closed == 1);
     REQUIRE(context.sink.last == nullptr);
     for (int block = 0; block < 2; ++block) {
         context.system.CoreTiming().cpu_ticks += Common::WallClock::CPUTickFreq / 200;
@@ -128,6 +132,101 @@ TEST_CASE("sysmix input captures silence when the host microphone cannot start",
     u32 write{};
     REQUIRE(context.Memory().Read32Acquire(Context::Base + 0x1004, write));
     REQUIRE(write >= 240);
+}
+
+TEST_CASE("sysmix input opens the host microphone only once capture starts", "[sysmix][input]") {
+    Context context;
+    SysmixOutput stream{
+        context.system, *context.process, context.sink, 2, Context::Base, Context::Size, 2, true};
+    // Ocarina of Time opens two capture streams at boot and never engages them. On Windows the
+    // first microphone open from a new program path waits on a permission prompt (#199).
+    REQUIRE(stream.Open(2, 1, 48000, 4096, 0, 0).IsSuccess());
+    REQUIRE(stream.GetState() == 1);
+    stream.Pump();
+    REQUIRE(context.sink.streams.empty());
+    stream.Close();
+    REQUIRE(context.sink.closed == 0);
+    REQUIRE(stream.Open(2, 1, 48000, 4096, 0, 0).IsSuccess());
+    REQUIRE(stream.SetEngaged(true).IsSuccess());
+    REQUIRE(context.sink.streams.size() == 1);
+    REQUIRE_FALSE(context.sink.last->IsPaused());
+    REQUIRE(stream.SetEngaged(false).IsSuccess());
+    REQUIRE(stream.SetEngaged(true).IsSuccess());
+    REQUIRE(context.sink.streams.size() == 1);
+    REQUIRE_FALSE(context.sink.last->IsPaused());
+    stream.Close();
+    REQUIRE(context.sink.closed == 1);
+    REQUIRE(context.sink.streams.empty());
+}
+
+TEST_CASE("sysmix input captures silence while the host microphone open waits",
+          "[sysmix][input]") {
+    Context context;
+    const auto previous_gain = Settings::values.microphone_volume.GetValue();
+    Settings::values.microphone_volume.SetValue(100);
+    // Each open waits like one on a permission prompt nobody has answered yet.
+    auto sink = std::make_shared<SysmixTests::Sink>();
+    sink->block_input = true;
+    SCOPE_EXIT {
+        sink->Release();
+        Settings::values.microphone_volume.SetValue(previous_gain);
+    };
+    SysmixOutput stream{
+        context.system, *context.process, *sink, 2, Context::Base, Context::Size, 2, true};
+    REQUIRE(stream.Open(2, 1, 48000, 4096, 0, 0).IsSuccess());
+    REQUIRE(stream.SetEngaged(true).IsSuccess());
+    REQUIRE(stream.GetState() == 2);
+    REQUIRE(sink->WaitFor([&] { return sink->waiting == 1; }));
+    for (int block = 0; block < 4; ++block) {
+        stream.Pump();
+    }
+    u32 write{};
+    REQUIRE(context.Memory().Read32Acquire(Context::Base + 0x1004, write));
+    REQUIRE(write == 4 * 240);
+    REQUIRE(stream.GetCounters().nonzero_frames == 0);
+
+    // The player answers: once the open returns, a tick takes the microphone and starts it.
+    sink->Release();
+    SysmixTests::Stream* microphone{};
+    REQUIRE(sink->WaitFor([&] { return (microphone = sink->last) != nullptr; }));
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds{10};
+    while (microphone->IsPaused() && std::chrono::steady_clock::now() < deadline) {
+        u32 purged{};
+        REQUIRE(stream.Purge(0, purged).IsSuccess());
+        stream.Pump();
+        std::this_thread::sleep_for(std::chrono::milliseconds{1});
+    }
+    REQUIRE_FALSE(microphone->IsPaused());
+    u32 purged{};
+    REQUIRE(stream.Purge(0, purged).IsSuccess());
+    const std::array<s16, 6> samples{1000, 3000, -1000, -3000, 100, 300};
+    microphone->ProcessAudioIn(samples, 3);
+    stream.Pump();
+    REQUIRE(stream.GetCounters().nonzero_frames == 3);
+    stream.Close();
+    REQUIRE(sink->WaitFor([&] { return sink->streams.empty(); }));
+}
+
+TEST_CASE("sysmix input closed while its microphone open waits leaves the close to the open",
+          "[sysmix][input]") {
+    Context context;
+    auto sink = std::make_shared<SysmixTests::Sink>();
+    sink->block_input = true;
+    SCOPE_EXIT {
+        sink->Release();
+    };
+    {
+        SysmixOutput stream{
+            context.system, *context.process, *sink, 2, Context::Base, Context::Size, 2, true};
+        REQUIRE(stream.Open(2, 1, 48000, 4096, 0, 0).IsSuccess());
+        REQUIRE(stream.SetEngaged(true).IsSuccess());
+        REQUIRE(sink->WaitFor([&] { return sink->waiting == 1; }));
+        stream.Close();
+        REQUIRE(stream.GetState() == 0);
+    }
+    REQUIRE(sink->closed == 0);
+    sink->Release();
+    REQUIRE(sink->WaitFor([&] { return sink->closed == 1 && sink->streams.empty(); }));
 }
 
 TEST_CASE("sysmix input applies gain to float capture and protects producer ownership",
