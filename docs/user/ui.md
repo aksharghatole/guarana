@@ -44,6 +44,7 @@ Both sizes show:
 - the presents themselves. Each bar is one present. Its width is the time since the previous present, and its height is that same time. The color runs from mint (120 Hz or faster) through ice (60 Hz) and amber (45 Hz) to red (30 Hz or slower). A faint band is the 16.7 ms budget. The lines that drift left are one-second marks, so a flat 60 Hz ribbon still moves;
 - how those presents spread across the same budgets (the row of bars labeled in Hz);
 - host threads as a heat strip, and how busy the GPU was during the frame. The detailed trace names the threads: C0–C5, SC (single core), GC (GPU command), GB (GPU backend), VK (Vulkan worker);
+- memory, read every two seconds: the RAM Guarana holds and the RAM the PC has free, then the GPU memory Guarana uses and the room the driver still gives it. The room turns amber under 2 GB of RAM or 1 GB of GPU memory: past that the PC pages or the GPU moves its data into RAM, and both show as stutter. On an integrated GPU the GPU memory is part of the RAM: the detailed trace says "shared", and its room is never more than the RAM the PC has free;
 - frame generation (`FG off`, `FG on`, `FG on +N`), shaders being built, and the upscaler, when they are on.
 
 The border flashes when the newest present is slower than 1.2× the median. The detailed trace also lists the minimum, median and maximum game frame rate over the last few samples. The overlay stops drawing when it is hidden.

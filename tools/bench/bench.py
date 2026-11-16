@@ -21,6 +21,7 @@ import difflib
 import getpass
 import glob
 import hashlib
+import importlib
 import json
 import math
 import os
@@ -55,6 +56,22 @@ PICTURE_DARK_PCT = 85
 PICTURE_CENTER = (range(6, 26), range(4, 14))
 BASELINE_VARIANT = {"name": "baseline", "settings": {}, "env": {}}
 IS_WINDOWS = sys.platform == "win32"
+# Boot suites (a suite's "boot" block): the state of the title's shader cache, and of the driver
+# cache folders given with --driver-cache-dir, when a run starts. cold: none; second: what the same
+# variant's cold run of the same repeat left; warm: a copy of the owner's cache as it was when the
+# suite started.
+CACHE_STATES = ("cold", "second", "warm")
+NX2_TOOLS = os.path.join(os.path.dirname(HERE), "nx2")
+# A boot run closes the emulator and waits this long for it to save its caches and exit.
+BOOT_CLOSE_GRACE_S = 90
+# vk_pipeline_cache.cpp: the last boot ended while building cached pipelines, so this one builds none.
+BOOT_GUARD_TEXT = "building none at boot this time"
+# vk_pipeline_cache.cpp SerializeVulkanPipelineCache: a save of the driver pipeline cache.
+DRIVER_CACHE_SAVED_TEXT = "Vulkan driver pipelines cached at"
+FIRST_FRAME_PHASE = "frontend: first guest frame presented"
+GAME_SHOWN_PHASE = "frontend: loading screen hidden, game shown"
+GUEST_RELEASED_PHASE = "guest: GPU started, guest cores released"
+INSTANCE_CREATED_PHASE = "vulkan: instance created"
 
 
 class BenchError(Exception):
@@ -1343,6 +1360,10 @@ ROW_FIELDS = {
     "output": ((dict, OPTIONAL), False),
     "pacing": ((dict, OPTIONAL), False),
     "picture": ((dict, OPTIONAL), False),
+    # Boot suites only.
+    "cache_state": ((str, OPTIONAL), False),
+    "repeat": ((int, OPTIONAL), False),
+    "boot": ((dict, OPTIONAL), False),
 }
 OUTPUT_FIELDS = {
     "size": ((str, OPTIONAL), True),
@@ -1482,6 +1503,11 @@ def validate_row(row):
         errors.append("a valid fullscreen row needs output.size")
     if row.get("pacing") is not None:
         _check_fields(row["pacing"], PACING_FIELDS, "pacing", errors)
+    if row.get("cache_state") is not None:
+        if row["cache_state"] not in CACHE_STATES:
+            errors.append(f"cache_state is one of {', '.join(CACHE_STATES)}")
+        if row["valid"] and not isinstance((row.get("boot") or {}).get("first_frame_ms"), NUMBER):
+            errors.append("a valid boot row needs boot.first_frame_ms")
     if row.get("picture") is not None:
         _check_fields(row["picture"], PICTURE_FIELDS, "picture", errors)
         if row["picture"].get("black") is True and "black_picture" not in row["invalid_reasons"]:
@@ -1634,13 +1660,18 @@ class Plan:
         cli_policy = parse_power_policy(args.power_policy)
         self.variants = [check_variant(variant, args.mod, cli_policy, args.fullscreen, getattr(args, "pacing", False))
                          for variant in variants or [BASELINE_VARIANT]]
-        if len({variant["name"] for variant in self.variants}) != len(self.variants):
+        # A boot suite runs a variant once per cache state and repeat.
+        runs = [(variant["name"], variant.get("cache_state"), variant.get("repeat")) for variant in self.variants]
+        if len(set(runs)) != len(runs):
             raise BenchError("variant names must differ")
         self.base_ini = expand(args.base_ini)
         self.mod_library = expand(args.mod_library)
         self.gpu_telemetry = expand(args.gpu_telemetry)
         self.power_restore = os.path.join(expand(args.state_dir) or default_state_dir(), "power-restore.json")
         self.suite = None
+        # A boot suite's options (load_boot_options) and, while it runs, its BootSession.
+        self.boot = None
+        self.boot_session = None
         saves = scene.get("saves") or {}
         self.user_dir = expand(args.user_dir or saves.get("user_dir")) or find_user_dir(self.exe)
         self.mod_dir = os.path.join(self.user_dir, "load", scene["title_id"].upper()) if self.user_dir else None
@@ -1710,6 +1741,9 @@ class Plan:
         if self.mod_library:
             problems += [f"mod not found in the library: {os.path.join(self.mod_library, mod)}" for mod in mods
                          if not os.path.isdir(os.path.join(self.mod_library, mod))]
+        if self.boot and not self.user_dir:
+            problems.append("a boot suite moves the title's shader cache: it needs the emulator's user folder "
+                            "(--user-dir)")
         return problems
 
     def describe(self):
@@ -1726,18 +1760,47 @@ class Plan:
                  f"results     {os.path.join(self.out, '<date>-<machine-id>.jsonl')}",
                  f"limits      stop under {self.ram_floor_gb} GB free RAM; flag over "
                  f"{self.cpu_limit_pct}% CPU used by other processes"]
+        described = set()
         for variant in self.variants:
+            if variant["name"] in described:
+                continue
+            described.add(variant["name"])
             lines.append(f"variant {variant['name']}:")
             step = 1
             for text in self.steps(variant):
                 lines.append(f"  {step:2}. {text}")
                 step += 1
+        if self.boot:
+            lines += self.describe_boot()
         return "\n".join(lines)
+
+    def describe_boot(self):
+        """The caches a boot suite moves, the order of its runs and a rough length."""
+        title = f"{int(self.scene['title_id'], 16):016x}"
+        folders = [os.path.join(self.user_dir or "<user folder>", "cache", "shader", title)] + self.boot["driver_dirs"]
+        lines = ["caches      backed up once to " + os.path.join(self.boot["work_dir"], "<date-time>", "backup")
+                 + " (sha256 manifest); before every run moved aside (renamed to <folder>.bench-aside) and "
+                 "replaced by the run's start state; after it moved into the work folder, the original renamed "
+                 "back and checked:"]
+        lines += [f"              {folder}" for folder in folders]
+        if not self.boot["driver_dirs"]:
+            lines.append("              (no --driver-cache-dir: the GPU driver keeps its own cache, so cold runs are "
+                         "cold for the emulator only)")
+        lines.append("states      cold: none; second: what the same variant's cold run of the same repeat left; "
+                     "warm: a copy of the backup (your cache as it was when the suite started)")
+        total = sum(boot_run_seconds(self, variant["cache_state"]) for variant in self.variants)
+        lines.append(f"runs        {len(self.variants)}, about {total / 3600:.1f} h (a rough estimate):")
+        for index, variant in enumerate(self.variants, 1):
+            lines.append(f"  {index:3}. repeat {variant['repeat'] + 1} {variant['cache_state']:6} {variant['name']}")
+        return lines
 
     def steps(self, variant):
         steps = [f"refuse to run if {os.path.basename(self.exe)} is running or port {self.port} is in use"]
         if self.save_dir:
             steps.append("restore the saves from the backup")
+        if variant.get("cache_state"):
+            steps.append("move the caches aside and put in the run's start state (cold, second or warm: see caches "
+                         "below)")
         if variant["mods"] is not None:
             steps.append(f"move the mod folders in {self.mod_dir} aside and copy in: "
                          + (", ".join(variant["mods"]) or "none"))
@@ -1782,7 +1845,13 @@ class Plan:
         if variant["late_s"]:
             steps.append(f"wait {variant['late_s']:g} s, measure one more window")
         steps.append("read memory and gpu_costs when the server has them; window size, process memory")
+        if variant.get("cache_state"):
+            steps.append("boot_timing at the first frames, and with the marks 'scene' (after the scene check) and "
+                         "'end' (here)")
         steps.append("screenshot again, save it" + ("" if variant["reject"] else ", compare"))
+        if variant.get("cache_state"):
+            steps.append(f"close the emulator and wait up to {self.boot['close_grace_s']:g} s for it to save its "
+                         "caches and exit; then put the original caches back")
         steps.append("stop the emulator; once it is gone restore the settings file"
                      + (", the mod folders" if variant["mods"] is not None else "")
                      + (", the power settings" if variant["power_policy"] else "")
@@ -1986,6 +2055,12 @@ def run_variant(plan, variant, hardware, deps, row_id):
     process = watchdog = None
     rejected = False
     cpu_readings = []
+    log_copy = None
+    boot = bool(variant.get("cache_state"))
+    boot_answers = []
+    if boot:
+        row["cache_state"], row["repeat"] = variant["cache_state"], variant["repeat"]
+        row["boot"] = {"caches": {}}
     try:
         image = os.path.basename(plan.exe)
         if deps.running(image):
@@ -2023,6 +2098,8 @@ def run_variant(plan, variant, hardware, deps, row_id):
         env.update({key: str(value) for key, value in (variant.get("env") or {}).items()})
         # The switch adds GPU timestamps to FLUID presenter copies: rows say whether it was on.
         row["shown_stats"] = env.get(SHOWN_STATS_ENV, "") not in ("", "0")
+        if boot:
+            row["boot"]["caches"] = plan.boot_session.prepare(variant, row_id)
         process = deps.launch(plan.exe, plan.game, env)
 
         deadline = time.monotonic() + plan.server_timeout_s
@@ -2047,6 +2124,9 @@ def run_variant(plan, variant, hardware, deps, row_id):
         for key in ("title", "program_id", "build", "renderer"):
             if isinstance(status.get(key), (str, int)):
                 row["emulator"][key] = status[key]
+        if boot:
+            boot_answers.append(client.try_call("boot_timing", {}, 20))
+            row["boot"]["switch_defaults"] = switch_decisions(status)
         if "program_id" in status and not same_title(plan.scene["title_id"], status["program_id"]):
             reasons.append("wrong_title")
         available = {method: client.try_call(method, {}, 20) is not None for method in OPTIONAL_METHODS}
@@ -2085,6 +2165,8 @@ def run_variant(plan, variant, hardware, deps, row_id):
             row["screenshot"] = shot_path
             raise BenchError(f"wrong scene (diff {row['scene_diff']}): not measured")
         deps.sleep(2)
+        if boot:
+            boot_answers.append(client.try_call("boot_timing", {"mark": "scene"}, 20))
 
         for call in variant["live"]:
             client.call(call["method"], call.get("params") or {}, 40)
@@ -2126,6 +2208,8 @@ def run_variant(plan, variant, hardware, deps, row_id):
                 row[method] = client.try_call(method, {}, 30)
         row["window"] = deps.window_size(process.pid)
         row["process_memory"] = deps.process_memory(process.pid)
+        if boot:
+            boot_answers.append(client.try_call("boot_timing", {"mark": "end"}, 20))
 
         last_shot = take_screenshot(client, plan.shot_height)
         with open(shot_path, "wb") as file:
@@ -2144,12 +2228,24 @@ def run_variant(plan, variant, hardware, deps, row_id):
                 row["warnings"].append("reject_not_restored")
             if watchdog is not None:
                 watchdog.stop()
-            deps.stop(process)
+            if boot:
+                # It saves its caches on the way out: give it time to.
+                deps.stop(process, close_grace_s=plan.boot["close_grace_s"])
+            else:
+                deps.stop(process)
             # The emulator writes its settings when it exits: restore only once it is gone.
             if not wait_gone(process, deps.sleep):
                 row["warnings"].append("emulator_still_running")
 
-        run_each(stop, guard.restore, mods.restore, policy.restore)
+        def restore_caches():
+            if not boot:
+                return
+            if process is not None and process.poll() is None:
+                raise BenchError("the emulator is still running, so its caches stay aside: close it, then run the "
+                                 "suite again, which puts them back first")
+            plan.boot_session.restore(variant)
+
+        run_each(stop, restore_caches, guard.restore, mods.restore, policy.restore)
 
     if process is not None:
         log_name = f"logs/{row_id}.log.txt"
@@ -2195,6 +2291,9 @@ def run_variant(plan, variant, hardware, deps, row_id):
         row["warnings"].append("on_battery")
     if row["fps"] is not None and row["power"] is None:
         row["warnings"].append("no_power_reading")
+    if boot:
+        row["boot"].update(boot_summary(*(boot_answers + [None, None, None])[:3]))
+        finish_boot_row(row, variant, log_copy if row["log"] else None, plan.boot_session)
     row["invalid_reasons"] = list(dict.fromkeys(reasons))
     row["valid"] = not row["invalid_reasons"]
     return row
@@ -2222,6 +2321,12 @@ def run_plans(plans, deps, dry_run=False):
             deps.log("restored the mod folders an interrupted run had left aside")
     if PowerPolicy({}, deps.run_command, first.power_restore).recover():
         deps.log("restored the power settings an interrupted run had left changed")
+    for plan in plans:
+        if plan.boot:
+            plan.boot_session = BootSession(plan)
+            deps.log(f"copying the caches a boot run moves to {plan.boot_session.work}")
+            for message in plan.boot_session.begin():
+                deps.log(message)
     deps.log("collecting hardware information")
     hardware = deps.hardware()
     sanitize = make_sanitizer()
@@ -2236,8 +2341,11 @@ def run_plans(plans, deps, dry_run=False):
         saves.begin()
         try:
             for variant in plan.variants:
-                deps.log(f"variant {variant['name']}")
-                row_id = (f"{stamp:%Y-%m-%d}-{machine}-{plan.scene['name']}-{variant['name']}-"
+                state = (f", {variant['cache_state']} cache, repeat {variant['repeat'] + 1}"
+                         if variant.get("cache_state") else "")
+                deps.log(f"variant {variant['name']}{state}")
+                suffix = f"-{variant['cache_state']}-r{variant['repeat'] + 1}" if variant.get("cache_state") else ""
+                row_id = (f"{stamp:%Y-%m-%d}-{machine}-{plan.scene['name']}-{variant['name']}{suffix}-"
                           f"{datetime.datetime.now():%H%M%S}")
                 row = run_variant(plan, variant, hardware, deps, row_id)
                 if row["screenshot"]:
@@ -2253,6 +2361,8 @@ def run_plans(plans, deps, dry_run=False):
                 rows.append(row)
                 deps.log(f"    {'VALID' if row['valid'] else 'INVALID (' + ', '.join(row['invalid_reasons']) + ')'}"
                          + (" (probe)" if row["probe"] else "") + (f": {row['error']}" if row["error"] else ""))
+            if plan.boot_session:
+                plan.boot_session.finish()
         finally:
             saves.end()
     deps.log(f"rows appended to {results}")
@@ -2261,6 +2371,372 @@ def run_plans(plans, deps, dry_run=False):
 
 def command_run(args, deps=Deps):
     return run_plans([Plan(args)], deps, args.dry_run)[0]
+
+
+# ---------------------------------------------------------------------------------------------
+# Boot suites: launch to gameplay from a cold, second or warm cache (a suite's "boot" block)
+
+def nx2_tool(name):
+    """A module of tools/nx2 (standard library only), imported when a boot suite first needs it."""
+    if NX2_TOOLS not in sys.path:
+        sys.path.insert(0, NX2_TOOLS)
+    return importlib.import_module(name)
+
+
+def check_driver_cache_dir(path):
+    """The absolute path of a GPU driver's cache folder the bench may move aside. It must exist and
+    its own name must say cache; never a drive, the home folder, or a path that names saves or keys."""
+    path = os.path.abspath(expand(path))
+    name = os.path.basename(path.rstrip("\\/"))
+    home = os.path.abspath(os.path.expanduser("~"))
+    parts = {part.lower() for part in re.split(r"[\\/]+", path) if part}
+    if not os.path.isdir(path):
+        raise BenchError(f"--driver-cache-dir {path}: not a folder")
+    if "cache" not in name.lower():
+        raise BenchError(f"--driver-cache-dir {path}: the folder's own name must say cache (a GPU driver's "
+                         "shader cache folder)")
+    if os.path.dirname(path) == path or os.path.normcase(path) in {os.path.normcase(home),
+                                                                   os.path.normcase(os.path.dirname(home))}:
+        raise BenchError(f"--driver-cache-dir {path}: refusing a drive or the home folder")
+    if parts & {"nand", "sdmc", "save", "saves", "keys"}:
+        raise BenchError(f"--driver-cache-dir {path}: refusing a path that names saves or keys")
+    return path
+
+
+def load_boot_options(suite, path, args):
+    """The suite's "boot" block with the command line's choices applied, or None for a suite without
+    one: {states, repeats, close_grace_s, driver_dirs, work_dir, keep_caches}."""
+    boot = suite.get("boot")
+    if boot is None:
+        return None
+    if not isinstance(boot, dict):
+        raise BenchError(f"suite {path}: boot is an object")
+    states = boot.get("cache_states", list(CACHE_STATES))
+    if not isinstance(states, list) or not states or any(state not in CACHE_STATES for state in states):
+        raise BenchError(f"suite {path}: boot.cache_states lists some of {', '.join(CACHE_STATES)}")
+    chosen = getattr(args, "cache_states", None)
+    if chosen:
+        unknown = [state for state in chosen if state not in CACHE_STATES]
+        if unknown:
+            raise BenchError(f"--cache-states: unknown {', '.join(unknown)} (known: {', '.join(CACHE_STATES)})")
+        states = [state for state in CACHE_STATES if state in chosen]
+    try:
+        chosen_repeats = getattr(args, "repeats", None)
+        repeats = int(boot.get("repeats", 3) if chosen_repeats is None else chosen_repeats)
+        close_grace_s = float(boot.get("close_grace_s", BOOT_CLOSE_GRACE_S))
+    except (TypeError, ValueError):
+        raise BenchError(f"suite {path}: boot.repeats and boot.close_grace_s are numbers") from None
+    if repeats < 1:
+        raise BenchError("a boot suite runs at least once (--repeats 1)")
+    return {"states": [state for state in CACHE_STATES if state in states], "repeats": repeats,
+            "close_grace_s": close_grace_s,
+            "driver_dirs": [check_driver_cache_dir(item) for item in getattr(args, "driver_cache_dir", None) or []],
+            "work_dir": expand(getattr(args, "cache_work", None)) or os.path.join(default_state_dir(), "boot-caches"),
+            "keep_caches": bool(getattr(args, "keep_caches", False)), "baseline": None}
+
+
+def expand_boot_variants(variants, boot):
+    """Every variant once per cache state and repeat: per repeat, per cache state, the variants that
+    run in it, in the suite's order on even repeats and reversed on odd ones, so that a variant and
+    the baseline take turns going first. A variant's "cache_states" picks some of the suite's."""
+    states = {}
+    for variant in variants:
+        mine = variant.get("cache_states", boot["states"])
+        if not isinstance(mine, list) or any(state not in CACHE_STATES for state in mine):
+            raise BenchError(f"variant {variant.get('name')}: cache_states lists some of {', '.join(CACHE_STATES)}")
+        mine = [state for state in boot["states"] if state in mine]
+        if "second" in mine and "cold" not in mine:
+            raise BenchError(f"variant {variant.get('name')}: a second run starts from what the same variant's "
+                             "cold run left, so it needs cold too")
+        states[variant.get("name")] = mine
+    expanded = []
+    for repeat in range(boot["repeats"]):
+        for state in boot["states"]:
+            group = [variant for variant in variants if state in states[variant.get("name")]]
+            if repeat % 2:
+                group.reverse()
+            for variant in group:
+                entry = {key: value for key, value in variant.items() if key != "cache_states"}
+                expanded.append({**entry, "cache_state": state, "repeat": repeat})
+    return expanded
+
+
+class BootSession:
+    """The caches a boot suite moves. The title's shader cache folder (and each --driver-cache-dir) is
+    copied once with a sha256 manifest, moved aside before every run and put back after it. The
+    driver folders are not compared with their manifest afterwards: other programs on the same GPU
+    write them too. What a cold run left is kept until the same variant's second run of that repeat
+    has copied it."""
+
+    def __init__(self, plan):
+        self.cache_bench = nx2_tool("cache_bench")
+        self.keep = plan.boot["keep_caches"]
+        self.work = os.path.join(plan.boot["work_dir"], datetime.datetime.now().strftime("%Y%m%d-%H%M%S"))
+        backup = os.path.join(self.work, "backup")
+        title = plan.scene["title_id"]
+        driver_dirs = plan.boot["driver_dirs"]
+        roots = [self.cache_bench.shader_root(plan.user_dir)] + [os.path.dirname(path) for path in driver_dirs]
+        self.dirs = [self.cache_bench.CacheDir(f"shader-{title.lower()}",
+                                               self.cache_bench.title_dir(plan.user_dir, title), backup, roots)]
+        self.dirs += [self.cache_bench.CacheDir(f"driver-{index}", path, backup, roots, strict=False)
+                      for index, path in enumerate(driver_dirs)]
+        self.cold = {}
+        self.prepared = []
+        self.after = None
+
+    def recover(self):
+        """Puts back the originals an interrupted suite left aside; what was in their place goes to
+        the work folder. Returns what it did."""
+        done = []
+        for directory in self.dirs:
+            if directory.aside.exists():
+                if directory.path.exists():
+                    keep = os.path.join(self.work, "recovered", directory.key)
+                    os.makedirs(os.path.dirname(keep), exist_ok=True)
+                    shutil.move(str(directory.path), keep)
+                os.replace(directory.aside, directory.path)
+                done.append(f"put back {directory.path}, which an interrupted run had left aside")
+        return done
+
+    def begin(self):
+        """recover(), then the backups the warm runs copy from."""
+        done = self.recover()
+        try:
+            for directory in self.dirs:
+                directory.back_up()
+        except self.cache_bench.BenchError as error:
+            raise BenchError(str(error)) from None
+        return done
+
+    def prepare(self, variant, row_id):
+        """Moves the caches aside and puts in what the run's cache state starts from. Returns
+        {folder key: present or absent} as the run starts."""
+        state = variant["cache_state"]
+        self.after = os.path.join(self.work, "runs", row_id, "after")
+        source = None
+        if state == "second":
+            cold = self.cold.get((variant["name"], variant["repeat"])) or {}
+            if not cold.get("after"):
+                raise BenchError("no caches from this variant's cold run of this repeat to start from "
+                                 "(the cold run failed or left none)")
+            source = cold["after"]
+        try:
+            for directory in self.dirs:
+                directory.check()
+        except self.cache_bench.BenchError as error:
+            raise BenchError(str(error)) from None
+        start = {}
+        for directory in self.dirs:
+            self.prepared.append(directory)
+            directory.prepare(state, os.path.join(source, directory.key) if source else None)
+            start[directory.key] = "present" if directory.path.exists() else "absent"
+        return start
+
+    def restore(self, variant):
+        """Once the emulator is gone: moves what the run wrote out of the way and puts every original
+        back, all of them even when one fails. The cold run's folders are kept for its second run."""
+        failure = None
+        for directory in self.prepared:
+            try:
+                directory.restore(self.after)
+            except (OSError, self.cache_bench.BenchError) as error:
+                failure = failure or error
+        self.prepared = []
+        key = (variant["name"], variant["repeat"])
+        if variant["cache_state"] == "cold":
+            self.cold[key] = {"after": self.after if os.path.isdir(self.after) else None, "usable": None}
+        elif not self.keep:
+            shutil.rmtree(self.after, ignore_errors=True)
+            if variant["cache_state"] == "second" and (self.cold.get(key) or {}).get("after"):
+                shutil.rmtree(self.cold[key]["after"], ignore_errors=True)
+                self.cold[key]["after"] = None
+        if failure is not None:
+            raise BenchError(f"the caches were not all put back ({failure}); run the suite again, which puts "
+                             f"back what is aside before anything else, or rename the {self.cache_bench.ASIDE_SUFFIX} "
+                             "folders back by hand")
+
+    def cold_usable(self, variant):
+        """Whether the same variant's cold run of this repeat is valid and saved the driver pipeline
+        cache after its first frame, so that what it left is a whole session's caches (None: unknown)."""
+        return (self.cold.get((variant["name"], variant["repeat"])) or {}).get("usable")
+
+    def note_cold(self, variant, usable):
+        self.cold.setdefault((variant["name"], variant["repeat"]), {"after": None})["usable"] = usable
+
+    def finish(self):
+        """After the last run: the backup copies go unless --keep-caches (their manifests stay)."""
+        if not self.keep:
+            for directory in self.dirs:
+                shutil.rmtree(directory.backup, ignore_errors=True)
+
+
+def _rounded(value):
+    if isinstance(value, float):
+        return round(value, 1)
+    if isinstance(value, dict):
+        return {key: _rounded(item) for key, item in value.items()}
+    return value
+
+
+def boot_summary(first, scene, end):
+    """The row's boot numbers from the debug server's boot_timing answers (any may be None: an older
+    build): phases since the process started, the first frame, and the held draws and pipeline builds
+    from the first frame to the "scene" and "end" marks."""
+    latest = next((item for item in (end, scene, first) if isinstance(item, dict)), None)
+    if latest is None:
+        return {"first_frame_ms": None}
+    phases = [phase for phase in latest.get("phases") or [] if isinstance(phase, dict)
+              and isinstance(phase.get("phase"), str) and isinstance(phase.get("at_ms"), NUMBER)]
+
+    def at(name):
+        return next((round(phase["at_ms"], 1) for phase in phases if phase["phase"] == name), None)
+
+    split = latest.get("split") or {}
+    first_frame = split.get("first_frame") or {}
+    marks = {mark.get("label"): mark for mark in split.get("marks") or [] if isinstance(mark, dict)}
+    return {
+        "first_frame_ms": (round(first_frame["at_ms"], 1) if isinstance(first_frame.get("at_ms"), NUMBER)
+                           else at(FIRST_FRAME_PHASE)),
+        "game_shown_ms": at(GAME_SHOWN_PHASE),
+        "guest_released_ms": at(GUEST_RELEASED_PHASE),
+        "instances_created": sum(1 for phase in phases if phase["phase"] == INSTANCE_CREATED_PHASE),
+        "phases": [[phase["phase"], round(phase["at_ms"], 1),
+                    round(phase["took_ms"], 1) if isinstance(phase.get("took_ms"), NUMBER) else None]
+                   for phase in phases],
+        "at_first_frame": _rounded(first_frame.get("totals")),
+        "to_scene": _rounded((marks.get("scene") or {}).get("since_first_frame")),
+        "to_end": _rounded((marks.get("end") or {}).get("since_first_frame")),
+    }
+
+
+def switch_decisions(status):
+    """[name, value, decision] of each switch the game's defaults resolved at boot (status.resolution)."""
+    resolution = (status or {}).get("resolution") or {}
+    return [[str(item.get("name")), str(item.get("value")), str(item.get("decision"))]
+            for item in resolution.get("switches") or [] if isinstance(item, dict)] or None
+
+
+def finish_boot_row(row, variant, log_copy, session):
+    """What the copied log of a boot run says, with the checks that the run started from the cache
+    state it claims: a cold run loaded no records, the boot guard did not skip the boot builds, the
+    emulator used the cache folder the bench prepared. Called once every other reason is known: a
+    cold run that is invalid, or did not save the driver pipeline cache after its first frame, makes
+    the same variant's second run of that repeat invalid."""
+    boot = row["boot"]
+    reasons = row["invalid_reasons"]
+    state = variant["cache_state"]
+    if boot.get("first_frame_ms") is None:
+        reasons.append("no_boot_timing")
+    if state == "warm" and boot["caches"].get(session.dirs[0].key) == "absent":
+        row["warnings"].append("warm_cache_empty")
+    if state == "second" and session.cold_usable(variant) is False:
+        reasons.append("second_source_incomplete")
+    boot["driver_cache_saved_at_exit"] = None
+    try:
+        read_boot_log(row, variant, log_copy, session)
+    finally:
+        if state == "cold":
+            session.note_cold(variant, bool(boot["driver_cache_saved_at_exit"]) and not reasons)
+
+
+def read_boot_log(row, variant, log_copy, session):
+    boot = row["boot"]
+    reasons = row["invalid_reasons"]
+    lines = None
+    if log_copy:
+        try:
+            metrics = nx2_tool("cache_metrics").parse_log(log_copy)
+            with open(log_copy, encoding="utf-8", errors="replace") as file:
+                lines = file.read().splitlines()
+        except (OSError, ValueError):
+            lines = None
+    if lines is None:
+        reasons.append("no_log")
+        return
+    keys = ("boot_to_first_frame_s", "loading_shaders_s", "records_loaded", "pipelines_queued_at_boot",
+            "runtime_builds", "runtime_build_gpu_thread_ms", "frame_ms", "frames_over_33ms", "frames_over_100ms")
+    boot["log"] = {key: metrics.get(key) for key in keys}
+    boot["log"]["stutter_by_group"] = (metrics.get("stutter") or {}).get("by_group")
+    first = next((index for index, line in enumerate(lines) if FIRST_FRAME_PHASE in line), None)
+    boot["guard_tripped"] = any(BOOT_GUARD_TEXT in line for line in lines)
+    boot["driver_cache_saved_at_exit"] = first is not None and any(
+        DRIVER_CACHE_SAVED_TEXT in line for line in lines[first:])
+    boot["cache_dir_ok"] = session.cache_bench.check_cache_dir(log_copy, session.dirs[0].path)
+    if boot["guard_tripped"]:
+        reasons.append("boot_guard")
+    if boot["cache_dir_ok"] is False:
+        reasons.append("cache_dir_mismatch")
+    records = [value for value in (metrics.get("records_loaded") or {}).values() if isinstance(value, int)]
+    if variant["cache_state"] == "cold":
+        if not records:
+            row["warnings"].append("cold_unverified")
+        elif sum(records):
+            reasons.append("cache_not_cold")
+
+
+def boot_run_seconds(plan, state):
+    """A rough length of one boot run, for the plan's estimate: boot, the scene's input script,
+    settling, the three windows, and closing."""
+    boot_s = {"cold": 90, "second": 60, "warm": 60}[state]
+    script_s = sum(float(item.get("wait_s", 0)) for item in plan.scene["input"])
+    return boot_s + script_s + plan.settle_s + 3 * plan.window_s + 15 + plan.boot["close_grace_s"] / 3
+
+
+def _mean(values):
+    values = [value for value in values if isinstance(value, NUMBER) and not isinstance(value, bool)]
+    return sum(values) / len(values) if values else None
+
+
+def _seconds(ms_values):
+    values = [value / 1000 for value in ms_values if isinstance(value, NUMBER)]
+    if not values:
+        return "-"
+    mean = sum(values) / len(values)
+    return f"{mean:.1f}" + (f" ({min(values):.1f}-{max(values):.1f})" if len(values) > 1 else "")
+
+
+def render_boot_suite(rows, baseline):
+    """Markdown tables of a boot suite, one per cache state: the valid runs of every variant against
+    the baseline's in the same state."""
+    groups = collections.OrderedDict()
+    for row in rows:
+        groups.setdefault((row.get("cache_state"), row["variant"]), []).append(row)
+    lines = []
+    for state in CACHE_STATES:
+        keys = [key for key in groups if key[0] == state]
+        if not keys:
+            continue
+        base = [row for row in groups.get((state, baseline), []) if row["valid"]]
+        base_first = _mean([(row.get("boot") or {}).get("first_frame_ms") for row in base])
+        lines += [f"### {state}", "",
+                  "| variant | valid runs | first frame s | vs baseline | game shown s | Vulkan instances | "
+                  "held draws to scene | held ms to scene | frames over 100 ms | fps |",
+                  "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|"]
+        for key in keys:
+            valid = [row for row in groups[key] if row["valid"]]
+            boots = [row.get("boot") or {} for row in valid]
+            first = _mean([boot.get("first_frame_ms") for boot in boots])
+            if key[1] == baseline:
+                delta = "baseline"
+            elif first is not None and base_first is not None:
+                delta = f"{(first - base_first) / 1000:+.1f} s"
+            else:
+                delta = "-"
+            scene = [boot.get("to_scene") or {} for boot in boots]
+            lines.append("| " + " | ".join([
+                _cell(key[1]), f"{len(valid)} of {len(groups[key])}",
+                _seconds([boot.get("first_frame_ms") for boot in boots]), delta,
+                _seconds([boot.get("game_shown_ms") for boot in boots]),
+                _cell(_mean([boot.get("instances_created") for boot in boots])),
+                _cell(_mean([item.get("held_draws") for item in scene])),
+                _cell(_mean([item.get("held_draw_ms") for item in scene])),
+                _cell(_mean([(boot.get("log") or {}).get("frames_over_100ms") for boot in boots])),
+                _cell(_mean([row.get("fps") for row in valid]))]) + " |")
+        lines.append("")
+    lines += ["Means of the valid runs; first frame and game shown are seconds since the process started, with "
+              "the range over the repeats. Held draws waited for their pipeline to be built, from the first frame "
+              "to the scene check. A difference counts only when every repeat shows it: read the rows."]
+    return "\n".join(lines) + "\n"
 
 
 # ---------------------------------------------------------------------------------------------
@@ -2279,13 +2755,25 @@ def merge_variant(base, variant):
     return merged
 
 
+def variant_files(folder, directory):
+    """The variant files in a suite run's "variants_dir" (relative to the suite file), by name."""
+    if not directory:
+        return []
+    path = os.path.join(folder, os.path.expandvars(str(directory)))
+    if not os.path.isdir(path):
+        raise BenchError(f"variants_dir {path}: not a folder")
+    return sorted(glob.glob(os.path.join(path, "*.json")))
+
+
 def load_suite(path, args, defaults):
     """(plans, {(scene, variant): variant to compare with}) of a suite file.
 
-    A suite is {name, scene, options, base, baseline, paired: {suffix, env}, runs: [{scene,
-    options, base, baseline, variants: [variant object or file name]}]}. Paths are relative to
-    the suite file. A variant with "paired": true also runs with the paired env, as
-    <name><suffix>. Options given on the command line win over the suite's."""
+    A suite is {name, scene, options, base, baseline, paired: {suffix, env}, boot, runs: [{scene,
+    options, base, baseline, variants: [variant object or file name], variants_dir}]}. Paths are
+    relative to the suite file; variants_dir adds every .json in that folder, by name, after the
+    variants listed. A variant with "paired": true also runs with the paired env, as
+    <name><suffix>. Options given on the command line win over the suite's. A suite with a boot
+    block runs its single run's variants once per cache state and repeat (expand_boot_variants)."""
     path = expand(path)
     suite = load_json(path, "suite")
     folder = os.path.dirname(path)
@@ -2295,6 +2783,10 @@ def load_suite(path, args, defaults):
     runs = suite.get("runs")
     if not isinstance(runs, list) or not runs:
         raise BenchError(f"suite {path}: runs is a non-empty list")
+    boot = load_boot_options(suite, path, args)
+    if boot and len(runs) != 1:
+        raise BenchError(f"suite {path}: a boot suite has one run (one scene)")
+    only = getattr(args, "only_variants", None)
     plans, compare_to = [], {}
     for run in runs:
         run_args = copy.copy(args)
@@ -2311,7 +2803,7 @@ def load_suite(path, args, defaults):
         base = merge_variant(suite.get("base") or {}, run.get("base") or {})
         variants, baselines = [], {}
         baseline = run.get("baseline") or suite.get("baseline")
-        for entry in run.get("variants") or []:
+        for entry in list(run.get("variants") or []) + variant_files(folder, run.get("variants_dir")):
             if isinstance(entry, str):
                 entry = load_json(os.path.join(folder, os.path.expandvars(entry)), "variant")
             if not isinstance(entry, dict):
@@ -2326,8 +2818,18 @@ def load_suite(path, args, defaults):
                 baselines[variants[-1]["name"]] = baseline + suffix
         if not variants:
             raise BenchError(f"suite {path}: a run without variants")
+        if only:
+            unknown = sorted(set(only) - {variant.get("name") for variant in variants})
+            if unknown:
+                raise BenchError(f"--only-variants: no variant named {', '.join(unknown)}")
+            variants = [variant for variant in variants if variant.get("name") in only
+                        or variant.get("name") == baseline]
+        if boot:
+            variants = expand_boot_variants(variants, boot)
         plan = Plan(run_args, variants)
         plan.suite = name
+        if boot:
+            plan.boot = dict(boot, baseline=baseline)
         names = {variant["name"] for variant in plan.variants}
         for variant, target in baselines.items():
             compare_to[(plan.scene["name"], variant)] = target if target in names else None
@@ -2370,7 +2872,8 @@ def command_suite(args, defaults, deps=Deps):
     plans, compare_to = load_suite(args.suite, args, defaults)
     code, rows = run_plans(plans, deps, args.dry_run)
     if rows:
-        sys.stdout.write("\n" + render_suite(rows, compare_to))
+        boot = plans[0].boot
+        sys.stdout.write("\n" + (render_boot_suite(rows, boot["baseline"]) if boot else render_suite(rows, compare_to)))
     return code
 
 
@@ -2440,11 +2943,18 @@ def optional_columns(rows):
     return (any(display_mode(row) == "fullscreen" for row in rows), any(row.get("pacing") for row in rows))
 
 
+def variant_label(row):
+    """The variant's name, with the cache state of a boot suite's row."""
+    state = row.get("cache_state")
+    return f"{row.get('variant')} ({state})" if state else row.get("variant")
+
+
 def latest_rows(rows):
-    """One row per (scene, variant, display mode): the newest valid one, else the newest."""
+    """One row per (scene, variant, display mode): the newest valid one, else the newest. A boot
+    suite's rows count per cache state."""
     chosen = {}
     for row in sorted(rows, key=lambda item: item.get("timestamp_utc", "")):
-        key = (row.get("scene"), row.get("variant"), display_mode(row))
+        key = (row.get("scene"), variant_label(row), display_mode(row))
         if key not in chosen or row.get("valid") or not chosen[key].get("valid"):
             chosen[key] = row
     return chosen
@@ -2502,10 +3012,10 @@ def render_table(directory, every=False):
         rows.sort(key=lambda row: row.get("timestamp_utc", ""))
         lines += [f"## Machine `{machine}`", "", hardware_line(rows[-1].get("hardware") or {}), "", header]
         shown = rows if every else sorted(latest_rows(rows).values(),
-                                          key=lambda row: (row.get("scene"), row.get("variant"), display_mode(row)))
+                                          key=lambda row: (row.get("scene"), variant_label(row), display_mode(row)))
         for row in shown:
             lines.append("| " + " | ".join(
-                [_cell(row.get("scene")), _cell(row.get("variant"))] + ([_display(row)] if display else [])
+                [_cell(row.get("scene")), _cell(variant_label(row))] + ([_display(row)] if display else [])
                 + [_cell(row.get("fps")), _cell(row.get("p50_ms")), _cell(row.get("p99_ms")), _sustained(row),
                    _cell(row.get("watts"))] + ([column(row) for _, column in PACING_COLUMNS] if pacing else [])
                 + [_cell(row.get("scene_ok")), _status(row), _cell((row.get("timestamp_utc") or "")[:10])]) + " |")
@@ -2612,6 +3122,20 @@ def build_parser():
     suite.add_argument("suite", help="suite file (suites/*.json)")
     add_run_arguments(suite)
     suite.add_argument("--scene", help="scene file used instead of the suite's")
+    names = lambda text: [item for item in text.split(",") if item]  # noqa: E731
+    suite.add_argument("--only-variants", type=names, metavar="A,B",
+                       help="run only these of the suite's variants, and its baseline")
+    suite.add_argument("--cache-states", type=names, metavar="STATES",
+                       help="boot suites: run only these cache states (cold, second, warm)")
+    suite.add_argument("--repeats", type=int, help="boot suites: how many times the matrix runs (default: the "
+                       "suite's)")
+    suite.add_argument("--driver-cache-dir", action="append", metavar="DIR",
+                       help="boot suites: a GPU driver's shader cache folder, moved aside like the emulator's so "
+                       "that a cold run is cold for the driver too (repeatable; never guessed)")
+    suite.add_argument("--cache-work", metavar="DIR", help="boot suites: where the cache backups and what the "
+                       "runs left go (default: beside the power restore file)")
+    suite.add_argument("--keep-caches", action="store_true",
+                       help="boot suites: keep the backups and every run's caches")
     parser.suite_defaults = {key: suite.get_default(key) for key in SUITE_OPTIONS}
     compare = commands.add_parser("compare", help="markdown table of two result files")
     compare.add_argument("a")

@@ -35,6 +35,8 @@ constexpr size_t COLOR_CHANNELS = 4;
 constexpr u64 LSFG_REQUIRED_FRAMES = 2;
 constexpr u32 LSFG_RECURRENCE_FRAMES = 2;
 constexpr u64 EXTRAPOLATION_LOG_INTERVAL = 600;
+/// EDEN_NX2_FG_GAME_MOTION: in-between frames between two lines of its log.
+constexpr u64 GAME_MOTION_LOG_INTERVAL = 600;
 
 /// EDEN_NX2_CADENCE: with extrapolated frames, hold real frames to an even share of the target
 /// rate so that every shown frame lasts the same time. 1 chooses the share (60, 30, 20 or 15 real
@@ -291,7 +293,10 @@ void FrameGen::SetExtrapolationSource(const std::optional<ExtrapolationSource>& 
                                       VkRect2D screen) {
     extrapolation_source = source;
     extrapolation_screen = screen;
-    if (source && !extrapolating) {
+    game_motion_source = source;
+    game_motion_source_set = true;
+    // A guide made only for EDEN_NX2_FG_GAME_MOTION keeps frames interpolated.
+    if (source && !extrapolating && ExtrapolationRequested()) {
         LOG_INFO(Render_Vulkan, "Frame generation: extrapolating from the game's motion vectors");
         extrapolating = true;
     }
@@ -442,6 +447,19 @@ void FrameGen::Process(const Device& device, Frame* frame, VkFormat format,
         scheduler.RequestOutsideRenderPassOperationContext();
         scheduler.RecordEmuBegin(TraceCategory::FrameGenProcess, {extent.width, extent.height, 0});
         fsr3_chain->Process(device, scheduler, *frame->image, *frame->storage_view, count);
+        // EDEN_NX2_FG_GAME_MOTION: this real frame's guide, beside the chain's copy of the frame;
+        // none when no source came with it (HDR output, no motion this frame).
+        if (GameMotionRequested()) {
+            if (!game_motion) {
+                game_motion.emplace(device, memory_allocator);
+                LOG_INFO(Render_Vulkan, "Frame generation: in-between frames are warped from the "
+                                        "game's motion (EDEN_NX2_FG_GAME_MOTION)");
+            }
+            game_motion->Push(device, scheduler,
+                              game_motion_source_set ? game_motion_source
+                                                     : std::optional<ExtrapolationSource>{});
+            game_motion_source_set = false;
+        }
         scheduler.RecordEmuEnd();
     } else if (chain) {
         scheduler.RequestOutsideRenderPassOperationContext();
@@ -632,9 +650,40 @@ bool FrameGen::GenerateBlend(const Device& device, Frame* destination, f32 blend
     scheduler.RequestOutsideRenderPassOperationContext();
     scheduler.RecordEmuBegin(TraceCategory::FrameGenInterpolate,
                              {destination->width, destination->height, 0});
+    if (GameMotionRequested() &&
+        GenerateFromGameMotion(device, destination, std::clamp(blend, 0.0f, 1.0f))) {
+        scheduler.RecordEmuEnd();
+        return true;
+    }
     fsr3_chain->Generate(device, scheduler, *destination->image, *destination->storage_view,
                          std::clamp(blend, 0.0f, 1.0f), flow_scale);
     scheduler.RecordEmuEnd();
+    return true;
+}
+
+bool FrameGen::GenerateFromGameMotion(const Device& device, Frame* destination, f32 t) {
+    const Fsr3FrameGen::FrameViews frames = fsr3_chain->Frames();
+    const bool ready = game_motion && game_motion->Ready() && frames.newest != VK_NULL_HANDLE &&
+                       frames.previous != VK_NULL_HANDLE &&
+                       extrapolation_screen.extent.width != 0 &&
+                       extrapolation_screen.extent.height != 0;
+    ++(ready ? game_motion_made : game_motion_fallbacks);
+    if (game_motion_made + game_motion_fallbacks >= GAME_MOTION_LOG_INTERVAL) {
+        LOG_INFO(Render_Vulkan,
+                 "Frame generation (EDEN_NX2_FG_GAME_MOTION): {} in-between frames from the "
+                 "game's motion, {} from the optical flow (no guide for one of the two real "
+                 "frames, a camera cut, or no frame copies yet)",
+                 game_motion_made, game_motion_fallbacks);
+        game_motion_made = 0;
+        game_motion_fallbacks = 0;
+    }
+    if (!ready) {
+        return false;
+    }
+    game_motion->Generate(device, scheduler, frames.newest, frames.previous,
+                          *destination->image, *destination->storage_view,
+                          VkExtent2D{.width = destination->width, .height = destination->height},
+                          extrapolation_screen, t);
     return true;
 }
 
@@ -840,6 +889,8 @@ void FrameGen::Rebuild(const Device& device, VkExtent2D extent, VkFormat format,
     scheduler.Finish();
     chain.reset();
     fsr3_chain.reset();
+    // The guides pair with the chain's frame copies, which start again.
+    game_motion.reset();
 
     built_flow_scale = flow_scale;
     built_type = type;

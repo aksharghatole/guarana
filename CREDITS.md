@@ -44,6 +44,7 @@ Pull requests to zortos293/Lichii that were not merged upstream when we took the
 | [#1099](https://github.com/zortos293/Lichii/pull/1099) | [tibzejoker](https://github.com/tibzejoker) (#874), rebased by [zortos293](https://github.com/zortos293) | Fence-flagged payload releases stay synchronized at low GPU accuracy with default fences (hand port onto our counter reports) |
 | [#1378](https://github.com/zortos293/Lichii/pull/1378) | Krim | Graphics pipelines reuse the translated shaders of an earlier pipeline when their translation inputs and the guest memory they read match (`EDEN_NX2_SHADER_REUSE=1`) |
 | [#1379](https://github.com/zortos293/Lichii/pull/1379) | Krim | Skippable native graphics pipelines are translated as shader jobs on workers, from environments detached from guest memory (`EDEN_NX2_ASYNC_TRANSLATE=1`); builds on #1378 |
+| [#1838](https://github.com/zortos293/Lichii/pull/1838) | [zortos293](https://github.com/zortos293) | Where reading the driver pipeline cache during builds crashes (Intel's Windows driver), the boot load saves the cache once its builds have ended and starts the background prebuild after that save (`EDEN_NX2_LOAD_SAVE=1`; upstream makes it the behaviour there) |
 | [#1596](https://github.com/zortos293/Lichii/pull/1596) | [sanchodecuba11-del](https://github.com/sanchodecuba11-del) | The selected user index is cast to the launch parameter type (MSVC C4244) |
 | [#1475](https://github.com/zortos293/Lichii/pull/1475) | [RomainROCH](https://github.com/RomainROCH) | Logging no longer calls std::terminate when formatting fails while the host is out of memory |
 | [#1558](https://github.com/zortos293/Lichii/pull/1558) | [BrunoSilvestre00](https://github.com/BrunoSilvestre00) | The loading screen no longer freezes in borderless fullscreen on Windows |
@@ -59,6 +60,14 @@ Pull requests to zortos293/Lichii that were not merged upstream when we took the
 | [Eglantine #837](https://github.com/Eglantine-Community/Eglantine/pull/837) and [#844](https://github.com/Eglantine-Community/Eglantine/pull/844) (merged in Eglantine, not yet in Lichii; a part) | [kraibse](https://github.com/kraibse), [rdenno](https://github.com/rdenno) | The `game_tweaks` map of settings that only affect one game, with its lookups and its test: Mario Kart World's and Hyrule Warriors' frame-rate options leave Graphics > Advanced. Eglantine's Tweaks tab is not taken: the game's own Adv. Graphics page lists them |
 
 When one of these is merged upstream, the next upstream sync brings the upstream version, and this table says so.
+
+## Other Lichii forks
+
+Work taken from other forks of Lichii. Their authors as recorded in git; each fork is GPL-3.0.
+
+| Fork | Commits | Author | Change |
+|---|---|---|---|
+| [Fritchii](https://github.com/Frizti/Fritchii) (v5.8.4) | [58f55cb7d9](https://github.com/Frizti/Fritchii/commit/58f55cb7d9ee912931ce060ea8683694796e6ac3), [8627ff4233](https://github.com/Frizti/Fritchii/commit/8627ff4233323977fd5ead274867e4dd2ce66d5c) | [Frizti](https://github.com/Frizti) | The performance overlay's RAM and VRAM readouts: what the emulator holds and the room left, amber under 2 GB of RAM or 1 GB of video memory (hand port onto our overlay; the room of an integrated GPU's shared memory is also bounded by the free RAM) |
 
 ## Artwork
 

@@ -112,6 +112,8 @@ public:
         return scheduler.GpuBusyMs();
     }
 
+    [[nodiscard]] std::optional<VideoCore::VideoMemoryUsage> GetVideoMemoryUsage() const override;
+
     bool RequestGpuCostSampling(bool on) override {
         return scheduler.RequestCostSampling(on);
     }

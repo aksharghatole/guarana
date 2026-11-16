@@ -56,7 +56,9 @@ struct TensorProgram {
     IR::Program program;
     Profile profile;
 
-    explicit TensorProgram(u32 count = 1, u32 software_depth = 0) {
+    /// zero_first_c: the first HMMA's accumulator is the zero register (two zero immediates, as
+    /// the translator builds it).
+    explicit TensorProgram(u32 count = 1, u32 software_depth = 0, bool zero_first_c = false) {
         program.stage = Stage::Compute;
         program.workgroup_size = {64, 1, 1};
         program.blocks = {&block};
@@ -79,10 +81,13 @@ struct TensorProgram {
                 ir.ShiftLeftLogical(lane, ir.Imm32(3))) : ir.IAdd(ir.Imm32((i + 1) * 0x01000100U), lane);
         }
         for (u32 i = 0; i < count; ++i) {
+            const IR::Value accumulator =
+                zero_first_c && i == 0 ? ir.CompositeConstruct(ir.Imm32(0u), ir.Imm32(0u))
+                                       : ir.CompositeConstruct(inputs[6], inputs[7]);
             const auto result = ir.TensorMulAdd(
                                        ir.CompositeConstruct(inputs[0], inputs[1], inputs[2], inputs[3]),
                                        ir.CompositeConstruct(inputs[4], inputs[5]),
-                                       ir.CompositeConstruct(inputs[6], inputs[7]), software_depth);
+                                       accumulator, software_depth);
             inputs[6] = IR::U32{ir.CompositeExtract(result, 0)};
             inputs[7] = IR::U32{ir.CompositeExtract(result, 1)};
         }
@@ -828,6 +833,115 @@ TEST_CASE("The 16x16x16 path wins when the profile also lists 8x16x16",
     RequireHmmaMatrixTypes(code, 16, 16);
     REQUIRE(Instructions(code, OP_COOPERATIVE_MATRIX_MUL_ADD).size() == 3);
     REQUIRE(fixture.program.shared_memory_size == 2 * 384 * 4);
+}
+
+// EDEN_NX2_HMMA_K16_ONCE: on 8x16x16 a K=16 HMMA is one product per row half with both K halves
+// of B in one tile, rounding once as the 16x16x16 path does: no second B tile, no barrier between
+// K halves. K=8 is as without it, in the smaller scratch.
+TEST_CASE("8x16x16 cooperative HMMA runs K16 as one product with EDEN_NX2_HMMA_K16_ONCE",
+          "[video_core][tensor][ampere]") {
+    for (const u32 depth : {16U, 8U}) {
+        TensorProgram fixture{3, depth};
+        fixture.profile.support_cooperative_hmma_8x16x16 = true;
+        fixture.profile.cooperative_hmma_k16_once = true;
+        const auto code = fixture.Emit("cooperative-8x16x16-k16-once-k" + std::to_string(depth));
+        RequireVulkanMemoryModel(code);
+        RequireHmmaMatrixTypes(code, 16, 8);
+        REQUIRE(fixture.program.info.uses_cooperative_matrix);
+        // Per HMMA: A and C for each row half, and B once.
+        REQUIRE(Instructions(code, OP_COOPERATIVE_MATRIX_LOAD).size() == 3 * 5);
+        REQUIRE(Instructions(code, OP_COOPERATIVE_MATRIX_MUL_ADD).size() == 3 * 2);
+        REQUIRE(Instructions(code, OP_COOPERATIVE_MATRIX_STORE).size() == 3 * 2);
+        // Per HMMA: after the tile stores and after the cooperative stores.
+        REQUIRE(Instructions(code, 224).size() == 3 * 2); // OpControlBarrier
+        // Two subgroups, 384 words each: A, B and C.
+        REQUIRE(fixture.program.shared_memory_size == 2 * 384 * 4);
+    }
+}
+
+// EDEN_NX2_HMMA_ZERO_C: an HMMA whose accumulator is the zero register starts from one zero
+// matrix (a constant composite of the accumulator type) instead of a C tile it stored and loaded.
+// A K=16 HMMA on 8x16x16 still loads the first K half's results for the second.
+TEST_CASE("A zero accumulator skips the C tile with EDEN_NX2_HMMA_ZERO_C",
+          "[video_core][tensor][ampere]") {
+    for (const bool eight_rows : {false, true}) {
+        for (const u32 depth : {16U, 8U}) {
+            TensorProgram fixture{3, depth, true};
+            fixture.profile.support_cooperative_hmma_16x16x16 = !eight_rows;
+            fixture.profile.support_cooperative_hmma_8x16x16 = eight_rows;
+            fixture.profile.cooperative_hmma_zero_c = true;
+            const auto code = fixture.Emit(std::string{"cooperative-zero-c-"} +
+                                           (eight_rows ? "8x16x16" : "16x16x16") + "-k" +
+                                           std::to_string(depth));
+            RequireVulkanMemoryModel(code);
+            RequireHmmaMatrixTypes(code, 16, eight_rows ? 8 : 16);
+            const size_t row_halves = eight_rows ? 2 : 1;
+            const size_t k_halves = eight_rows && depth == 16 ? 2 : 1;
+            // Per HMMA and K half: A and C per row half and B once, but no C for the first HMMA's
+            // first K half.
+            REQUIRE(Instructions(code, OP_COOPERATIVE_MATRIX_LOAD).size() ==
+                    3 * k_halves * (2 * row_halves + 1) - row_halves);
+            REQUIRE(Instructions(code, OP_COOPERATIVE_MATRIX_MUL_ADD).size() ==
+                    3 * k_halves * row_halves);
+            REQUIRE(Instructions(code, 224).size() == 3 * (1 + k_halves)); // OpControlBarrier
+            u32 accumulator_type{};
+            const auto constants = Constants(code);
+            for (const auto& words : Instructions(code, OP_TYPE_COOPERATIVE_MATRIX)) {
+                if (constants.at(words[5]) == 2) { // MatrixAccumulatorKHR
+                    accumulator_type = words[0];
+                }
+            }
+            REQUIRE(accumulator_type != 0);
+            size_t zero_matrices = 0;
+            for (const auto& words : Instructions(code, 44)) { // OpConstantComposite
+                if (words[0] == accumulator_type) {
+                    REQUIRE(words.size() == 3); // one constituent fills a cooperative matrix
+                    ++zero_matrices;
+                }
+            }
+            REQUIRE(zero_matrices == 1);
+        }
+    }
+}
+
+// Programs the switches do not apply to keep their SPIR-V word for word: EDEN_NX2_HMMA_ZERO_C
+// without a zero accumulator, and EDEN_NX2_HMMA_K16_ONCE on the 16x16x16 path.
+TEST_CASE("HMMA traffic switches leave other programs unchanged", "[video_core][tensor][ampere]") {
+    for (const bool eight_rows : {false, true}) {
+        TensorProgram plain{3, 16};
+        TensorProgram switched{3, 16};
+        for (TensorProgram* const fixture : {&plain, &switched}) {
+            fixture->profile.support_cooperative_hmma_16x16x16 = !eight_rows;
+            fixture->profile.support_cooperative_hmma_8x16x16 = eight_rows;
+        }
+        switched.profile.cooperative_hmma_zero_c = true;
+        switched.profile.cooperative_hmma_k16_once = !eight_rows;
+        REQUIRE(plain.Emit() == switched.Emit());
+        REQUIRE(plain.program.shared_memory_size == switched.program.shared_memory_size);
+    }
+}
+
+// EDEN_NX2_TENSOR_LOG's line: counts, zero accumulators, shared A operands and the path taken.
+TEST_CASE("The tensor log describes a program's HMMA and its path", "[video_core][tensor][ampere]") {
+    TensorProgram fixture{3, 16, true};
+    REQUIRE(Backend::SPIRV::DescribeTensorProgram(fixture.profile, fixture.program).find(
+                "3 HMMA (3 K=16, 0 K=8), 1 from a zero accumulator, 2 with the previous HMMA's A") ==
+            0);
+    REQUIRE(Backend::SPIRV::DescribeTensorProgram(fixture.profile, fixture.program).ends_with(
+        "software, operands shuffled (the device lists no cooperative matrix shape for it)"));
+    fixture.profile.support_cooperative_hmma_8x16x16 = true;
+    REQUIRE(Backend::SPIRV::DescribeTensorProgram(fixture.profile, fixture.program).ends_with(
+        "8x16x16 cooperative matrices through shared memory"));
+    fixture.profile.cooperative_hmma_k16_once = true;
+    fixture.profile.cooperative_hmma_zero_c = true;
+    REQUIRE(Backend::SPIRV::DescribeTensorProgram(fixture.profile, fixture.program).ends_with(
+        "8x16x16 cooperative matrices through shared memory, zero accumulators skip C, K=16 at "
+        "once"));
+    fixture.program.workgroup_size = {48, 1, 1};
+    REQUIRE(Backend::SPIRV::DescribeTensorProgram(fixture.profile, fixture.program).ends_with(
+        "software, operands shuffled (its workgroup rows leave a 32-lane warp unfilled)"));
+    TensorProgram none{0};
+    REQUIRE(Backend::SPIRV::DescribeTensorProgram(none.profile, none.program).empty());
 }
 
 TEST_CASE("8x16x16 cooperative HMMA falls back to the software helper",
