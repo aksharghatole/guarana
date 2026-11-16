@@ -7,7 +7,8 @@ several parts, by the name its driver reports (Common::ClassifyGpuFamily, src/co
 A report is evidence for a family only when it names its GPU exactly enough that the engine would put
 that GPU in that family:
 
-- a PCI ID (`8086:7D51`, `PCI\\VEN_8086&DEV_7D51`): the engine's own table, name part included;
+- a PCI ID (a tools/bench row's `gpus[].pci`, `8086:7D51` or `PCI\\VEN_8086&DEV_7D51` on the launcher's
+  "GPU:" line): the engine's own table, name part included;
 - the GPU's name as its driver reports it (a tools/bench row on Windows, or the launcher's "GPU: <name>."
   line in "Anything else"), when the name holds a part only one family has (140T, 140V, B390, 780M, 890M,
   ...). A name with the parts of two families ("Arc 140T / 140V") and an AMD chip name as lspci prints it
@@ -146,6 +147,12 @@ def name_vendor(name):
     return next((vendor for vendor, words in _VENDOR_WORDS if words.search(text)), None)
 
 
+def parse_pci_field(value):
+    """(vendor ID, device ID) of a tools/bench row's gpus[].pci ("8086:7D51"), or None."""
+    match = re.fullmatch(r"([0-9A-Fa-f]{4}):([0-9A-Fa-f]{4})", str(value or ""))
+    return (int(match.group(1), 16), int(match.group(2), 16)) if match else None
+
+
 def parse_pci(text):
     """(vendor ID, device ID) of the first PCI ID in text, or None."""
     for pattern in _PCI:
@@ -212,13 +219,17 @@ def classify(option=None, vendor=None, kind=None, bench_gpus=(), report_gpu=None
     """The family of one report.
 
     option, vendor, kind: the form's "Graphics card" answer as its short name, vendor (intel, amd,
-    nvidia, other) and kind (integrated, discrete, unknown). bench_gpus: the GPU names of its chosen
-    tools/bench row. report_gpu, report_pci: a GPU name and (vendor, device) the report states (the
-    launcher's "GPU:" line)."""
+    nvidia, other) and kind (integrated, discrete, unknown). bench_gpus: the GPUs of its chosen tools/bench
+    row, as names or as {"name", "pci": (vendor, device) or None}. report_gpu, report_pci: a GPU name and
+    (vendor, device) the report states (the launcher's "GPU:" line)."""
     if kind == "discrete":
         return result("none", source=FROM_ANSWER)
     wanted = VENDOR_IDS.get(vendor)
-    sources = [(FROM_BENCH, name, None) for name in bench_gpus or () if normalize_name(name)]
+    sources = []
+    for gpu in bench_gpus or ():
+        name, pci = (gpu.get("name") or "", gpu.get("pci")) if isinstance(gpu, dict) else (gpu, None)
+        if pci or normalize_name(name):
+            sources.append((FROM_BENCH, name, pci))
     if report_gpu or report_pci:
         sources.append((FROM_REPORT, report_gpu or "", report_pci))
     answers = []

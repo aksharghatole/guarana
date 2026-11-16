@@ -123,9 +123,10 @@ rebuilds every record.
    and program id, and `EDEN_NX2_*` switches and frame generation are read from the settings.
    The GPU gets the engine's GPU family (`device_class`, `tools/ingest/device_classes.py`, a copy of
    `ClassifyGpuFamily` in `src/common/device_profile.cpp` that a test keeps in step): only an exact
-   GPU name (a `tools/bench` row's, or the launcher's `GPU: <name>.` line under "Anything else") or
-   a PCI ID gives one. The "Graphics card" answer alone gives candidates: "Intel Arc 140T / 140V"
-   is Arrow Lake-H or Lunar Lake.
+   GPU name or a PCI ID gives one. `tools/bench` rows carry both (`hardware.gpus[].pci`, read from
+   Windows' PNP device ID or `lspci -nn`), and the launcher's "Share my numbers" writes
+   `GPU: <name> [8086:7D51].` under "Anything else". The "Graphics card" answer alone gives
+   candidates: "Intel Arc 140T / 140V" is Arrow Lake-H or Lunar Lake.
 5. **Scrub.** Only named fields are kept: no free notes, game file names, screenshots, logs or mod
    names, and no reporter login. Folder paths, links, e-mail and network addresses, host names,
    `@mentions` and serial numbers (by their label: "S/N", "serial", "service tag") are replaced,

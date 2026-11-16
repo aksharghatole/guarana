@@ -517,6 +517,40 @@ class SanitizeTest(unittest.TestCase):
         bench._check_fields(hardware, bench.HARDWARE_FIELDS, "hardware", errors)
         self.assertEqual(errors, [])
 
+    def test_gpus_carry_their_pci_id_and_the_names_machine_id_hashes(self):
+        raw = {"cpu": "x", "gpus": [
+            {"name": "Intel(R) Arc(TM) 140T GPU (16GB)", "driver_version": "32.0.101.9175",
+             "pnp": "PCI\\VEN_8086&DEV_7D51&SUBSYS_3D9017AA&REV_04\\3&11583659&0&10"},
+            {"name": "Microsoft Remote Display Adapter", "driver_version": "10.0", "pnp": "SWD\\REMOTEDISPLAYENUM\\1"}]}
+        self.assertEqual(bench.parse_windows_hardware(raw)["gpus"], [
+            {"name": "Intel(R) Arc(TM) 140T GPU (16GB)", "driver_version": "32.0.101.9175", "pci": "8086:7D51"},
+            {"name": "Microsoft Remote Display Adapter", "driver_version": "10.0"}])
+        lspci = ("00:02.0 VGA compatible controller [0300]: Intel Corporation Meteor Lake-P [Intel Arc Graphics] "
+                 "[8086:7d55] (rev 08)\n"
+                 "00:04.0 Signal processing controller [1180]: Intel Corporation Meteor Lake-P DTT [8086:7d03]\n"
+                 "c1:00.0 Display controller [0380]: Advanced Micro Devices, Inc. [AMD/ATI] Phoenix1 [1002:15bf] (rev c1)\n"
+                 "01:00.0 3D controller [0302]: NVIDIA Corporation AD107M [GeForce RTX 4060 Max-Q / Mobile] [10de:28a0]\n")
+        self.assertEqual(bench.lspci_gpus(lspci), [
+            {"name": "Intel Corporation Meteor Lake-P [Intel Arc Graphics] (rev 08)", "driver_version": None,
+             "pci": "8086:7D55"},
+            {"name": "Advanced Micro Devices, Inc. [AMD/ATI] Phoenix1 (rev c1)", "driver_version": None,
+             "pci": "1002:15BF"},
+            {"name": "NVIDIA Corporation AD107M [GeForce RTX 4060 Max-Q / Mobile]", "driver_version": None,
+             "pci": "10DE:28A0"}])
+        # Plain lspci output (no -nn) still gives the names, without an ID.
+        self.assertEqual(bench.lspci_gpus("00:02.0 VGA compatible controller: Intel Corporation Meteor Lake-P "
+                                          "[Intel Arc Graphics] (rev 08)"),
+                         [{"name": "Intel Corporation Meteor Lake-P [Intel Arc Graphics] (rev 08)",
+                           "driver_version": None}])
+
+    def test_a_gpus_pci_id_must_be_hex_pairs(self):
+        good = dict(HARDWARE, gpus=[{"name": "Example GPU", "driver_version": "1.2.3", "pci": "8086:7D51"}])
+        for hardware, expected in ((good, []), (dict(good, gpus=[dict(good["gpus"][0], pci="8086-7d51")]),
+                                                ["hardware: a gpu's pci is VVVV:DDDD in hex"])):
+            with self.subTest(pci=hardware["gpus"][0]["pci"]):
+                row = dict(good_row(), hardware=hardware, machine_id=bench.machine_id(hardware))
+                self.assertEqual(bench.validate_row(row), expected)
+
 
 class FakeProcess:
     """linger: how many more poll() calls report it alive after kill(), like an emulator that is
