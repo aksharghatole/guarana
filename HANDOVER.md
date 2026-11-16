@@ -61,15 +61,16 @@ what `git` and `gh` showed at that time. Anything this file could not confirm is
   pacing run, look for `cargo`, `rustc`, `ninja` and `clang-cl` from every session on the
   machine, not only your own.
 - **Known problems:**
-  - #199: a boot that never shows a frame, 2 of 22 boots of this version on the measurement
-    machine. In the first the host microphone open never returned. The second was the first
-    start ever from a new folder, and its log was not kept. The open's result follows the
-    folder the program runs from, not the build: a folder's first boot waits long for it (6 and
-    40 s where it then opened), and the two folders whose first boot was ended meanwhile are
-    refused at once ever since (`Error initializing cubeb stream, error: -1`, then silence).
-    Something decides per program path whether the microphone may be opened; a Windows
-    permission prompt would fit, but nobody saw one. The table is in the issue. CPU load alone
-    does not reproduce it: eight boots in a row beside sixteen busy threads all started.
+  - #199, fixed after v20.4.0: a boot that never showed a frame (2 of 22 boots of this version
+    on the measurement machine). Windows asks "Allow Guarana to access your microphone?" the
+    first time a program at a new path opens the microphone, and cubeb's open waits for the
+    answer. The prompt does not take the foreground, so it is easy to miss. Ocarina of Time
+    opens two capture streams while it boots, though it never captures, so its first frame
+    waited on the prompt. The answer is kept per path, and the launcher installs each version
+    in a folder of its own, so every update asked again. The prompt was seen on screen in the
+    lab on 16 November; the evidence is in the issue. Since the fix a sysmix capture stream
+    opens the host microphone only when the game starts capturing, on a helper thread, and the
+    game hears silence until the open returns.
   - The replay bench has no real rows yet. `guarana-cli --replay` starts on Intel's Windows
     driver, but the Hyrule Field trace recorded for it holds no presents: the lab script judged
     the recording finished by the file's size and closed the game during the 3 GB snapshot. Since
@@ -158,5 +159,6 @@ The full rules are in [docs/BENCHMARKING.md](docs/BENCHMARKING.md) and
 
 ## Not confirmed when this was written
 
-- What stopped the second boot without frames (#199): the lab scripts on the measurement
-  machine now keep the log of a failed boot.
+- That a build with the #199 fix starts from a new folder without the prompt: the unit tests
+  cover the open waiting for capture and an open that blocks, but no first start from a fresh
+  folder has been watched on such a build yet.
