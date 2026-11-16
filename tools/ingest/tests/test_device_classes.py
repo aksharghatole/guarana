@@ -100,6 +100,27 @@ class NameTests(unittest.TestCase):
         found = dc.classify("Intel Arc (Meteor Lake)", "intel", "integrated", ["Intel(R) Arc(TM) Graphics"])
         self.assertEqual((found["status"], found["candidates"]), ("unresolved", ["IntelArcMeteorLake"]))
 
+    def test_a_name_with_the_parts_of_two_families_is_unresolved(self):
+        # The form's labels pasted as a name ("GPU: Intel Arc 140T / 140V") name two GPUs, not one.
+        for name, candidates in (("Intel Arc 140T / 140V", ["IntelArrowLakeH", "IntelArcLunarLake"]),
+                                 ("AMD Radeon 880M / 890M", ["AmdRadeon880M", "AmdRadeon890M"]),
+                                 ("Advanced Micro Devices, Inc. [AMD/ATI] Strix [Radeon 880M / 890M] (rev c1)",
+                                  ["AmdRadeon880M", "AmdRadeon890M"])):
+            with self.subTest(name=name):
+                found = dc.classify(bench_gpus=[name])
+                self.assertEqual((found["status"], found["candidates"]), ("unresolved", candidates))
+
+    def test_an_amd_chip_name_from_lspci_is_unresolved_not_none(self):
+        # tools/bench on Linux takes lspci's names; RADV's own name, which the engine matches, says 780M.
+        found = dc.classify(bench_gpus=["Advanced Micro Devices, Inc. [AMD/ATI] Phoenix1 (rev c1)"])
+        self.assertEqual((found["status"], found["candidates"]),
+                         ("unresolved", ["AmdRadeon780M", "AmdRadeon880M", "AmdRadeon890M", "AmdRadeon8060S",
+                                         "AmdCustomGpu0405", "AmdCustomGpu0932"]))
+        found = dc.classify("AMD Radeon 780M / 760M", "amd", "integrated",
+                            ["Advanced Micro Devices, Inc. [AMD/ATI] Phoenix1 (rev c1)"])
+        self.assertEqual(found["candidates"], ["AmdRadeon780M"])
+        self.assertEqual(family("NVIDIA Corporation AD107M [GeForce RTX 4060 Max-Q / Mobile] (rev a1)"), "none")
+
     def test_names_are_kept_short_and_without_trademark_signs(self):
         found = dc.classify(bench_gpus=["Intel(R) Arc(TM) 140T GPU (16GB)"])
         self.assertEqual((found["name"], found["from"]), ("Intel Arc 140T GPU", dc.FROM_BENCH))

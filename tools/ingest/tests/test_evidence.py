@@ -71,13 +71,13 @@ class EmptyTests(unittest.TestCase):
 class CoverageTests(unittest.TestCase):
     def test_devices_are_counted_once_and_reports_each_time(self):
         out = evidence.build(doc(
-            record(1), record(2, device="ASUS Zenbook S 14"),  # one device, the model written two ways
-            record(3, device="Lenovo Yoga Pro 7", cpu="Intel(R) Core(TM) Ultra 7 255H"),
+            record(1), record(2, device="ASUS Zenbook S 14"), record(3, device="Asus Zenbook S14"),  # one model
+            record(4, device="Lenovo Yoga Pro 7", cpu="Intel(R) Core(TM) Ultra 7 255H"),
         ))
         cell, = out["coverage"]
         self.assertEqual((cell["family"], cell["game"], cell["title_id"], cell["build"]),
                          ("IntelArrowLakeH", OOT, "0400486024DEC000", "v20.4.0"))
-        self.assertEqual((cell["reports"], cell["devices"], cell["issues"]), (3, 2, [1, 2, 3]))
+        self.assertEqual((cell["reports"], cell["devices"], cell["issues"]), (4, 2, [1, 2, 3, 4]))
         self.assertEqual(out["families"]["IntelArrowLakeH"]["devices"], 2)
 
     def test_tiers_power_and_builds(self):

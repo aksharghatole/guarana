@@ -8,8 +8,10 @@ A report is evidence for a family only when it names its GPU exactly enough that
 that GPU in that family:
 
 - a PCI ID (`8086:7D51`, `PCI\\VEN_8086&DEV_7D51`): the engine's own table, name part included;
-- the GPU's name as its driver reports it (a tools/bench row, or the launcher's "GPU: <name>." line in
-  "Anything else"), when the name holds a part only one family has (140T, 140V, B390, 780M, 890M, ...);
+- the GPU's name as its driver reports it (a tools/bench row on Windows, or the launcher's "GPU: <name>."
+  line in "Anything else"), when the name holds a part only one family has (140T, 140V, B390, 780M, 890M,
+  ...). A name with the parts of two families ("Arc 140T / 140V") and an AMD chip name as lspci prints it
+  (tools/bench on Linux) are unresolved;
 - nothing else. The form's "Graphics card" answer only narrows the candidates: "Intel Arc 140T / 140V"
   is two families, Arrow Lake-H and Lunar Lake.
 
@@ -93,6 +95,8 @@ _NAME_PARTS = (
 _INTEL_OUTSIDE = re.compile(r"\b(?:iris|uhd|hd graphics|a\d{3}m?|b[5-9]\d{2})\b")
 _VENDOR_WORDS = ((INTEL, re.compile(r"\bintel\b")), (AMD, re.compile(r"\b(?:amd|radeon|ati)\b")),
                  (0x10DE, re.compile(r"\b(?:nvidia|geforce|quadro|rtx|gtx)\b")))
+# A name as lspci prints it (tools/bench on Linux): the PCI database's, not the driver's.
+_LSPCI = re.compile(r"(?i)\(rev [0-9a-f]{2}\)|\bcorporation\b|advanced micro devices|\[amd/ati\]")
 VENDOR_IDS = {"intel": INTEL, "amd": AMD, "nvidia": 0x10DE}
 
 # The device report form's "Graphics card" options (issue_forms.GPU_OPTIONS short names) that are
@@ -185,12 +189,19 @@ def from_name(name):
     """The family a GPU name pins, by the name alone, as status, family and candidates."""
     text = normalize_name(name)
     vendor = name_vendor(name)
-    for part_vendor, pattern, family in _NAME_PARTS:
-        if vendor == part_vendor and pattern.search(text):
-            return "family", family, ()
+    matched = list(dict.fromkeys(family for part_vendor, pattern, family in _NAME_PARTS
+                                 if vendor == part_vendor and pattern.search(text)))
+    if len(matched) == 1:
+        return "family", matched[0], ()
+    if matched:
+        # "Intel Arc 140T / 140V", "Radeon 880M / 890M": a label of several GPUs, not one GPU's name.
+        return "unresolved", None, tuple(matched)
     if vendor == INTEL and not _INTEL_OUTSIDE.search(text):
         # "Intel(R) Graphics" or "Intel(R) Arc(TM) Graphics": the families matched by their ID alone.
         return "unresolved", None, _id_only_families(INTEL)
+    if vendor == AMD and _LSPCI.search(str(name or "")):
+        # lspci's name for the chip ("Phoenix1 (rev c1)") is not the driver's, which the engine matches.
+        return "unresolved", None, tuple(dict.fromkeys(row[3] for row in FAMILY_ROWS if row[0] == AMD))
     return "none", None, ()
 
 

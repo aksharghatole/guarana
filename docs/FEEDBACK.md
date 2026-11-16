@@ -179,7 +179,9 @@ rule 1 a report is one of three things:
 | verified | A `tools/bench` row that is valid with `scene_ok: true` | Where the game was and what it ran at, on a quiet machine |
 | paired | Two verified rows of one report that differ only in switches or settings both rows set (`EDEN_NX2_GM=0` against `EDEN_NX2_GM=11`): same machine, scene, build and power source, within two hours, background CPU measured | An effect. A baseline row sets nothing (the shipped `nx2_switches.txt` may set the switch), so it pairs with nothing |
 
-The file has, per engine GPU family: reports and devices (one machine reported twice counts once);
+The file has, per engine GPU family: reports and devices (the same model, CPU and family count
+once, so two machines of one model are one device, and one machine whose model is written two ways
+is two);
 per family, game and build the same counts by tier and power source; per family, game, scene,
 change, shared switches, build and power source the paired effects (fps and p99 in percent, frames
 within 2 ms in points, per device and over devices), each with its issues; and the reports whose

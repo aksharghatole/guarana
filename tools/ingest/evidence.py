@@ -61,8 +61,10 @@ FIELD_DOCS = {
              "rows set, on the same machine, scene, build and power source, measured within two hours of each "
              "other with the background CPU measured. Only a pair measures an effect; a baseline row sets "
              "nothing and pairs with nothing.",
-    "devices": "Distinct devices: reports with the same device model, CPU and GPU family count once. One "
-               "machine reported twice is one device, and so are two machines of the same model.",
+    "devices": "Distinct devices: reports with the same device model, CPU and GPU family count once, the model "
+               "and CPU compared by their letters and digits. Two machines of the same model count once, and one "
+               "machine whose model is written two different ways counts twice: check the issues before trusting "
+               "a count.",
     "families": "Every GPU family of the engine (src/common/device_profile.cpp) with its label and how many "
                 "reports and devices it has: all of them, verified ones and paired ones.",
     "coverage": "Per GPU family, game and build: reports and devices (all, verified, paired), their power "
@@ -128,8 +130,12 @@ def device_class(record):
 
 
 def device_key(record, found):
-    return "|".join((_tokens(record.get("device")), _tokens(record.get("cpu")),
-                     found.get("family") or _tokens(found.get("name")) or _tokens(record.get("gpu_option"))))
+    """Model, CPU and GPU by their letters and digits: "ASUS Zenbook S 14 (UX5406)" is "Asus Zenbook S14"."""
+    def compact(text):
+        return _tokens(text).replace(" ", "")
+
+    return "|".join((compact(record.get("device")), compact(record.get("cpu")),
+                     found.get("family") or compact(found.get("name")) or compact(record.get("gpu_option"))))
 
 
 def power_of(value):
