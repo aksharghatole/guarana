@@ -118,7 +118,8 @@ stated.
 These help every game's network on AMD and on Intel with the 8x16x16 path, not only Ocarina. Tests
 in `src/tests/video_core/spirv_software_matrix.cpp` check the emitted SPIR-V (stores, loads,
 barriers and products per `HMMA`), as the existing 8x16x16 tests do, and a CPU model of the
-arithmetic checks the rounding (2.4).
+arithmetic checks the rounding (2.4). The first pull request (#226) built `EDEN_NX2_TENSOR_LOG`,
+`EDEN_NX2_HMMA_ZERO_C` and `EDEN_NX2_HMMA_K16_ONCE`; `SHARE_A` and `PAIR_N` are the second.
 
 **A2. Fewer passes (ports).** Lichii #864 and #1985 skip a game's network passes whose output only
 feeds a pass a replacement overwrites (measured upstream: Duskbloods on a Steam Deck 56.6 -> 40.4 ms
