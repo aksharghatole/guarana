@@ -6,6 +6,7 @@
 #include <future>
 #include <jni.h>
 #include <network/network.h>
+#include <functional>
 
 #include "video_core/rasterizer_interface.h"
 

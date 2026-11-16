@@ -37,6 +37,13 @@
 
 extern "C" {
 #include <libavcodec/jni.h>
+#include <atomic>
+#include <chrono>
+#include <filesystem>
+#include <memory>
+#include <mutex>
+#include <optional>
+#include <utility>
 }
 
 #include "common/android/multiplayer/multiplayer.h"
