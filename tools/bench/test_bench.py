@@ -1849,7 +1849,7 @@ class SuiteTest(RunCase):
         self.assertEqual(len(plans), 1)
         plan = plans[0]
         self.assertEqual((plan.suite, plan.scene["name"]), ("game-network", "oot-hyrule-field"))
-        base = {"EDEN_NX2_NO_PRESETS": "1", "EDEN_NX2_COST_SAMPLING": "1"}
+        base = {"EDEN_NX2_NO_PRESETS": "1", "EDEN_NX2_COST_SAMPLING": "1", "EDEN_NX2_TENSOR_LOG": "1"}
         env = {variant["name"]: variant.get("env") or {} for variant in plan.variants}
         self.assertEqual(env, {
             "software": base,
