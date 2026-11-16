@@ -763,7 +763,7 @@ void RendererVulkan::RecordFluidFrames(Frame* frame, const HdrPresent& output,
     const auto real_interval = duration_cast<nanoseconds>(std::chrono::duration<f32>(interval));
     const nanoseconds slot_period = slots.refresh * static_cast<s64>(slots.divisor);
     const size_t max_predictions = std::clamp<size_t>(
-        static_cast<size_t>(std::llround(100.0e6 / static_cast<f64>((std::max)(slot_period.count(), s64{1})))),
+        static_cast<size_t>(std::llround(100.0e6 / static_cast<f64>((std::max)(static_cast<s64>(slot_period.count()), s64{1})))),
         FLUID_MIN_PREDICTIONS, FLUID_MAX_PREDICTIONS);
     // Real frames at least as fast as the slots fill them: the first slot shows the frame as
     // drawn, not a prediction of the latency ahead (EDEN_NX2_FLUID=1).
