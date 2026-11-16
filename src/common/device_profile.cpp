@@ -3,9 +3,12 @@
 
 #include <algorithm>
 #include <array>
+#include <mutex>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <thread>
+#include <utility>
 #include <vector>
 
 #ifdef _WIN32
@@ -16,7 +19,6 @@
 #elif defined(__linux__)
 #include <fstream>
 #include <map>
-#include <optional>
 
 #include "common/core_pinning.h"
 #endif
@@ -93,6 +95,7 @@ constexpr u32 VendorIntel = 0x8086;
 constexpr u32 DriverAmdProprietary = 1;
 constexpr u32 DriverAmdOpenSource = 2;
 constexpr u32 DriverMesaRadv = 3;
+constexpr u32 DriverNvidiaProprietary = 4;
 constexpr u32 DriverIntelProprietaryWindows = 5;
 constexpr u32 DriverIntelOpenSourceMesa = 6;
 
@@ -588,6 +591,104 @@ DeviceProfile DetectHostProfile() {
                     : ac_online == 0 ? PowerSource::Battery
                                      : PowerSource::Unknown;
     return profile;
+}
+
+namespace {
+
+/// The numbers of a dotted version such as "580.119.2.0", up to four; none when the text is not
+/// one. Parts it does not have are zero.
+std::optional<std::array<u32, 4>> ParseDottedVersion(std::string_view text) {
+    std::array<u32, 4> parts{};
+    size_t count = 0;
+    while (true) {
+        const size_t dot = text.find('.');
+        const std::string_view part = text.substr(0, dot);
+        if (part.empty() || part.size() > 9 || count == parts.size() ||
+            !std::ranges::all_of(part, [](char c) { return c >= '0' && c <= '9'; })) {
+            return std::nullopt;
+        }
+        u32 value = 0;
+        for (const char c : part) {
+            value = value * 10 + static_cast<u32>(c - '0');
+        }
+        parts[count++] = value;
+        if (dot == std::string_view::npos) {
+            return parts;
+        }
+        text.remove_prefix(dot + 1);
+    }
+}
+
+std::mutex driver_advice_mutex;
+std::string driver_advice;
+
+} // Anonymous namespace
+
+DriverAssessment AssessDriver(const GpuProfile& gpu, GpuFamily family) {
+    struct Rule {
+        std::array<u32, 4> wanted;
+        std::string_view wanted_text;
+        std::string_view finding;
+        bool workaround;
+    };
+    std::optional<Rule> rule;
+    switch (gpu.driver_id) {
+    case DriverNvidiaProprietary:
+        rule = Rule{{580, 119, 2, 0},
+                    "580.119.02",
+                    "dynamic vertex input is turned off on older ones, so more pipeline variants "
+                    "are built",
+                    true};
+        break;
+    case DriverMesaRadv:
+        rule = Rule{{26, 2, 5, 0},
+                    "26.2.5",
+                    "native mesh shaders take a slower workaround on older ones",
+                    true};
+        break;
+    case DriverIntelProprietaryWindows:
+        // The renderer writes Intel's Windows version as its last two numbers: "101.9175".
+        if (gpu.vendor_id == VendorIntel && family != GpuFamily::None) {
+            rule = Rule{{101, 9175, 0, 0},
+                        "32.0.101.9175",
+                        "it is the driver the Intel numbers were measured on, and older ones are "
+                        "not tested",
+                        false};
+        }
+        break;
+    default:
+        break;
+    }
+    const auto version = ParseDottedVersion(gpu.driver);
+    if (!rule || !version) {
+        return {};
+    }
+    return {
+        .verdict = *version < rule->wanted ? DriverVerdict::Outdated : DriverVerdict::Current,
+        .wanted = rule->wanted_text,
+        .finding = rule->finding,
+        .workaround = rule->workaround,
+    };
+}
+
+std::string DescribeDriverAdvice(const GpuProfile& gpu, const DriverAssessment& assessment) {
+    if (assessment.verdict != DriverVerdict::Outdated) {
+        return {};
+    }
+    return fmt::format("The {} driver {} is older than {}: {}. Updating the graphics driver is "
+                       "worth it.",
+                       GpuVendorName(gpu.vendor_id), gpu.driver, assessment.wanted,
+                       assessment.finding);
+}
+
+void SetDriverAdvice(std::string advice) {
+    std::scoped_lock lock{driver_advice_mutex};
+    driver_advice = std::move(advice);
+}
+
+std::string DriverAdvice() {
+    std::scoped_lock lock{driver_advice_mutex};
+    return driver_advice;
 }
 
 } // namespace Common

@@ -5,17 +5,41 @@ A GPU trace (`.lxtrace`) holds what the emulated GPU consumed over a window, in 
 ## Replay
 
 ```sh
-guarana-cli --replay <trace> --out <dir> [--frames N] [--device N]
+guarana-cli --replay <trace> --out <dir> [--frames N] [--device N] [--no-images]
 ```
 
 `guarana-cli` is the SDL frontend (`eden-cli` before v20.2). The replay needs no game, no window and no keys. It brings up the GPU on a bare `Core::System` (`System::InitializeForGpuReplay`: kernel, Host1x and the GPU, no process, audio or services), restores the snapshot and feeds the records through the GPU in order. It writes per present:
 
 - `frame-NNNN.png`: the composited frame at the size of its largest layer (crop rectangle), through the renderer's screenshot path.
-- `frames.json`: per frame its file, size, XXH3-128 hash of the RGBA bytes and the wall time since the previous frame, plus the program id and the device that replayed it.
+- `frames.json`: per frame its file, size, XXH3-128 hash of the RGBA bytes and two times, plus the program id and the device that replayed it. `ms` is the wall time since the previous frame was composited, so it also holds that frame's hash and PNG encoding. `replay_ms` is only the frame's own commands, composite and read-back: the number to compare two replays by.
 
-The window is a `VK_EXT_headless_surface` surface (`WindowSystemType::Headless`), so any Vulkan driver with that extension works, Mesa's lavapipe included.
+`--no-images` writes no PNG files: `frames.json` still has every hash and time.
+
+The window is a `VK_EXT_headless_surface` surface (`WindowSystemType::Headless`), so any Vulkan driver with that extension works, Mesa's lavapipe included. On Windows, where the loader lists no such extension (Intel's driver 32.0.101.9175 on an Arc 140T has none), the replay makes a window that is never shown and presents to it without vertical sync, with `EDEN_NX2_FLUID` and `EDEN_NX2_EXTRAPOLATE` set to 0 unless the environment already sets them.
 
 `guarana-cli --gpu-trace-sample <trace>` writes a synthetic trace that needs no game: one Switch 2 channel whose four frames are two CPU-written images and two sets of 3D engine clears (whole and scissored). The unit tests read it back (`[gpu_trace]`).
+
+## Bench: a paired A/B on the same frames
+
+```sh
+python3 -I tools/nx2/trace_replay.py bench --cli <guarana-cli> <trace> --out <dir> \
+    --variant base --variant gm0=EDEN_NX2_GM=0 [--build head=<another guarana-cli>] \
+    [--repeat 3] [--skip 10] [--frames N] [--no-images] [--allow-different]
+```
+
+A variant is a set of environment switches, a build, or both; the first one is the baseline. Every variant replays the trace `--repeat` times in turn (A B A B), and the report (`<dir>/bench.json`, and a table on the terminal) says for each one:
+
+- **image**: whether its frames are the baseline's bit for bit. Where they are not, how many differ and, with images kept, the largest channel difference and PSNR of the first one. A variant whose own runs differ from each other is reported as that: it proves nothing either way.
+- **time**: the median, best, worst and 95th percentile of the time a frame took to replay (`replay_ms`, or `ms` when a build in the comparison is older than `replay_ms`), without each run's first `--skip` frames, which build shaders and upload textures.
+
+It exits 1 when a variant's frames differ from the baseline's (unless `--allow-different`) or the baseline does not repeat itself.
+
+What it is good for, and what it is not:
+
+- The game does not run. The scene is the same by construction, so there is no save to load, no reference screenshot to match and no run on the wrong scene.
+- The time is the emulator's GPU thread and the host GPU on a fixed workload, back to back and as fast as they go. The guest CPU, frame pacing and the presenter are not in it: a change there needs `tools/bench` on the running game. A gain here is a gain in GPU-side cost, not yet in frames per second.
+- A switch that changes the image on purpose (a resolution scale, a filter) differs by design: use `--allow-different` and read the numbers.
+- Traces hold game data and stay on the machine that recorded them. Rows from a bench can be shared; the trace cannot.
 
 ## Recording
 

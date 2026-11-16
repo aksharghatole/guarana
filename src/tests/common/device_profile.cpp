@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include <catch2/catch_test_macros.hpp>
@@ -392,4 +393,80 @@ TEST_CASE("Device profile: the host reports its processors", "[common][device_pr
     // The GPU and the display are the renderer's to fill in.
     CHECK(host.gpu.kind == GpuKind::Unknown);
     CHECK(host.refresh_hz == 0.0);
+}
+
+TEST_CASE("The driver verdict compares the logged version with the versions the code names",
+          "[common][device_profile]") {
+    using Common::AssessDriver;
+    using Common::DriverVerdict;
+    using Common::GpuProfile;
+    const auto gpu = [](u32 vendor_id, u32 driver_id, std::string driver) {
+        GpuProfile profile;
+        profile.vendor_id = vendor_id;
+        profile.driver_id = driver_id;
+        profile.driver = std::move(driver);
+        return profile;
+    };
+    // NVIDIA's own driver (VkDriverId 4), as the renderer writes it: four numbers
+    CHECK(AssessDriver(gpu(0x10DE, 4, "580.119.2.0"), GpuFamily::None).verdict ==
+          DriverVerdict::Current);
+    CHECK(AssessDriver(gpu(0x10DE, 4, "595.71.0.0"), GpuFamily::None).verdict ==
+          DriverVerdict::Current);
+    const auto old_nvidia = AssessDriver(gpu(0x10DE, 4, "580.119.1.0"), GpuFamily::None);
+    CHECK(old_nvidia.verdict == DriverVerdict::Outdated);
+    CHECK(old_nvidia.wanted == "580.119.02");
+    CHECK(old_nvidia.workaround);
+    CHECK(AssessDriver(gpu(0x10DE, 4, "572.16.0.0"), GpuFamily::None).verdict ==
+          DriverVerdict::Outdated);
+    // RADV (3): three numbers
+    CHECK(AssessDriver(gpu(0x1002, 3, "26.2.5"), GpuFamily::AmdRadeon780M).verdict ==
+          DriverVerdict::Current);
+    CHECK(AssessDriver(gpu(0x1002, 3, "26.2.4"), GpuFamily::AmdRadeon780M).verdict ==
+          DriverVerdict::Outdated);
+    CHECK(AssessDriver(gpu(0x1002, 3, "25.3.0"), GpuFamily::None).verdict ==
+          DriverVerdict::Outdated);
+    // Intel's Windows driver (5), written as the last two numbers of 32.0.101.9175, and only for
+    // the GPU families of the current driver branch
+    CHECK(AssessDriver(gpu(0x8086, 5, "101.9175"), GpuFamily::IntelArrowLakeH).verdict ==
+          DriverVerdict::Current);
+    CHECK(AssessDriver(gpu(0x8086, 5, "102.1000"), GpuFamily::IntelArcLunarLake).verdict ==
+          DriverVerdict::Current);
+    const auto old_intel = AssessDriver(gpu(0x8086, 5, "101.6452"), GpuFamily::IntelArrowLakeH);
+    CHECK(old_intel.verdict == DriverVerdict::Outdated);
+    CHECK(old_intel.wanted == "32.0.101.9175");
+    // Only the version the numbers were measured on: logged, not shown
+    CHECK_FALSE(old_intel.workaround);
+    CHECK(AssessDriver(gpu(0x8086, 5, "101.5590"), GpuFamily::None).verdict ==
+          DriverVerdict::Unknown);
+    // No finding is not a verdict: AMD's own driver, Mesa's Intel driver, an unreadable version
+    CHECK(AssessDriver(gpu(0x1002, 1, "2.0.310"), GpuFamily::AmdRadeon890M).verdict ==
+          DriverVerdict::Unknown);
+    CHECK(AssessDriver(gpu(0x8086, 6, "25.0.0"), GpuFamily::IntelArrowLakeH).verdict ==
+          DriverVerdict::Unknown);
+    for (const char* unreadable : {"", "580.x", "1.2.3.4.5", ".580", "580.", "5800000000.1"}) {
+        CHECK(AssessDriver(gpu(0x10DE, 4, unreadable), GpuFamily::None).verdict ==
+              DriverVerdict::Unknown);
+    }
+    // One number alone is a version too
+    CHECK(AssessDriver(gpu(0x10DE, 4, "580"), GpuFamily::None).verdict == DriverVerdict::Outdated);
+}
+
+TEST_CASE("Only an old driver gets advice, and it names both versions",
+          "[common][device_profile]") {
+    Common::GpuProfile gpu;
+    gpu.vendor_id = 0x10DE;
+    gpu.driver_id = 4;
+    gpu.driver = "572.16.0.0";
+    const std::string advice =
+        Common::DescribeDriverAdvice(gpu, Common::AssessDriver(gpu, GpuFamily::None));
+    CHECK(advice.find("NVIDIA driver 572.16.0.0 is older than 580.119.02") != std::string::npos);
+    gpu.driver = "581.57.0.0";
+    CHECK(Common::DescribeDriverAdvice(gpu, Common::AssessDriver(gpu, GpuFamily::None)).empty());
+    gpu.driver_id = 1;
+    CHECK(Common::DescribeDriverAdvice(gpu, Common::AssessDriver(gpu, GpuFamily::None)).empty());
+
+    Common::SetDriverAdvice(advice);
+    CHECK(Common::DriverAdvice() == advice);
+    Common::SetDriverAdvice({});
+    CHECK(Common::DriverAdvice().empty());
 }
