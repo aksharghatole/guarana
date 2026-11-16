@@ -114,7 +114,7 @@ A failed scheduled run opens one issue, "upstream-sync is blocked", with the run
 
 ## Pull request test builds
 
-`build-check` uploads the Windows build of every pull request that changes code as `guarana-pr<N>-<commit>-windows-x86_64`, kept for 14 days, and links it in the run summary. `pr-build-comment.yml` then links it in a comment on the pull request, forks included, and updates that comment on each new run. It is a Release build of the pull request merged into its base, without the release builds' ThinLTO and PGO. Downloading needs a GitHub account. Pull requests that change only documentation, the website, issue forms, the label list or benchmark rows skip the builds.
+`build-check` uploads the Windows build of every pull request that changes code as `guarana-pr<N>-<commit>-windows-x86_64`, kept for 14 days, and links it in the run summary. `pr-build-comment.yml` then links it in a comment on the pull request, forks included, and updates that comment on each new run. It is a Release build of the pull request merged into its base, without the release builds' ThinLTO and PGO. Only pushes (`main`, `release/**`, `hotfix/**`, `exp/**`) save the dependency and compiler cache; a pull request restores the newest one of its base, so the repository's 10 GB of Actions cache holds the caches every build starts from. Downloading needs a GitHub account. Pull requests that change only documentation, the website, issue forms, the label list or benchmark rows skip the builds.
 
 ## Other workflows
 
