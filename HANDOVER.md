@@ -23,9 +23,11 @@ what `git` and `gh` showed at that time. Anything this file could not confirm is
 - **`main` is ahead of the release** by the Ocarina of Time text speed add-ons with the
   off-by-default built-in patches (pull request #202, Lichii #1422), by what the add-ons page
   says about a built-in patch (#204), by a test that fails when two built-in patches applied
-  together touch the same bytes (#205) and by the safer mod import: it asks before a mod is
+  together touch the same bytes (#205), by the safer mod import, which asks before a mod is
   replaced, writes a `mod.json`, has an Open Mods Folder button and warns when two ticked mods
-  replace the same game file (#206). They go out with the next version.
+  replace the same game file (#206), and by a game's own frame-rate options being listed in that
+  game's properties only (#203, a part of Eglantine #837). They go out with the next version.
+  None of the five has been tried in the game yet: CI built them and ran their tests.
 - **The `upstream` mirror is at `99e89096cb`.** It was pushed by hand, because an upstream commit
   changes a workflow file ([docs/LANES.md](docs/LANES.md), "When the sync stops"). The scheduled
   sync continues from there and will need the same push the next time upstream touches a workflow,
@@ -37,8 +39,7 @@ what `git` and `gh` showed at that time. Anything this file could not confirm is
     `cost_pass_*`, `CostPass` and `ReportCostPassTimes` in `vk_scheduler`.
   - A lookup drops a prebuilt pipeline that is still queued and the draw builds it; the async
     boot counts such a build as ended.
-- **Open pull requests:** #195 (the Hall of fame, from the `legacy` workflow) and the drafts
-  under "Lanes in progress".
+- **Open pull requests:** #195 (the Hall of fame, from the `legacy` workflow).
 - **Shown-frame pacing was settled on 16 November: the upstream merge cost none.** In Hyrule
   Field, counting only runs with no compiler running in any 5 s sample. The baseline is `main`
   just before the merge (`7ba919b7a8`, 417 commits after v20.3.0), so the runs say what the
@@ -96,13 +97,7 @@ it becomes a default.
 
 ## Lanes in progress
 
-Draft pull requests on 16 November. None has been tried in the game yet:
-
-| Lane | Branch | Pull request |
-|---|---|---|
-| A game's tweaks are listed on that game's page only (part of Eglantine #837) | `feat/per-game-fps-options` | #203 |
-
-To start a lane:
+No lane is open on the public repository. To start one:
 
 1. `git fetch origin`, then `git worktree add ../wt-<lane> -b <branch> origin/main`. Use one
    worktree per lane.

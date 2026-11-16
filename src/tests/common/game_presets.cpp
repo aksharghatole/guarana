@@ -5,6 +5,7 @@
 #include <set>
 #include <string>
 #include <catch2/catch_test_macros.hpp>
+#include "common/game_presets.h"
 #include "common/settings.h"
 #include "common/switch_origin.h"
 
@@ -79,4 +80,57 @@ TEST_CASE("A game override keeps CPU inner invalidation on despite the skip hack
     CHECK_FALSE(Settings::SkipCpuInnerInvalidation());
     values.skip_cpu_inner_invalidation.SetValue(skip);
     values.keep_cpu_inner_invalidation = keep;
+}
+
+TEST_CASE("Game tweaks refer to valid per-game settings", "[game_presets]") {
+    auto settings = std::make_unique<Settings::Values>();
+    for (const auto& [program_id, keys] : Settings::game_tweaks) {
+        INFO(program_id);
+        REQUIRE(Settings::FindGameTweaks(program_id) == &keys);
+        for (const auto& key : keys) {
+            INFO(key);
+            const auto it = settings->linkage.by_key.find(key);
+            REQUIRE(it != settings->linkage.by_key.end());
+            CHECK(it->second->Switchable());
+            CHECK(Settings::IsGameTweak(key));
+        }
+    }
+    CHECK_FALSE(Settings::IsGameTweak("resolution_setup"));
+    CHECK(Settings::FindGameTweaks(0) == nullptr);
+}
+
+TEST_CASE("A game tweak belongs to its game only", "[game_presets]") {
+    constexpr u64 OcarinaProgramId = 0x0400486024DEC000ULL;
+    using Settings::HasGameTweak;
+    using Settings::HyruleWarriorsProgramId;
+    using Settings::MarioKartWorldProgramId;
+
+    for (const auto& [program_id, keys] : Settings::game_tweaks) {
+        for (const auto& key : keys) {
+            INFO(key);
+            CHECK(HasGameTweak(program_id, key));
+            // Another game, and a file without a program id.
+            CHECK_FALSE(HasGameTweak(OcarinaProgramId, key));
+            CHECK_FALSE(HasGameTweak(0, key));
+        }
+    }
+    CHECK(HasGameTweak(MarioKartWorldProgramId, "mkw_60fps"));
+    CHECK_FALSE(HasGameTweak(HyruleWarriorsProgramId, "mkw_60fps"));
+    CHECK(HasGameTweak(HyruleWarriorsProgramId, "hyrule_30fps"));
+    CHECK_FALSE(HasGameTweak(MarioKartWorldProgramId, "hyrule_30fps"));
+    // A setting for every game is nobody's tweak.
+    CHECK_FALSE(HasGameTweak(MarioKartWorldProgramId, "use_video_framerate"));
+}
+
+TEST_CASE("Every Mario Kart World and Hyrule Warriors option is a game tweak", "[game_presets]") {
+    // A new option named after one of these games needs a row in game_tweaks, or it is listed
+    // for every game.
+    const auto settings = std::make_unique<Settings::Values>();
+    for (const auto& [key, setting] : settings->linkage.by_key) {
+        if (key.starts_with("mkw_") || key.starts_with("hyrule_")) {
+            INFO(key);
+            CHECK(Settings::IsGameTweak(key));
+            CHECK(setting->GetCategory() == Settings::Category::RendererAdvanced);
+        }
+    }
 }
