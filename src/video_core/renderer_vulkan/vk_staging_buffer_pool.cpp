@@ -153,15 +153,18 @@ void StagingBufferPool::RetainUntilCurrentTick(const StagingBufferRef& ref) {
         }
         return;
     }
-    auto& entries = GetCache(ref.usage)[ref.log2_level].entries;
+    StagingBuffers& cache_level = GetCache(ref.usage)[ref.log2_level];
+    // Deferred inputs remain pinned until their owner's FreeDeferred call; they wait in their
+    // level's deferred map, not in its entries.
+    if (cache_level.deferred.contains(ref.index)) {
+        return;
+    }
+    auto& entries = cache_level.entries;
     const auto it = std::find_if(entries.begin(), entries.end(), [&ref](const StagingBuffer& entry) {
         return entry.index == ref.index;
     });
     ASSERT(it != entries.end());
-    // Deferred inputs remain pinned until their owner's FreeDeferred call.
-    if (!it->deferred) {
-        it->tick = (std::max)(it->tick, tick);
-    }
+    it->tick = (std::max)(it->tick, tick);
 }
 
 void StagingBufferPool::TickFrame() {

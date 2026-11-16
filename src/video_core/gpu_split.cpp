@@ -641,7 +641,7 @@ bool GpuSplit::WaitFor(u64 target, DrainSite site) {
         consumed_cache = consumed.load(std::memory_order_acquire);
         if (past_release && !release_ran) {
             if (consumed_cache < release) {
-                Backoff(spins, release);
+                Backoff(spins, spin_limit, release);
                 continue;
             }
             release_ran = Clock::now();
