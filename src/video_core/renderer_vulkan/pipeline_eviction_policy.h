@@ -54,6 +54,25 @@ constexpr size_t PrebuildLimit(size_t kept, size_t boot_built) {
     return kept - std::min(kept, boot_built);
 }
 
+/// Whether a boot load saves the driver pipeline cache once its boot builds have ended. Never
+/// while async boot builds still run. Where reading the cache during a build crashes (Intel's
+/// Windows driver), only when no build can run during the save: reads wait for builds
+/// (EDEN_NX2_CACHE_SAFE), or the background prebuild starts after it (`load_save`,
+/// EDEN_NX2_LOAD_SAVE, Lichii #1838).
+constexpr bool SaveDriverCacheAtLoadEnd(bool async_boot, bool can_read_during_builds,
+                                        bool serializes_reads, bool load_save) {
+    return !async_boot && (can_read_during_builds || serializes_reads || load_save);
+}
+
+/// Whether a boot load starts the background prebuild only after its driver cache save (and the
+/// precache): with a precache, as its jobs would queue ahead of the precache's; where reads of the
+/// cache wait for the builds into it; and with `load_save` where such reads crash, so that the
+/// save runs with no build in flight. Otherwise the prebuild runs beside the boot builds.
+constexpr bool PrebuildAfterLoadSave(bool async_boot, bool precache, bool can_read_during_builds,
+                                     bool serializes_reads, bool load_save) {
+    return !async_boot && (precache || serializes_reads || (load_save && !can_read_during_builds));
+}
+
 /// Picks which unused pipelines to destroy so that at most `kept` stay built.
 /// @param last_uses Frame each candidate was last used (0 for a prebuilt one no draw has used).
 ///                  Candidates are built pipelines old enough to evict and not the current one.

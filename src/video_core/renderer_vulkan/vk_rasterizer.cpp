@@ -2224,7 +2224,7 @@ void RasterizerVulkan::OotNetworkBypassed(u32 output_tic) {
                              oot_tonemapped_extent.width == oot_guide_scene_extent.width &&
                              oot_tonemapped_extent.height == oot_guide_scene_extent.height;
     oot_guide_reference = same_pixels ? oot_tonemapped_view : VkImageView{};
-    if (!oot_guide_scene && ExtrapolationRequested()) {
+    if (!oot_guide_scene && MotionGuideRequested()) {
         const char* reason = "no usable scene copy (missing, rescaled, not B10G11R11_FLOAT, "
                              "multisampled or a sub-range of an image)";
         if (std::exchange(oot_hud_reason, reason) != reason) {
@@ -3869,7 +3869,7 @@ bool RasterizerVulkan::OcarinaFsrAnyStep() const {
 }
 
 bool RasterizerVulkan::OcarinaGuideOnly() const {
-    return ExtrapolationRequested() && !oot_guide_failed &&
+    return MotionGuideRequested() && !oot_guide_failed &&
            Settings::values.frame_gen.GetValue() &&
            VideoCommon::OotNetwork::BypassEnabled(program_id) && !OcarinaTemporalEnabled();
 }
@@ -4330,7 +4330,7 @@ bool RasterizerVulkan::TryOcarinaUpscale(const ComputePipeline& pipeline, u64 na
             oot_fsr_output = output_extent;
             // The frame before the game draws its HUD over it in another image, which tells
             // frame extrapolation the HUD apart (as OotNetworkBypassed keeps it).
-            if (ExtrapolationRequested() && !upscale_4k) {
+            if (MotionGuideRequested() && !upscale_4k) {
                 oot_fsr_hud_scene = target.Handle(Shader::TextureType::Color2D);
                 oot_fsr_hud_extent = target_extent;
                 oot_fsr_hud_frame = render_trace_frame;
@@ -4705,7 +4705,7 @@ std::optional<FramebufferTextureInfo> RasterizerVulkan::AccelerateDisplay(
         oot_hud_composite = info.image_view;
         oot_hud_frame = render_trace_frame;
     }
-    if (ExtrapolationRequested() && oot_guide_frame == render_trace_frame && oot_guide_scene &&
+    if (MotionGuideRequested() && oot_guide_frame == render_trace_frame && oot_guide_scene &&
         !oot_guide_reference && oot_hud_frame != render_trace_frame) {
         // The extrapolation's HUD mask needs the presented image next to the scene copy.
         const char* reason = !info.image_view ? "no presented image view"
@@ -4745,7 +4745,7 @@ std::optional<FramebufferTextureInfo> RasterizerVulkan::AccelerateDisplay(
 }
 
 std::optional<ExtrapolationSource> RasterizerVulkan::OcarinaExtrapolationSource() const {
-    if (ExtrapolationRequested() && oot_guide && oot_guide_frame == render_trace_frame &&
+    if (MotionGuideRequested() && oot_guide && oot_guide_frame == render_trace_frame &&
         !oot_guide_failed) {
         auto source = oot_guide->Extrapolation(render_trace_frame);
         if (source && oot_guide_reference) {
@@ -4760,7 +4760,7 @@ std::optional<ExtrapolationSource> RasterizerVulkan::OcarinaExtrapolationSource(
         }
         return source;
     }
-    if (!ExtrapolationRequested() || !oot_live_dlss || oot_dlss_frame != render_trace_frame ||
+    if (!MotionGuideRequested() || !oot_live_dlss || oot_dlss_frame != render_trace_frame ||
         oot_live_failed || oot_live_dlss->EvaluationFailed()) {
         return std::nullopt;
     }
