@@ -5,23 +5,33 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <algorithm>
+#include <filesystem>
 #include <memory>
+#include <system_error>
 #include <utility>
 
 #include <fmt/format.h>
 
+#include <QDateTime>
 #include <QDesktopServices>
+#include <QDir>
+#include <QFileInfo>
 #include <QHeaderView>
+#include <QLocale>
 #include <QMenu>
+#include <QSet>
 #include <QStandardItemModel>
 #include <QStandardPaths>
 #include <QString>
 #include <QStyle>
 #include <QTimer>
 #include <QTreeView>
+#include <QUrl>
+#include <QtConcurrent/QtConcurrentRun>
 
 #include "common/common_types.h"
 #include "common/fs/fs.h"
+#include "common/fs/fs_util.h"
 #include "common/fs/path_util.h"
 #include "configuration/addon/mod_select_dialog.h"
 #include "core/core.h"
@@ -117,6 +127,26 @@ QString BuiltinInfoText(const FileSys::Patch& patch) {
     return lines.join(QStringLiteral("\n"));
 }
 
+/// The text of the box under the list for a mod that has a mod.json: where it came from. Empty
+/// when there is nothing to say.
+QString ModInfoText(const std::string& location) {
+    const auto info =
+        FrontendCommon::ReadModInfo(std::filesystem::path{Common::FS::ToU8String(location)});
+    if (!info || info->source.empty()) {
+        return {};
+    }
+    const QString source = QString::fromStdString(info->source);
+    const QDateTime date = QDateTime::fromString(QString::fromStdString(info->date), Qt::ISODate);
+    if (!date.isValid()) {
+        return ConfigurePerGameAddons::tr("Imported from %1.").arg(source);
+    }
+    return ConfigurePerGameAddons::tr("Imported from %1 on %2.")
+        .arg(source, QLocale().toString(date.toLocalTime().date(), QLocale::ShortFormat));
+}
+
+/// How many colliding files the warning lists before it says "and N more".
+constexpr int MAX_CONFLICT_LINES = 5;
+
 } // Anonymous namespace
 
 ConfigurePerGameAddons::ConfigurePerGameAddons(Core::System& system_, QWidget* parent)
@@ -164,6 +194,17 @@ ConfigurePerGameAddons::ConfigurePerGameAddons(Core::System& system_, QWidget* p
 
     connect(ui->folder, &QAbstractButton::clicked, this, &ConfigurePerGameAddons::InstallModFolder);
     connect(ui->zip, &QAbstractButton::clicked, this, &ConfigurePerGameAddons::InstallModZip);
+    connect(ui->open_folder, &QAbstractButton::clicked, this,
+            &ConfigurePerGameAddons::OpenModsFolder);
+
+    connect(&conflict_watcher,
+            &QFutureWatcher<std::vector<FrontendCommon::ModFileConflict>>::finished, this, [this] {
+                mod_conflicts = conflict_watcher.result();
+                UpdateModConflicts();
+            });
+    connect(item_model, &QStandardItemModel::itemChanged, this,
+            &ConfigurePerGameAddons::UpdateModConflicts);
+    ui->conflicts->setVisible(false);
 
     connect(tree_view, &QTreeView::customContextMenuRequested, this,
             &ConfigurePerGameAddons::showContextMenu);
@@ -239,32 +280,75 @@ void ConfigurePerGameAddons::SetTitleId(u64 id) {
 
 void ConfigurePerGameAddons::InstallMods(const QStringList& mods) {
     QStringList failed;
+    QStringList kept;
+    int installed = 0;
     for (const auto& mod : mods) {
-        if (FrontendCommon::InstallMod(mod.toStdString(), title_id, true) ==
-            FrontendCommon::Failed) {
-            failed << QFileInfo(mod).baseName();
+        const std::filesystem::path mod_path{mod.toStdU16String()};
+        FrontendCommon::ModInstallOptions options;
+        options.source = install_source.toStdString();
+        if (mods.size() == 1) {
+            options.name = install_name.toStdString();
+        }
+        const QString name =
+            QString::fromStdString(FrontendCommon::InstalledModName(mod_path, options));
+
+        // Installing replaces the whole mod of that name: only with the player's yes.
+        if (FrontendCommon::IsModInstalled(title_id, name.toStdString())) {
+            const auto choice = QtCommon::Frontend::Warning(
+                tr("Replace mod?"),
+                tr("A mod named \"%1\" is already installed for this game.\n\nReplace it? Its "
+                   "files are deleted and can NOT be recovered. Choose No to keep it as it is.")
+                    .arg(name),
+                QtCommon::Frontend::StandardButton::Yes | QtCommon::Frontend::StandardButton::No);
+            if (choice != QtCommon::Frontend::StandardButton::Yes) {
+                kept << name;
+                continue;
+            }
+            options.replace_existing = true;
+        }
+
+        switch (FrontendCommon::InstallMod(mod_path, title_id, options)) {
+        case FrontendCommon::Success:
+            ++installed;
+            break;
+        case FrontendCommon::Cancelled:
+            kept << name;
+            break;
+        case FrontendCommon::Failed:
+            failed << name;
+            break;
         }
     }
 
-    if (failed.empty()) {
-        QtCommon::Frontend::Information(tr("Mod Install Succeeded"),
-                                        tr("Successfully installed all mods."));
-
+    if (installed > 0) {
         item_model->removeRows(0, item_model->rowCount());
         list_items.clear();
         LoadConfiguration();
 
         UISettings::values.is_game_list_reload_pending.exchange(true);
-    } else {
+    }
+
+    if (!failed.empty()) {
         QtCommon::Frontend::Critical(
             tr("Mod Install Failed"),
             tr("Failed to install the following mods:\n\t%1\nCheck the log for details.")
                 .arg(failed.join(QStringLiteral("\n\t"))));
+    } else if (installed > 0 && kept.empty()) {
+        QtCommon::Frontend::Information(tr("Mod Install Succeeded"),
+                                        tr("Successfully installed all mods."));
+    } else if (installed > 0) {
+        QtCommon::Frontend::Information(
+            tr("Mod Install Succeeded"),
+            tr("Installed the other mods. Kept as they were:\n\t%1")
+                .arg(kept.join(QStringLiteral("\n\t"))));
     }
 }
 
-void ConfigurePerGameAddons::InstallModPath(const QString& path, const QString& fallbackName) {
-    const auto mods = QtCommon::Mod::GetModFolders(path, fallbackName);
+void ConfigurePerGameAddons::InstallModPath(const QString& path, const QString& fallbackName,
+                                            const QString& source) {
+    install_name.clear();
+    install_source = source.isEmpty() ? QDir(path).dirName() : source;
+    const auto mods = QtCommon::Mod::GetModFolders(path, fallbackName, install_name);
 
     if (mods.size() > 1) {
         ModSelectDialog* dialog = new ModSelectDialog(mods, this);
@@ -297,7 +381,19 @@ void ConfigurePerGameAddons::InstallModZip() {
 
     const QString extracted = QtCommon::Mod::ExtractMod(path);
     if (!extracted.isEmpty())
-        InstallModPath(extracted, QFileInfo(path).baseName());
+        InstallModPath(extracted, QFileInfo(path).baseName(), QFileInfo(path).fileName());
+}
+
+void ConfigurePerGameAddons::OpenModsFolder() {
+    // Made if the game has no mods yet, so the button always opens a folder to put one in.
+    const std::filesystem::path dir = FrontendCommon::GetModsDir(title_id);
+    std::error_code ec;
+    std::filesystem::create_directories(dir, ec);
+    const QString path = QString::fromStdString(Common::FS::PathToUTF8String(dir));
+    if (ec || !QDesktopServices::openUrl(QUrl::fromLocalFile(path))) {
+        QtCommon::Frontend::Critical(tr("Error Opening Mods Folder"),
+                                     tr("Could not open the folder:\n%1").arg(path));
+    }
 }
 
 void ConfigurePerGameAddons::AddonDeleteRequested(QList<QModelIndex> selected) {
@@ -411,6 +507,7 @@ void ConfigurePerGameAddons::LoadConfiguration() {
 
     bool has_enabled_update = false;
     bool has_builtin = false;
+    bool has_info = false;
     QStringList problems;
 
     for (const auto& patch : patches) {
@@ -461,6 +558,13 @@ void ConfigurePerGameAddons::LoadConfiguration() {
 
         auto* const version_item = new QStandardItem{
             patch.builtin ? BuiltinVersionText(patch) : QString::fromStdString(patch.version)};
+        if (is_mod && !patch.builtin && !patch.location.empty()) {
+            if (const QString info = ModInfoText(patch.location); !info.isEmpty()) {
+                has_info = true;
+                first_item->setData(info, PATCH_INFO);
+                first_item->setToolTip(info);
+            }
+        }
         if (patch.builtin) {
             has_builtin = true;
             // The settings store the full name; the row shows it without " (built-in)".
@@ -487,8 +591,65 @@ void ConfigurePerGameAddons::LoadConfiguration() {
     tree_view->resizeColumnToContents(1);
 
     builtin_problems = problems.join(QStringLiteral("\n"));
-    ui->info->setVisible(has_builtin);
+    info_hint = has_builtin
+                    ? tr("Select a built-in patch to see what it does and whether it was applied.")
+                    : tr("Select a mod to see where it was imported from.");
+    ui->info->setVisible(has_builtin || has_info);
     UpdateInfo();
+    ScanModConflicts();
+}
+
+void ConfigurePerGameAddons::ScanModConflicts() {
+    // Every file of every mod is listed, which can take a while: not on the interface's thread.
+    conflict_watcher.setFuture(QtConcurrent::run([dir = FrontendCommon::GetModsDir(title_id)] {
+        return FrontendCommon::FindModFileConflicts(dir);
+    }));
+}
+
+void ConfigurePerGameAddons::UpdateModConflicts() {
+    // What is ticked in the list now, saved or not.
+    QSet<QString> unticked;
+    for (const auto& item : list_items) {
+        if (item.front()->checkState() == Qt::Unchecked &&
+            !item.front()->data(PATCH_LOCATION).toString().isEmpty()) {
+            unticked.insert(item.front()->text());
+        }
+    }
+
+    int count = 0;
+    QStringList lines;
+    for (const auto& conflict : mod_conflicts) {
+        QStringList mods;
+        for (const auto& mod : conflict.mods) {
+            if (const QString name = QString::fromStdString(mod); !unticked.contains(name)) {
+                mods << name;
+            }
+        }
+        if (mods.size() < 2) {
+            continue;
+        }
+        ++count;
+        if (lines.size() < MAX_CONFLICT_LINES) {
+            lines << tr("%1: taken from %2, also in %3")
+                         .arg(QString::fromStdString(conflict.path), mods.front(),
+                              mods.mid(1).join(QStringLiteral(", ")));
+        }
+    }
+
+    if (count == 0) {
+        ui->conflicts->setVisible(false);
+        return;
+    }
+    QString text = tr("%n game file(s) are replaced by more than one ticked mod. Mods are applied "
+                      "in the order of their names, so the first one's file is the one the game "
+                      "gets:",
+                      "", count);
+    text += QStringLiteral("\n") + lines.join(QStringLiteral("\n"));
+    if (const int more = count - static_cast<int>(lines.size()); more > 0) {
+        text += QStringLiteral("\n") + tr("and %n more", "", more);
+    }
+    ui->conflicts->setText(text);
+    ui->conflicts->setVisible(true);
 }
 
 void ConfigurePerGameAddons::UpdateInfo() {
@@ -497,9 +658,7 @@ void ConfigurePerGameAddons::UpdateInfo() {
         text = current.siblingAtColumn(0).data(PATCH_INFO).toString();
     }
     if (text.isEmpty()) {
-        text = builtin_problems.isEmpty()
-                   ? tr("Select a built-in patch to see what it does and whether it was applied.")
-                   : builtin_problems;
+        text = builtin_problems.isEmpty() ? info_hint : builtin_problems;
     }
     ui->info->setText(text);
 }

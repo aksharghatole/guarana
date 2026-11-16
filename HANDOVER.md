@@ -21,8 +21,11 @@ what `git` and `gh` showed at that time. Anything this file could not confirm is
 
   The details are in [CHANGELOG.md](CHANGELOG.md).
 - **`main` is ahead of the release** by the Ocarina of Time text speed add-ons with the
-  off-by-default built-in patches (pull request #202, Lichii #1422) and by what the add-ons page
-  says about a built-in patch (#204). They go out with the next version.
+  off-by-default built-in patches (pull request #202, Lichii #1422), by what the add-ons page
+  says about a built-in patch (#204), by a test that fails when two built-in patches applied
+  together touch the same bytes (#205) and by the safer mod import: it asks before a mod is
+  replaced, writes a `mod.json`, has an Open Mods Folder button and warns when two ticked mods
+  replace the same game file (#206). They go out with the next version.
 - **The `upstream` mirror is at `99e89096cb`.** It was pushed by hand, because an upstream commit
   changes a workflow file ([docs/LANES.md](docs/LANES.md), "When the sync stops"). The scheduled
   sync continues from there and will need the same push the next time upstream touches a workflow,
@@ -34,7 +37,7 @@ what `git` and `gh` showed at that time. Anything this file could not confirm is
     `cost_pass_*`, `CostPass` and `ReportCostPassTimes` in `vk_scheduler`.
   - A lookup drops a prebuilt pipeline that is still queued and the draw builds it; the async
     boot counts such a build as ended.
-- **Open pull requests:** #195 (the Hall of fame, from the `legacy` workflow) and the four drafts
+- **Open pull requests:** #195 (the Hall of fame, from the `legacy` workflow) and the drafts
   under "Lanes in progress".
 - **Shown-frame pacing was settled on 16 November: the upstream merge cost none.** In Hyrule
   Field, counting only runs with no compiler running in any 5 s sample. The baseline is `main`
@@ -68,9 +71,9 @@ what `git` and `gh` showed at that time. Anything this file could not confirm is
     does not reproduce it: eight boots in a row beside sixteen busy threads all started.
   - The replay bench has no real rows yet. `guarana-cli --replay` starts on Intel's Windows
     driver, but the Hyrule Field trace recorded for it holds no presents: the lab script judged
-    the recording finished by the file's size and closed the game during the 3 GB snapshot. Pull
-    request #207 makes the replay refuse such a trace and the recorder report it. A new trace has
-    to be recorded: keep the game open until `trace_status` shows `requested: false`.
+    the recording finished by the file's size and closed the game during the 3 GB snapshot. Since
+    #207 the replay refuses such a trace and the recorder reports it. A new trace has to be
+    recorded: keep the game open until `trace_status` shows `requested: false`.
 - **The work queue:** the open `agent-ready` issues
   ([the list](https://github.com/karimalsalah/guarana/issues?q=is%3Aissue%20is%3Aopen%20label%3Aagent-ready%20-label%3Aneeds-triage%20no%3Aassignee)).
 
@@ -98,9 +101,6 @@ Draft pull requests on 16 November. None has been tried in the game yet:
 | Lane | Branch | Pull request |
 |---|---|---|
 | A game's tweaks are listed on that game's page only (part of Eglantine #837) | `feat/per-game-fps-options` | #203 |
-| A test that fails when two built-in patches applied together touch the same bytes | `test/builtin-cave-overlap` | #205 |
-| Ask before a mod is replaced, record where it came from, warn on shared files | `feat/safer-mod-install` | #206 |
-| The replay refuses a GPU trace without presents and the recorder reports one | `fix/replay-empty-trace` | #207 |
 
 To start a lane:
 

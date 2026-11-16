@@ -9,7 +9,8 @@
 #include "qt_common/abstract/frontend.h"
 
 namespace QtCommon::Mod {
-QStringList GetModFolders(const QString& root, const QString& fallbackName) {
+QStringList GetModFolders(const QString& root, const QString& fallbackName,
+                          QString& install_name) {
     namespace fs = std::filesystem;
 
     const auto std_root = root.toStdString();
@@ -49,6 +50,16 @@ QStringList GetModFolders(const QString& root, const QString& fallbackName) {
 
         if (name.isEmpty())
             return {};
+
+        // The name becomes the name of a folder, here and where the mod is installed.
+        if (name == QStringLiteral(".") || name == QStringLiteral("..") ||
+            name.contains(QLatin1Char('/')) || name.contains(QLatin1Char('\\'))) {
+            QtCommon::Frontend::Critical(tr("Mod Name"),
+                                         tr("A mod's name cannot be . or .., or contain / or \\"));
+            return {};
+        }
+
+        install_name = name;
 
         // if std_path is empty, frontend_common could not determine mod type and/or name.
         // so we have to prompt the user and set up the structure ourselves
@@ -103,15 +114,10 @@ QStringList GetModFolders(const QString& root, const QString& fallbackName) {
                 fs::copy(entry.path(), target,
                          fs::copy_options::recursive | fs::copy_options::overwrite_existing);
             }
-        } else {
-            // Rename the existing mod folder.
-            const auto new_path = std_path.parent_path() / name.toStdString();
-            if (new_path != std_path) {
-                fs::remove_all(new_path);
-                fs::rename(std_path, new_path);
-            }
-            std_path = new_path;
         }
+        // Otherwise the mod's folder stays as the player has it, in a folder that is theirs: it
+        // is installed under install_name. Renaming it here also deleted any folder next to it
+        // that had the chosen name.
 
         return {QString::fromStdString(std_path.string())};
     }

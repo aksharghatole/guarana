@@ -12,11 +12,23 @@ For example, **Super Smash Bros. Ultimate** uses such a framework. See the relat
 
 # Installing Mods for Most Games
 
-1. Right click a game in the game list.
-2. Click **"Open Mod Data Location"**.
-3. Extract the mod into that folder.
+The easy way:
+
+1. Right click a game in the game list and click **Configure Game**.
+2. In the **Add-Ons** tab, click **Import Mod from ZIP** or **Import Mod from Folder** and pick the mod.
+
+Guarana copies the mod into the game's mod folder and leaves the file or folder you picked as it is. If a mod of the same name is already installed, it asks before it replaces that mod. Each imported mod gets a small `mod.json` with its name, what it was imported from and when. The game never sees that file.
+
+By hand:
+
+1. Right click a game in the game list and click **"Open Mod Data Location"**, or click **Open Mods Folder** in the Add-Ons tab.
+2. Extract the mod into that folder.
 
 Each mod should be placed inside **its own subfolder**.
+
+## When two mods change the same file
+
+Mods are applied in the order of their names. When two ticked mods replace the same file of the game, the game gets the file of the mod that comes first. The Add-Ons tab lists such files under the list of mods, with the mod whose file is taken. To get the other mod's file, untick the first mod, or rename the mods' folders so that the one you want comes first.
 
 ---
 
