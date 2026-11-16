@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <mutex>
 #include <span>
+#include <thread>
 #include <vector>
 
 #include "audio_core/common/common.h"
@@ -45,6 +46,7 @@ public:
         : SinkStream(system_, type_), ctx{ctx_} {
 #ifdef _WIN32
         com_init_result = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+        com_thread = std::this_thread::get_id();
 #endif
         name = name_;
         device_channels = device_channels_;
@@ -115,7 +117,9 @@ public:
         }
 
 #ifdef _WIN32
-        if (SUCCEEDED(com_init_result)) {
+        // Only the thread that set COM up may balance it: a microphone opened on a helper thread
+        // is closed on another one.
+        if (SUCCEEDED(com_init_result) && std::this_thread::get_id() == com_thread) {
             CoUninitialize();
         }
 #endif
@@ -226,6 +230,8 @@ private:
 #ifdef _WIN32
     /// Result of this stream's COM initialization, balanced only when it succeeded
     HRESULT com_init_result{};
+    /// The thread that initialized COM for this stream
+    std::thread::id com_thread{};
 #endif
 };
 
