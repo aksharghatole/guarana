@@ -3,6 +3,7 @@
 
 import base64
 import contextlib
+import glob
 import io
 import json
 import os
@@ -242,7 +243,30 @@ class FakeEmulator:
         if method == "gpu_costs" and "gpu_costs" in self.methods:
             self.costs = params.get("enable", getattr(self, "costs", False))
             return {"result": {"enabled": self.costs, "frame": 7, "work": [{"hash": "78134ce8125d5959", "ms": 15.1}]}}
+        if method == "boot_timing" and "boot_timing" in self.methods:
+            return {"result": self.boot_timing(params)}
         return {"error": f"unknown method \"{method}\""}
+
+    def boot_timing(self, params):
+        """What common/boot_timing.cpp and boot_split.cpp report: phases, the first frame, marks."""
+        marks = getattr(self, "marks", [])
+        self.marks = marks
+        totals = {"held_draws": 0, "held_draw_ms": 0.0, "held_dispatches": 0, "held_dispatch_ms": 0.0,
+                  "builds": {"compute": {"count": 2, "ms": 40.0}}, "file_reads": 10, "file_read_bytes": 4096,
+                  "file_read_ms": 3.0}
+        if params.get("mark"):
+            index = len(marks) + 1
+            marks.append({"label": params["mark"], "at_ms": 20000.0 + index, "presents": self.presents,
+                          "totals": dict(totals, held_draws=4 * index),
+                          "since_first_frame": dict(totals, held_draws=4 * index, held_draw_ms=150.25 * index)})
+        phases = [{"phase": "frontend: logging started", "at_ms": 4084.0, "took_ms": 4084.0},
+                  {"phase": "vulkan: instance created", "at_ms": 8108.0, "took_ms": 3642.0},
+                  {"phase": "vulkan: instance created", "at_ms": 12597.0, "took_ms": 3664.0},
+                  {"phase": "frontend: first guest frame presented", "at_ms": 24746.0, "took_ms": 4028.0},
+                  {"phase": "frontend: loading screen hidden, game shown", "at_ms": 25300.0, "took_ms": 554.0}]
+        return {"now_ms": 30000.0, "phases": phases,
+                "split": {"current": totals, "marks": list(marks), "note": "cumulative",
+                          "first_frame": {"label": "first_frame", "at_ms": 24746.04, "presents": 1, "totals": totals}}}
 
     def serve(self):
         while True:
@@ -664,6 +688,8 @@ class RunCase(unittest.TestCase):
         self.emulator_options = {}
         self.process_options = {}
         self.log_text = None
+        self.on_launch = None
+        self.stop_options = []
         self.host = FakeHost()
         self.state = os.path.join(self.folder, "state")
         self.launches = []
@@ -697,11 +723,14 @@ class RunCase(unittest.TestCase):
                                       "power": test.host.ac()})
                 if test.log_text is not None:
                     test.write(os.path.join(test.user, "log", "eden_log.txt"), test.log_text.encode())
+                if test.on_launch is not None:
+                    test.on_launch(env)
                 return FakeProcess(emulator, **test.process_options)
 
             @staticmethod
-            def stop(process):
+            def stop(process, **options):
                 test.stopped.append(process)
+                test.stop_options.append(options)
                 if process is not None:
                     process.kill()
 
@@ -1142,8 +1171,10 @@ class ShippedFilesTest(unittest.TestCase):
         self.assertEqual(code, 0, log)
 
     def test_scene_and_variants_load(self):
-        for name in os.listdir(os.path.join(HERE, "variants")):
-            variant = bench.load_json(os.path.join(HERE, "variants", name), "variant")
+        files = glob.glob(os.path.join(HERE, "variants", "*.json")) + glob.glob(os.path.join(HERE, "variants", "*", "*.json"))
+        self.assertGreater(len(files), 10)
+        for path in files:
+            variant = bench.load_json(path, "variant")
             self.assertRegex(variant["name"], r"^[A-Za-z0-9._-]+$")
             self.assertIsInstance(variant.get("settings", {}), dict)
             self.assertIsInstance(variant.get("env", {}), dict)
@@ -2418,6 +2449,261 @@ class KokiriSceneTest(unittest.TestCase):
         slept = []
         bench.play_input_script(bench.DebugClient(port=emulator.port), scene["input"], slept.append)
         self.assertEqual((slept, [request["params"]["buttons"] for request in emulator.requests]), ([25], [["A"]]))
+
+
+def file_tree(root):
+    """{relative path: bytes} of every file under root; None when root is absent."""
+    if not os.path.isdir(root):
+        return None
+    files = {}
+    for folder, _, names in os.walk(root):
+        for name in names:
+            path = os.path.join(folder, name)
+            with open(path, "rb") as file:
+                files[os.path.relpath(path, root).replace(os.sep, "/")] = file.read()
+    return files
+
+
+BOOT_SUITE = {
+    "name": "boot-test", "baseline": "baseline", "base": {"env": {"EDEN_NX2_STUTTER_TRACE": "1"}},
+    "boot": {"cache_states": ["cold", "second", "warm"], "repeats": 1, "close_grace_s": 7},
+    "runs": [{"variants": [{"name": "baseline"},
+                           {"name": "x", "env": {"EDEN_TEST_SWITCH": "1"}, "cache_states": ["warm"]}]}],
+}
+
+
+class BootSuiteTest(RunCase):
+    """Boot suites against a fake emulator: the caches each run starts from, that the owner's caches
+    come back, and the boot numbers and checks in the rows."""
+
+    def setUp(self):
+        super().setUp()
+        self.emulator_options = {"methods": ("boot_timing",)}
+        self.title_dir = os.path.join(self.user, "cache", "shader", "0400486024dec000")
+        self.write(os.path.join(self.title_dir, "lichii-cache.v2.bin"), b"the owner's records")
+        self.driver = os.path.join(self.folder, "driver", "ShaderCache")
+        self.write(os.path.join(self.driver, "blob.bin"), b"the driver's blob")
+        self.originals = (file_tree(self.title_dir), file_tree(self.driver))
+        self.work = os.path.join(self.folder, "work")
+        self.seen = []
+        self.records = None
+        self.on_launch = self.emulator_runs
+
+    def emulator_runs(self, env):
+        """Records what the caches hold at launch, then writes what a session writes: records, a
+        driver blob, and a log with the boot marks, one stutter and the exit-time driver cache save."""
+        shader, driver = file_tree(self.title_dir), file_tree(self.driver)
+        self.seen.append((env.get("EDEN_TEST_SWITCH"), shader, driver))
+        records = self.records if self.records is not None else (0 if shader is None else 5)
+        self.write(os.path.join(self.title_dir, "lichii-cache.v2.bin"),
+                   (shader or {}).get("lichii-cache.v2.bin", b"") + b"+session")
+        self.write(os.path.join(self.driver, "blob.bin"), (driver or {}).get("blob.bin", b"") + b"+built")
+        saved = os.path.join(self.title_dir, "vulkan_pipelines.bin")
+        self.write(os.path.join(self.user, "log", "eden_log.txt"), "\n".join([
+            "[   0.100000] Common <Info> Lichii Version: test",
+            "[   1.000000] Core <Info> Booting game: 0400486024DEC000",
+            "[   2.000000] Core <Info> Nx2Boot event=boot_start commit_mib=100",
+            f"[   5.000000] Render_Vulkan <Info> Nx2Boot event=shader_load_end seconds=0.5 "
+            f"graphics_records={records} compute_records=0 cache_bytes=10",
+            "[  20.000000] Common <Info> Boot timing: frontend: first guest frame presented at 24746.0 ms (+1.0 ms)",
+            "[  20.100000] Core <Info> Nx2Boot event=first_frame commit_mib=900",
+            "[  25.000000] Render_Vulkan <Info> Nx2Stutter frame=10 ms=120.5 cause=pipeline_wait builds=1",
+            f"[  60.000000] Render_Vulkan <Info> Vulkan driver pipelines cached at: {saved}", ""]).encode())
+
+    def run_suite(self, suite=None, *extra):
+        path = os.path.join(self.folder, "suite.json")
+        self.write(path, json.dumps(suite or BOOT_SUITE).encode())
+        parser = bench.build_parser()
+        args = parser.parse_args([
+            "suite", path, "--exe", self.exe, "--game", self.game, "--scene", self.scene, "--user-dir", self.user,
+            "--save-backup", self.backup, "--reference", self.reference, "--out", self.out, "--port", str(self.port),
+            "--state-dir", self.state, "--cache-work", self.work, "--driver-cache-dir", self.driver, *extra])
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            code = bench.command_suite(args, parser.suite_defaults, self.deps)
+        rows = []
+        for name in sorted(os.listdir(self.out)) if os.path.isdir(self.out) else []:
+            if name.endswith(".jsonl"):
+                rows += [row for _, row, _ in bench.read_rows(os.path.join(self.out, name))]
+        return code, rows, output.getvalue()
+
+    def assert_caches_back(self):
+        self.assertEqual((file_tree(self.title_dir), file_tree(self.driver)), self.originals)
+        self.assertFalse(os.path.exists(self.title_dir + ".bench-aside"))
+        self.assertFalse(os.path.exists(self.driver + ".bench-aside"))
+
+    def test_cold_second_and_warm_runs(self):
+        code, rows, output = self.run_suite()
+        self.assertEqual(code, 0, self.log)
+        self.assertEqual([(row["variant"], row["cache_state"], row["repeat"]) for row in rows],
+                         [("baseline", "cold", 0), ("baseline", "second", 0), ("baseline", "warm", 0), ("x", "warm", 0)])
+        cold_shader = {"lichii-cache.v2.bin": b"+session"}
+        self.assertEqual(self.seen, [
+            (None, None, None),
+            (None, cold_shader, {"blob.bin": b"+built"}),
+            (None, *self.originals),
+            ("1", *self.originals),
+        ])
+        self.assert_caches_back()
+        self.assert_left_clean()
+        self.assertEqual([options for options in self.stop_options if options], [{"close_grace_s": 7.0}] * 4)
+        for row in rows:
+            self.assertEqual(bench.validate_row(row), [], row["variant"])
+            self.assertTrue(row["valid"], row["invalid_reasons"])
+            boot = row["boot"]
+            self.assertEqual((boot["first_frame_ms"], boot["game_shown_ms"], boot["instances_created"]),
+                             (24746.0, 25300.0, 2))
+            self.assertEqual((boot["to_scene"]["held_draws"], boot["to_scene"]["held_draw_ms"],
+                              boot["to_end"]["held_draws"]), (4, 150.2, 8))
+            self.assertEqual((boot["log"]["frames_over_100ms"], boot["driver_cache_saved_at_exit"],
+                              boot["cache_dir_ok"], boot["guard_tripped"]), (1, True, True, False))
+            self.assertIn(["vulkan: instance created", 8108.0, 3642.0], boot["phases"])
+        self.assertEqual(rows[0]["boot"]["caches"], {"shader-0400486024dec000": "absent", "driver-0": "absent"})
+        self.assertEqual(rows[1]["boot"]["caches"], {"shader-0400486024dec000": "present", "driver-0": "present"})
+        self.assertEqual(rows[0]["boot"]["log"]["records_loaded"], {"graphics": 0, "compute": 0})
+        self.assertNotIn(self.folder, json.dumps(rows))
+        self.assertIn("### cold", output)
+        self.assertIn("| baseline | 1 of 1 | 24.7 | baseline | 25.3 | 2.0 | 4.0 | 150.2 | 1.0 | 55.0 |", output)
+        self.assertIn("| x | 1 of 1 | 24.7 | +0.0 s |", output)
+        # The backups go after a suite that ended; their manifests stay.
+        session = os.listdir(self.work)
+        self.assertEqual(len(session), 1)
+        backup = os.path.join(self.work, session[0], "backup")
+        self.assertEqual(sorted(os.listdir(backup)),
+                         ["driver-0.manifest.json", "shader-0400486024dec000.manifest.json"])
+
+    def test_cold_run_that_loaded_records_is_invalid_and_so_is_its_second(self):
+        self.records = 7
+        code, rows, _ = self.run_suite(None, "--only-variants", "baseline", "--cache-states", "cold,second")
+        self.assertEqual(code, 2)
+        self.assertEqual([(row["cache_state"], row["invalid_reasons"]) for row in rows],
+                         [("cold", ["cache_not_cold"]), ("second", ["second_source_incomplete"])])
+        self.assert_caches_back()
+
+    def test_a_guard_cut_boot_is_invalid(self):
+        def guarded(env):
+            self.emulator_runs(env)
+            with open(os.path.join(self.user, "log", "eden_log.txt"), "a", encoding="utf-8") as file:
+                file.write("[   3.000000] Render_Vulkan <Warning> the last boot ended while building cached "
+                           "pipelines; building none at boot this time\n")
+        self.on_launch = guarded
+        code, rows, _ = self.run_suite(None, "--cache-states", "warm", "--only-variants", "baseline")
+        self.assertEqual((code, [row["invalid_reasons"] for row in rows]), (2, [["boot_guard"]]))
+        self.assert_caches_back()
+
+    def test_what_an_interrupted_suite_left_aside_is_put_back_first(self):
+        os.replace(self.title_dir, self.title_dir + ".bench-aside")
+        self.write(os.path.join(self.title_dir, "half-written.bin"), b"a killed run's cache")
+        code, rows, _ = self.run_suite(None, "--cache-states", "warm", "--only-variants", "baseline")
+        self.assertEqual(code, 0, self.log)
+        self.assertIn(f"put back {self.title_dir}, which an interrupted run had left aside", self.log)
+        self.assertEqual(self.seen[0][1], self.originals[0])
+        self.assert_caches_back()
+
+    def test_crash_during_a_run_puts_the_caches_back(self):
+        def crash(env):
+            self.emulator_runs(env)
+            raise OSError("the emulator would not start")
+        self.on_launch = crash
+        code, rows, _ = self.run_suite(None, "--cache-states", "cold", "--only-variants", "baseline")
+        self.assertEqual(code, 2)
+        self.assertIn("error", rows[0]["invalid_reasons"])
+        self.assert_caches_back()
+
+    def test_dry_run_lists_the_runs_and_touches_nothing(self):
+        code, rows, output = self.run_suite(None, "--dry-run")
+        self.assertEqual((code, rows), (0, []))
+        self.assertIn("runs        4, about", output)
+        self.assertIn("    4. repeat 1 warm   x", output)
+        self.assertIn(self.driver, output)
+        self.assertEqual(self.launches, [])
+        self.assertFalse(os.path.exists(self.work))
+        self.assert_caches_back()
+
+
+class BootPlanTest(unittest.TestCase):
+    """How a boot suite's variants expand into runs, and what it refuses."""
+
+    def setUp(self):
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        self.folder = folder.name
+
+    def args(self, *extra):
+        return bench.build_parser().parse_args(["suite", "s.json", "--exe", "e", "--game", "g", *extra])
+
+    def expand(self, variants, *extra, states=("cold", "second", "warm"), repeats=2):
+        boot = bench.load_boot_options({"boot": {"cache_states": list(states), "repeats": repeats}}, "s.json",
+                                       self.args(*extra))
+        return [(v["name"], v["cache_state"], v["repeat"]) for v in bench.expand_boot_variants(variants, boot)]
+
+    def test_order_alternates_and_follows_each_variants_states(self):
+        variants = [{"name": "base"}, {"name": "y"}, {"name": "x", "cache_states": ["warm"]}]
+        self.assertEqual(self.expand(variants), [
+            ("base", "cold", 0), ("y", "cold", 0), ("base", "second", 0), ("y", "second", 0),
+            ("base", "warm", 0), ("y", "warm", 0), ("x", "warm", 0),
+            ("y", "cold", 1), ("base", "cold", 1), ("y", "second", 1), ("base", "second", 1),
+            ("x", "warm", 1), ("y", "warm", 1), ("base", "warm", 1)])
+        self.assertEqual(self.expand(variants, "--cache-states", "warm", "--repeats", "1"),
+                         [("base", "warm", 0), ("y", "warm", 0), ("x", "warm", 0)])
+
+    def test_refusals(self):
+        with self.assertRaisesRegex(bench.BenchError, "needs cold too"):
+            self.expand([{"name": "a", "cache_states": ["second"]}])
+        with self.assertRaisesRegex(bench.BenchError, "needs cold too"):
+            self.expand([{"name": "a"}], "--cache-states", "second,warm")
+        with self.assertRaisesRegex(bench.BenchError, "unknown hot"):
+            self.expand([{"name": "a"}], "--cache-states", "hot")
+        with self.assertRaisesRegex(bench.BenchError, "cache_states lists"):
+            self.expand([{"name": "a", "cache_states": ["lukewarm"]}])
+        with self.assertRaisesRegex(bench.BenchError, "at least once"):
+            self.expand([{"name": "a"}], "--repeats", "0")
+
+    def test_driver_cache_dir_must_be_a_cache_folder(self):
+        cache = os.path.join(self.folder, "Intel", "ShaderCache")
+        other = os.path.join(self.folder, "Documents")
+        saves = os.path.join(self.folder, "save", "GLCache")
+        for path in (cache, other, saves):
+            os.makedirs(path)
+        self.assertEqual(bench.check_driver_cache_dir(cache), os.path.abspath(cache))
+        for path, message in ((other, "must say cache"), (saves, "saves or keys"),
+                              (os.path.join(self.folder, "missing-cache"), "not a folder"),
+                              (os.path.expanduser("~"), "must say cache|home folder")):
+            with self.assertRaisesRegex(bench.BenchError, message):
+                bench.check_driver_cache_dir(path)
+
+    def test_shipped_suite_loads(self):
+        args = self.args("--user-dir", self.folder)
+        plans, _ = bench.load_suite(os.path.join(HERE, "suites", "console-boot.json"), args,
+                                    bench.build_parser().suite_defaults)
+        self.assertEqual(len(plans), 1)
+        plan = plans[0]
+        self.assertEqual((plan.boot["baseline"], plan.boot["states"], plan.boot["repeats"]),
+                         ("baseline", ["cold", "second", "warm"], 3))
+        names = {variant["name"] for variant in plan.variants}
+        self.assertIn("baseline", names)
+        self.assertGreaterEqual(len(names), 10)
+        for variant in plan.variants:
+            self.assertEqual(variant["env"].get("EDEN_NX2_STUTTER_TRACE"), "1")
+            self.assertEqual(variant["settings"]["UI"]["confirmStop"], 2)
+            self.assertEqual(bench.private_strings(variant), [])
+        # Every switch a boot variant sets has a row in docs/switches.md.
+        with open(os.path.join(HERE, "..", "..", "docs", "switches.md"), encoding="utf-8") as file:
+            registry = file.read()
+        for name in {key for variant in plan.variants for key in variant["env"]}:
+            self.assertIn(f"`{name}`", registry)
+
+    def test_render_boot_suite_compares_within_a_state(self):
+        def row(variant, state, first, valid=True):
+            return {"variant": variant, "cache_state": state, "valid": valid, "fps": 20.0,
+                    "boot": {"first_frame_ms": first, "game_shown_ms": first + 500, "instances_created": 1,
+                             "to_scene": {"held_draws": 3, "held_draw_ms": 90.0}, "log": {"frames_over_100ms": 2}}}
+        text = bench.render_boot_suite([row("base", "warm", 20000.0), row("base", "warm", 22000.0),
+                                        row("fast", "warm", 15000.0), row("fast", "warm", 1000.0, valid=False),
+                                        row("base", "cold", 30000.0)], "base")
+        self.assertIn("| base | 2 of 2 | 21.0 (20.0-22.0) | baseline |", text)
+        self.assertIn("| fast | 1 of 2 | 15.0 | -6.0 s |", text)
+        self.assertLess(text.index("### cold"), text.index("### warm"))
 
 
 if __name__ == "__main__":
