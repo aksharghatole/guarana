@@ -85,7 +85,8 @@ class NameTests(unittest.TestCase):
                      "Intel(R) HD Graphics 520", "AMD Radeon 760M Graphics", "AMD Radeon(TM) 740M",
                      "AMD Radeon(TM) Graphics", "AMD Radeon RX 7600", "Intel(R) Arc(TM) A770 Graphics",
                      "Intel(R) Arc(TM) A370M Graphics", "Intel(R) Arc(TM) B580 Graphics",
-                     "Microsoft Basic Render Driver", "llvmpipe (LLVM 19.1.7, 256 bits)"):
+                     "Microsoft Basic Render Driver", "llvmpipe (LLVM 19.1.7, 256 bits)",
+                     "Qualcomm(R) Adreno(TM) X1-85 GPU"):
             with self.subTest(name=name):
                 self.assertEqual(family(name), "none")
 
@@ -199,7 +200,9 @@ class FormAnswerTests(unittest.TestCase):
         for option, vendor, kind in (("NVIDIA RTX 40 series", "nvidia", "discrete"),
                                      ("Intel Arc A / B series", "intel", "discrete"),
                                      ("AMD RX 7000 series", "amd", "discrete"),
-                                     ("Intel Iris Xe / UHD", "intel", "integrated")):
+                                     ("Intel Iris Xe / UHD", "intel", "integrated"),
+                                     ("Qualcomm Adreno X1 / X2", "qualcomm", "integrated"),
+                                     ("Android GPU", "other", "integrated")):
             with self.subTest(option=option):
                 self.assertEqual(dc.classify(option, vendor, kind)["status"], "none")
         # The emulator ran on the discrete card the answer names, whatever else the machine has.

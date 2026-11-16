@@ -94,10 +94,11 @@ _NAME_PARTS = (
 # an AMD name without a family's part is in none.
 _INTEL_OUTSIDE = re.compile(r"\b(?:iris|uhd|hd graphics|a\d{3}m?|b[5-9]\d{2})\b")
 _VENDOR_WORDS = ((INTEL, re.compile(r"\bintel\b")), (AMD, re.compile(r"\b(?:amd|radeon|ati)\b")),
-                 (0x10DE, re.compile(r"\b(?:nvidia|geforce|quadro|rtx|gtx)\b")))
+                 (0x10DE, re.compile(r"\b(?:nvidia|geforce|quadro|rtx|gtx)\b")),
+                 (0x5143, re.compile(r"\b(?:qualcomm|adreno|snapdragon)\b")))
 # A name as lspci prints it (tools/bench on Linux): the PCI database's, not the driver's.
 _LSPCI = re.compile(r"(?i)\(rev [0-9a-f]{2}\)|\bcorporation\b|advanced micro devices|\[amd/ati\]")
-VENDOR_IDS = {"intel": INTEL, "amd": AMD, "nvidia": 0x10DE}
+VENDOR_IDS = {"intel": INTEL, "amd": AMD, "nvidia": 0x10DE, "qualcomm": 0x5143}
 
 # The device report form's "Graphics card" options (issue_forms.GPU_OPTIONS short names) that are
 # integrated GPUs, with the families each may be. Options not listed here are discrete or unknown.
@@ -113,8 +114,10 @@ OPTION_CANDIDATES = {
     "Steam Deck": ("AmdCustomGpu0405", "AmdCustomGpu0932"),
     "AMD integrated": (),
 }
-# Integrated options whose GPUs are in no family (Iris Xe and UHD graphics).
-OPTION_OUTSIDE = ("Intel Iris Xe / UHD",)
+# Integrated options whose GPUs are in no family: Iris Xe and UHD graphics, and every ARM GPU (the
+# engine's families are Intel and AMD only).
+OPTION_OUTSIDE = ("Intel Iris Xe / UHD", "Qualcomm Adreno X1 / X2", "Qualcomm Adreno 8xx", "Qualcomm Adreno 7xx",
+                  "Qualcomm Adreno 6xx or older", "Android GPU")
 
 FROM_PCI = "PCI ID"
 FROM_BENCH = "GPU name in a tools/bench row"
