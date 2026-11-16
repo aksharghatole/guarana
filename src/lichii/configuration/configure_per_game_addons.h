@@ -9,10 +9,13 @@
 #include <memory>
 #include <vector>
 
+#include <QFutureWatcher>
 #include <QList>
+#include <QString>
 #include <QWidget>
 
 #include "core/file_sys/vfs/vfs_types.h"
+#include "frontend_common/mod_manager.h"
 
 namespace Core {
 class System;
@@ -49,10 +52,13 @@ public:
 
 public slots:
     void InstallMods(const QStringList& mods);
-    void InstallModPath(const QString& path, const QString& fallbackName = {});
+    /// `source` is what the player picked, for mod.json: the zip's name. Empty takes the folder's.
+    void InstallModPath(const QString& path, const QString& fallbackName = {},
+                        const QString& source = {});
 
     void InstallModFolder();
     void InstallModZip();
+    void OpenModsFolder();
 
     void AddonDeleteRequested(QList<QModelIndex> selected);
 
@@ -66,6 +72,8 @@ private:
     void LoadConfiguration();
     void OnItemChanged(QStandardItem* item);
     void UpdateInfo();
+    void ScanModConflicts();
+    void UpdateModConflicts();
 
     std::unique_ptr<Ui::ConfigurePerGameAddons> ui;
     FileSys::VirtualFile file;
@@ -79,6 +87,17 @@ private:
     std::vector<QStandardItem*> update_items;
     /// The built-in patches that did not apply when the game last started, one line each.
     QString builtin_problems;
+    /// What the box under the list says while no row with more to say is selected.
+    QString info_hint;
+
+    /// Of the import in progress: the name the player chose, when it is one mod, and what was
+    /// picked.
+    QString install_name;
+    QString install_source;
+
+    /// The game files more than one mod replaces, whatever is ticked: found off this thread.
+    QFutureWatcher<std::vector<FrontendCommon::ModFileConflict>> conflict_watcher;
+    std::vector<FrontendCommon::ModFileConflict> mod_conflicts;
 
     Core::System& system;
 };
