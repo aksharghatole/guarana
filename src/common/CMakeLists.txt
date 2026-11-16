@@ -58,6 +58,7 @@ add_library(
     jit_symbols.h
     nx2_sampler.cpp
     nx2_sampler.h
+    nx2_switch_file.h
     dynamic_library.cpp
     dynamic_library.h
     elf.h
