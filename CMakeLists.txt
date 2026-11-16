@@ -761,6 +761,14 @@ if (MSVC AND CMAKE_GENERATOR STREQUAL "Ninja")
     )
 endif()
 
+# The MSVC STL on Windows ARM64 runners (14.52) takes its vectorized std::find for any trivially
+# comparable element and then rejects sizes other than 1, 2, 4 and 8 with a static_assert
+# ("unexpected size", from shader_recompiler's 12-byte StorageBufferAddr). Its documented switch
+# turns those algorithms off for the ARM64 build only.
+if (MSVC AND ARCHITECTURE_arm64)
+    add_compile_definitions(_USE_STD_VECTOR_ALGORITHMS=0)
+endif()
+
 # Adjustments for clang-cl
 if (MSVC AND CXX_CLANG)
     if (ARCHITECTURE_x86_64)
