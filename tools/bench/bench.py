@@ -992,8 +992,10 @@ def parse_trace(lines):
     for line in lines:
         at = line.find("DKB gpu_")
         if at >= 0:
-            kind = line[at + 4:].split(" ", 1)[0]
-            if kind in TRACE_KINDS:
+            kind, _, rest = line[at + 4:].partition(" ")
+            # The frame trace also logs one `DKB gpu_pass <ms>ms submission=...` line per render
+            # pass (upstream's pass trace); the summary read here starts with its frame.
+            if kind in TRACE_KINDS and (kind != "gpu_pass" or rest.startswith("renderer_frame=")):
                 last[kind] = line[at:].strip()
     if not last:
         return None

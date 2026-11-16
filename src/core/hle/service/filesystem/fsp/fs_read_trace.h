@@ -41,12 +41,18 @@ public:
         }
     }
 
+    /// Called before the kernel starts, once nx2_switches.txt is applied.
+    static void ReadSwitch() {
+        Enabled = std::getenv("EDEN_NX2_FS_READ_TRACE") != nullptr;
+        Timed = Enabled || Common::BootSplit::Enabled();
+    }
+
     ReadTraceScope(const ReadTraceScope&) = delete;
     ReadTraceScope& operator=(const ReadTraceScope&) = delete;
 
 private:
-    static inline const bool Enabled = std::getenv("EDEN_NX2_FS_READ_TRACE") != nullptr;
-    static inline const bool Timed = Enabled || Common::BootSplit::Enabled();
+    static inline bool Enabled = std::getenv("EDEN_NX2_FS_READ_TRACE") != nullptr;
+    static inline bool Timed = Enabled || Common::BootSplit::Enabled();
 
     ReadTraceSource source;
     s64 bytes;

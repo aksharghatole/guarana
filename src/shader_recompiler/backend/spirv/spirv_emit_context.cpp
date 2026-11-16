@@ -7,6 +7,7 @@
 #include <array>
 #include <bit>
 #include <climits>
+#include <numeric>
 #include <span>
 #include <string_view>
 
@@ -1158,13 +1159,32 @@ Id EmitContext::NarrowGlobalLoad(u32 shift, u32 list) const {
     return it == narrow_load_funcs.end() ? Id{} : it->second;
 }
 
+const EmitContext::GlobalMemoryFunctions& EmitContext::GlobalMemoryFunctionsOf(
+    const IR::Inst& inst) const {
+    const auto route{global_memory_route.find(&inst)};
+    return global_memory_functions[route == global_memory_route.end() ? 0 : route->second + 1];
+}
+
 /// Defines the functions that route global memory accesses and atomics to the storage buffer
 /// holding the address at run time.
 void EmitContext::DefineGlobalMemoryFunctions(const IR::Program& program) {
     const Info& info{program.info};
+    // NVIDIA's Linux driver hangs the GPU (Xid 109) in the Ocarina programs of #619 when their
+    // accesses select among their own candidate buffers, and runs them when every access selects
+    // among all bound buffers. The candidate routes exist for ANV's compile time (#1756), and
+    // select_global_memory_buffer is on for the NVIDIA proprietary driver only.
+    if (!profile.select_global_memory_buffer) {
+        global_memory_functions.resize(program.global_memory_routes.size() + 1);
+        global_memory_route = program.global_memory_route;
+    } else {
+        global_memory_functions.resize(1);
+    }
     if (!info.uses_global_memory || !profile.support_int64) {
         return;
     }
+    // The storage buffer descriptors the functions being defined route among, and those functions
+    std::span<const u32> buffers;
+    GlobalMemoryFunctions* functions{};
     using DefPtr = Id StorageDefinitions::*;
     const Id zero{u32_zero_value};
     const size_t num_buffers{info.storage_buffers_descriptors.size()};
@@ -1217,8 +1237,6 @@ void EmitContext::DefineGlobalMemoryFunctions(const IR::Program& program) {
             }
         }
     }
-    // GM_NARROW: `subset` holds the only buffers the address can be in (see NarrowGlobalLoad).
-    std::span<const u32> subset;
     // Routes the access with one branch per candidate buffer. Every branch merges back, so a helper
     // only returns from its last block, with the access's value (or fallback when no buffer holds
     // the address) carried by OpPhis. NVIDIA inlines the helpers at every access, and a return in
@@ -1257,32 +1275,27 @@ void EmitContext::DefineGlobalMemoryFunctions(const IR::Program& program) {
         std::vector<u32> candidates;
         std::vector<Id> bases;
         Id route{Const(~0U)};
-        const auto searched{[&](size_t index) {
-            return subset.empty() ||
-                   std::ranges::find(subset, static_cast<u32>(index)) != subset.end();
-        }};
+        // The routed buffer's base, so the offset into it is computed once
+        Id route_base{Constant(U64, u64{0})};
         if (info.native_global_bounds) {
             // Native pointers carry no NVN size word. The address belongs to the candidate buffer
             // whose base is the closest one at or below it (bounds come from the binding).
             Id best_distance{Constant(U64, ~u64{0})};
-            for (size_t index = 0; index < num_buffers; ++index) {
-                if (!searched(index)) {
-                    continue;
-                }
+            for (const u32 index : buffers) {
                 const Id base{base_address(index)};
                 const Id distance{OpISub(U64, addr, base)};
                 const Id better{OpLogicalAnd(U1, OpUGreaterThanEqual(U1, addr, base),
                                              OpULessThan(U1, distance, best_distance))};
                 best_distance = OpSelect(U64, better, distance, best_distance);
                 route = OpSelect(U32[1], better, Const(static_cast<u32>(index)), route);
+                route_base = OpSelect(U64, better, base, route_base);
                 candidates.push_back(static_cast<u32>(index));
                 bases.push_back(base);
             }
         } else {
             std::vector<Id> holds;
-            for (size_t index = 0; index < num_buffers; ++index) {
-                if (!searched(index) ||
-                    !UsesNvnStorageDescriptor(info, info.storage_buffers_descriptors[index])) {
+            for (const u32 index : buffers) {
+                if (!UsesNvnStorageDescriptor(info, info.storage_buffers_descriptors[index])) {
                     continue;
                 }
                 const auto& ssbo{info.storage_buffers_descriptors[index]};
@@ -1298,6 +1311,7 @@ void EmitContext::DefineGlobalMemoryFunctions(const IR::Program& program) {
             // The first buffer that holds the address wins.
             for (size_t i = holds.size(); i-- > 0;) {
                 route = OpSelect(U32[1], holds[i], Const(candidates[i]), route);
+                route_base = OpSelect(U64, holds[i], bases[i], route_base);
             }
         }
         const bool has_value{result_type.value != void_id.value};
@@ -1315,7 +1329,7 @@ void EmitContext::DefineGlobalMemoryFunctions(const IR::Program& program) {
             Id ssbo_index{zero};
             for (size_t i = 0; i < candidates.size(); ++i) {
                 const Id routed{OpIEqual(U1, route, Const(candidates[i]))};
-                const Id offset{OpUConvert(U32[1], OpISub(U64, addr, bases[i]))};
+                const Id offset{OpUConvert(U32[1], OpISub(U64, addr, route_base))};
                 ssbo_id = OpSelect(type_def.array, routed, ssbos[candidates[i]].*ssbo_member,
                                    ssbo_id);
                 ssbo_index = OpSelect(U32[1], routed,
@@ -1351,7 +1365,7 @@ void EmitContext::DefineGlobalMemoryFunctions(const IR::Program& program) {
             OpBranchConditional(is_candidate, then_label, merge_label);
             AddLabel(then_label);
             const Id ssbo_id{ssbos[candidates[i]].*ssbo_member};
-            const Id ssbo_offset{OpUConvert(U32[1], OpISub(U64, addr, bases[i]))};
+            const Id ssbo_offset{OpUConvert(U32[1], OpISub(U64, addr, route_base))};
             const Id ssbo_index{OpShiftRightLogical(U32[1], ssbo_offset, Const(shift))};
             const Id result{
                 callback(element(type_def.element, ssbo_id, ssbo_index), ssbo_id, ssbo_index)};
@@ -1378,7 +1392,7 @@ void EmitContext::DefineGlobalMemoryFunctions(const IR::Program& program) {
             for (u32 i = 0; i < count; ++i) {
                 const Id word_address{OpIAdd(U64, addr, Constant(U64, i * sizeof(u32)))};
                 words[i] = OpFunctionCall(
-                    U32[1], Sirit::ValidId(word_func) ? word_func : load_global_func_u32,
+                    U32[1], Sirit::ValidId(word_func) ? word_func : functions->load_u32,
                     word_address);
             }
             OpReturnValue(OpCompositeConstruct(type, std::span{words}.first(count)));
@@ -1424,7 +1438,7 @@ void EmitContext::DefineGlobalMemoryFunctions(const IR::Program& program) {
             for (u32 i = 0; i < count; ++i) {
                 const Id word_address{OpIAdd(U64, addr, Constant(U64, i * sizeof(u32)))};
                 const Id word{OpCompositeExtract(U32[1], data, i)};
-                OpFunctionCall(void_id, write_global_func_u32, word_address, word);
+                OpFunctionCall(void_id, functions->write_u32, word_address, word);
             }
             OpReturn();
             OpFunctionEnd();
@@ -1462,84 +1476,6 @@ void EmitContext::DefineGlobalMemoryFunctions(const IR::Program& program) {
             const Id write_func{define_write(ssbo_member, type_def, type, shift)};
             return std::make_pair(load_func, write_func);
         }};
-    std::tie(load_global_func_u32, write_global_func_u32) =
-        define(&StorageDefinitions::U32, storage_types.U32, U32[1], sizeof(u32));
-    std::tie(load_global_func_u32x2, write_global_func_u32x2) =
-        define(&StorageDefinitions::U32x2, storage_types.U32x2, U32[2], sizeof(u32[2]));
-    std::tie(load_global_func_u32x4, write_global_func_u32x4) =
-        define(&StorageDefinitions::U32x4, storage_types.U32x4, U32[4], sizeof(u32[4]));
-
-    if ((profile.global_memory_opt & GM_NARROW) != 0 && info.native_global_bounds) {
-        // The storage buffer pass left, in a load's flags (IR::GlobalLoadFlags::NarrowList), the
-        // descriptors its address can only be in: 7 bits each, index + 1, zero after the last.
-        // One function per distinct list. The coherent bit is not part of the list.
-        const bool no_fallback{(profile.global_memory_opt & GM_NARROW_NO_FALLBACK) != 0};
-        const auto narrow{[&](u32 shift, u32 list) {
-            if (list == 0 || narrow_load_funcs.contains({shift, list})) {
-                return;
-            }
-            boost::container::static_vector<u32, IR::GlobalLoadFlags::NARROW_MAX_BUFFERS> indices;
-            const bool valid{IR::GlobalLoadFlags::ForEachNarrowBuffer(list, [&](u32 index) {
-                if (index >= num_buffers) {
-                    return false;
-                }
-                indices.push_back(index);
-                return true;
-            })};
-            if (!valid) {
-                return;
-            }
-            subset = std::span<const u32>{indices.data(), indices.size()};
-            const auto fallback{[&](Id function) { return no_fallback ? Id{} : function; }};
-            Id word_func{};
-            if (shift > 2 && !profile.support_descriptor_aliasing) {
-                auto& word{narrow_load_funcs[{2U, list}]};
-                if (!Sirit::ValidId(word)) {
-                    word = define_load(&StorageDefinitions::U32, storage_types.U32, U32[1],
-                                       2, fallback(load_global_func_u32));
-                }
-                word_func = word;
-            }
-            Id function{};
-            switch (shift) {
-            case 2:
-                function = define_load(&StorageDefinitions::U32, storage_types.U32, U32[1],
-                                       shift, fallback(load_global_func_u32));
-                break;
-            case 3:
-                function =
-                    define_load(&StorageDefinitions::U32x2, storage_types.U32x2, U32[2],
-                                shift, fallback(load_global_func_u32x2), word_func);
-                break;
-            default:
-                function =
-                    define_load(&StorageDefinitions::U32x4, storage_types.U32x4, U32[4],
-                                shift, fallback(load_global_func_u32x4), word_func);
-                break;
-            }
-            narrow_load_funcs[{shift, list}] = function;
-            subset = {};
-        }};
-        const auto list_of{[](const IR::Inst& inst) {
-            return IR::GlobalLoadFlags::NarrowList(inst.Flags<u32>());
-        }};
-        for (const IR::Block* const block : program.blocks) {
-            for (const IR::Inst& inst : block->Instructions()) {
-                switch (inst.GetOpcode()) {
-                case IR::Opcode::LoadGlobal32: narrow(2, list_of(inst)); break;
-                case IR::Opcode::LoadGlobal64: narrow(3, list_of(inst)); break;
-                case IR::Opcode::LoadGlobal128: narrow(4, list_of(inst)); break;
-                default: break;
-                }
-            }
-        }
-    }
-
-    if (!std::ranges::any_of(info.storage_buffers_descriptors, [&](const auto& descriptor) {
-            return info.native_global_bounds || UsesNvnStorageDescriptor(info, descriptor);
-        })) {
-        return;
-    }
     // Atomics the storage buffer pass could not track: the same routing, with the operation on
     // the routed word (INC, DEC and F32 add through their storage buffer CAS loops).
     using enum GlobalAtomic;
@@ -1560,20 +1496,43 @@ void EmitContext::DefineGlobalMemoryFunctions(const IR::Program& program) {
         default: return std::nullopt;
         }
     };
-    std::array<bool, static_cast<size_t>(Count)> used{};
+    // What each route's accesses use: loads and stores of 32, 64 and 128 bits, and atomics
+    struct Uses {
+        std::array<bool, 3> accesses{};
+        std::array<bool, static_cast<size_t>(Count)> atomics{};
+        bool compare_exchange{};
+    };
+    std::vector<Uses> uses(global_memory_functions.size());
     for (const IR::Block* const block : program.blocks) {
         for (const IR::Inst& inst : block->Instructions()) {
-            if (const auto kind = kind_of(inst.GetOpcode())) {
-                used[static_cast<size_t>(*kind)] = true;
+            const auto route{global_memory_route.find(&inst)};
+            Uses& use{uses[route == global_memory_route.end() ? 0 : route->second + 1]};
+            switch (inst.GetOpcode()) {
+            case IR::Opcode::LoadGlobal32:
+            case IR::Opcode::WriteGlobal32:
+                use.accesses[0] = true;
+                break;
+            case IR::Opcode::LoadGlobal64:
+            case IR::Opcode::WriteGlobal64:
+                use.accesses[1] = true;
+                break;
+            case IR::Opcode::LoadGlobal128:
+            case IR::Opcode::WriteGlobal128:
+                use.accesses[2] = true;
+                break;
+            case IR::Opcode::GlobalAtomicCompareExchange32:
+                use.compare_exchange = true;
+                break;
+            default:
+                if (const auto kind = kind_of(inst.GetOpcode())) {
+                    use.atomics[static_cast<size_t>(*kind)] = true;
+                }
+                break;
             }
         }
     }
     const Id scope{Const(static_cast<u32>(spv::Scope::Device))};
-    for (size_t index = 0; index < used.size(); ++index) {
-        if (!used[index]) {
-            continue;
-        }
-        const auto kind = static_cast<GlobalAtomic>(index);
+    const auto define_atomic{[&](GlobalAtomic kind) {
         const Id type{kind == AddF32 ? F32[1] : U32[1]};
         const Id func_id{OpFunction(type, spv::FunctionControlMask::MaskNone,
                                     TypeFunction(type, U64, type))};
@@ -1617,16 +1576,11 @@ void EmitContext::DefineGlobalMemoryFunctions(const IR::Program& program) {
                 return ConstantNull(type);
             }));
         OpFunctionEnd();
-        global_atomic_funcs[index] = func_id;
-    }
-    if (std::ranges::any_of(program.blocks, [](const IR::Block* block) {
-            return std::ranges::any_of(block->Instructions(), [](const IR::Inst& inst) {
-                return inst.GetOpcode() == IR::Opcode::GlobalAtomicCompareExchange32;
-            });
-        })) {
+        return func_id;
+    }};
+    const auto define_compare_exchange{[&] {
         const Id function_type{TypeFunction(U32[1], U64, U32[1], U32[1])};
-        atomic_cas_global_func_u32 =
-            OpFunction(U32[1], spv::FunctionControlMask::MaskNone, function_type);
+        const Id func_id{OpFunction(U32[1], spv::FunctionControlMask::MaskNone, function_type)};
         const Id address{OpFunctionParameter(U64)};
         const Id comparator{OpFunctionParameter(U32[1])};
         const Id value{OpFunctionParameter(U32[1])};
@@ -1638,6 +1592,116 @@ void EmitContext::DefineGlobalMemoryFunctions(const IR::Program& program) {
                                                                      value, comparator);
                                   }));
         OpFunctionEnd();
+        return func_id;
+    }};
+    const bool routes_atomics{
+        std::ranges::any_of(info.storage_buffers_descriptors, [&](const auto& descriptor) {
+            return info.native_global_bounds || UsesNvnStorageDescriptor(info, descriptor);
+        })};
+    std::vector<u32> every_buffer(info.storage_buffers_descriptors.size());
+    std::iota(every_buffer.begin(), every_buffer.end(), 0U);
+    for (size_t route = 0; route < global_memory_functions.size(); ++route) {
+        buffers = route == 0 ? std::span<const u32>{every_buffer}
+                             : std::span<const u32>{program.global_memory_routes[route - 1]};
+        functions = &global_memory_functions[route];
+        const Uses& use{uses[route]};
+        // Every access through all buffers gets its functions; the 64 and 128-bit ones read and
+        // write words through the 32-bit ones without descriptor aliasing.
+        const bool all{route == 0};
+        const bool words{!profile.support_descriptor_aliasing &&
+                         (use.accesses[1] || use.accesses[2])};
+        if (all || use.accesses[0] || words) {
+            std::tie(functions->load_u32, functions->write_u32) =
+                define(&StorageDefinitions::U32, storage_types.U32, U32[1], sizeof(u32));
+        }
+        if (all || use.accesses[1]) {
+            std::tie(functions->load_u32x2, functions->write_u32x2) =
+                define(&StorageDefinitions::U32x2, storage_types.U32x2, U32[2], sizeof(u32[2]));
+        }
+        if (all || use.accesses[2]) {
+            std::tie(functions->load_u32x4, functions->write_u32x4) =
+                define(&StorageDefinitions::U32x4, storage_types.U32x4, U32[4], sizeof(u32[4]));
+        }
+        if (!routes_atomics) {
+            continue;
+        }
+        for (size_t index = 0; index < use.atomics.size(); ++index) {
+            if (use.atomics[index]) {
+                functions->atomics[index] = define_atomic(static_cast<GlobalAtomic>(index));
+            }
+        }
+        if (use.compare_exchange) {
+            functions->compare_exchange_u32 = define_compare_exchange();
+        }
+    }
+
+    if ((profile.global_memory_opt & GM_NARROW) != 0 && info.native_global_bounds) {
+        // The storage buffer pass left, in a load's flags (IR::GlobalLoadFlags::NarrowList), the
+        // descriptors its address can only be in: 7 bits each, index + 1, zero after the last.
+        // One function per distinct list. The coherent bit is not part of the list. A narrowed
+        // load takes its list, not its route (global_memory_route): the list names fewer buffers.
+        const bool no_fallback{(profile.global_memory_opt & GM_NARROW_NO_FALLBACK) != 0};
+        // The search of every buffer: what a narrowed load falls back to
+        functions = &global_memory_functions.front();
+        const GlobalMemoryFunctions& every{global_memory_functions.front()};
+        const auto narrow{[&](u32 shift, u32 list) {
+            if (list == 0 || narrow_load_funcs.contains({shift, list})) {
+                return;
+            }
+            boost::container::static_vector<u32, IR::GlobalLoadFlags::NARROW_MAX_BUFFERS> indices;
+            const bool valid{IR::GlobalLoadFlags::ForEachNarrowBuffer(list, [&](u32 index) {
+                if (index >= num_buffers) {
+                    return false;
+                }
+                indices.push_back(index);
+                return true;
+            })};
+            if (!valid) {
+                return;
+            }
+            buffers = std::span<const u32>{indices.data(), indices.size()};
+            const auto fallback{[&](Id function) { return no_fallback ? Id{} : function; }};
+            Id word_func{};
+            if (shift > 2 && !profile.support_descriptor_aliasing) {
+                auto& word{narrow_load_funcs[{2U, list}]};
+                if (!Sirit::ValidId(word)) {
+                    word = define_load(&StorageDefinitions::U32, storage_types.U32, U32[1],
+                                       2, fallback(every.load_u32));
+                }
+                word_func = word;
+            }
+            Id function{};
+            switch (shift) {
+            case 2:
+                function = define_load(&StorageDefinitions::U32, storage_types.U32, U32[1],
+                                       shift, fallback(every.load_u32));
+                break;
+            case 3:
+                function =
+                    define_load(&StorageDefinitions::U32x2, storage_types.U32x2, U32[2],
+                                shift, fallback(every.load_u32x2), word_func);
+                break;
+            default:
+                function =
+                    define_load(&StorageDefinitions::U32x4, storage_types.U32x4, U32[4],
+                                shift, fallback(every.load_u32x4), word_func);
+                break;
+            }
+            narrow_load_funcs[{shift, list}] = function;
+        }};
+        const auto list_of{[](const IR::Inst& inst) {
+            return IR::GlobalLoadFlags::NarrowList(inst.Flags<u32>());
+        }};
+        for (const IR::Block* const block : program.blocks) {
+            for (const IR::Inst& inst : block->Instructions()) {
+                switch (inst.GetOpcode()) {
+                case IR::Opcode::LoadGlobal32: narrow(2, list_of(inst)); break;
+                case IR::Opcode::LoadGlobal64: narrow(3, list_of(inst)); break;
+                case IR::Opcode::LoadGlobal128: narrow(4, list_of(inst)); break;
+                default: break;
+                }
+            }
+        }
     }
 }
 

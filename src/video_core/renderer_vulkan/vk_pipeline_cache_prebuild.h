@@ -3,6 +3,7 @@
 #pragma once
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cstddef>
 #include <exception>
@@ -21,13 +22,23 @@
 namespace Vulkan {
 
 /// Shader cache v2: cached pipelines built in the background as Background jobs of one batch. A
-/// lookup of one still queued or building raises it to NeedNow and waits for it, so that it is
-/// built once.
+/// lookup of one still queued drops it, so the caller builds it as it builds any pipeline it lacks
+/// (without holding its thread where the draw allows); one a worker is building is waited for.
 template <typename Key, typename Pipeline>
 class ScheduledPrebuild {
     struct Entry {
         VideoCommon::ShaderJobHandle job;
         std::unique_ptr<Pipeline> pipeline;
+        /// Add's `done`, called once: by the job when it ends, or by the lookup that drops it
+        /// while it is still queued.
+        Common::UniqueFunction<void> done;
+        std::atomic_flag done_called;
+
+        void Done() {
+            if (done && !done_called.test_and_set()) {
+                done();
+            }
+        }
     };
 
 public:
@@ -55,31 +66,29 @@ public:
 
     /// Submits the build of a pipeline whose translation holds `capture_bytes` until it runs,
     /// unless one of its key is queued or the captures queued would pass the limit
-    /// `done` is called once when the job ends without a Take of it waiting (built, failed,
-    /// translated to nothing or stopped by a request); a job cancelled before it ran calls nothing.
+    /// `done` is called once when the job ends (built, failed, translated to nothing or stopped by
+    /// a request) or when a lookup drops it while it is still queued; a job the scheduler cancels
+    /// before it ran calls nothing.
+    /// `job` gets its job.
     bool Add(const Key& key, u64 capture_bytes, u64 cpu_bytes, u64 driver_bytes,
              Translate translate,
              VideoCommon::ShaderJobPriority priority = VideoCommon::ShaderJobPriority::Background,
-             Common::UniqueFunction<void> done = {}) {
+             Common::UniqueFunction<void> done = {}, VideoCommon::ShaderJobHandle* job = nullptr) {
         std::scoped_lock lock{mutex};
         if (stopped || entries.contains(key)) {
             return false;
         }
         ++translating;
         auto entry = std::make_shared<Entry>();
+        entry->done = std::move(done);
         entry->job = jobs.Submit(
             {
                 .priority = priority,
                 .cpu_bytes = cpu_bytes,
                 .driver_bytes = driver_bytes,
-                .cpu = [this, entry, translate = std::move(translate),
-                        done = std::move(done)](VideoCommon::ShaderJobContext& context) mutable
+                .cpu = [this, entry, translate = std::move(translate)](
+                           VideoCommon::ShaderJobContext& context) mutable
                 -> VideoCommon::ShaderDriverStage {
-                    const auto finish = [](Common::UniqueFunction<void>& callback) {
-                        if (callback) {
-                            callback();
-                        }
-                    };
                     std::unique_ptr<Pipeline> pipeline;
                     {
                         SCOPE_EXIT {
@@ -87,7 +96,7 @@ public:
                             Translated();
                         };
                         if (context.StopRequested()) {
-                            finish(done);
+                            entry->Done();
                             return {};
                         }
                         pipeline = translate();
@@ -97,11 +106,10 @@ public:
                             std::scoped_lock failed_lock{mutex};
                             ++failed;
                         }
-                        finish(done);
+                        entry->Done();
                         return {};
                     }
-                    return [this, entry, pipeline = std::move(pipeline),
-                            done = std::move(done)]() mutable {
+                    return [this, entry, pipeline = std::move(pipeline)]() mutable {
                         pipeline->Build();
                         {
                             std::scoped_lock entry_lock{mutex};
@@ -112,19 +120,20 @@ public:
                                 entry->pipeline = std::move(pipeline);
                             }
                         }
-                        if (done) {
-                            done();
-                        }
+                        entry->Done();
                     };
                 },
             },
             &batch);
+        if (job) {
+            *job = entry->job;
+        }
         entries.emplace(key, std::move(entry));
         return true;
     }
 
-    /// The pipeline of `key`, built here or waited for while it builds (`waited` gets how long
-    /// when it was still queued or building); null when there is none or it didn't build
+    /// The pipeline of `key`, waited for while a worker builds it (`waited` gets how long); null
+    /// when there is none, it didn't build, or it was still queued (then dropped)
     std::unique_ptr<Pipeline> Take(
         const Key& key, std::optional<std::chrono::steady_clock::duration>* waited = nullptr) {
         std::shared_ptr<Entry> entry;
@@ -138,6 +147,19 @@ public:
             entries.erase(it);
         }
         const bool unfinished = !entry->job.Ready();
+        if (unfinished) {
+            if (const auto cancelled = jobs.CancelQueued(entry->job)) {
+                if (*cancelled == VideoCommon::ShaderJobStatus::Queued) {
+                    Translated();
+                }
+                // The caller builds the pipeline itself: for whoever counts this build (the
+                // async boot), it has ended.
+                entry->Done();
+                std::scoped_lock lock{mutex};
+                ++taken_unfinished;
+                return nullptr;
+            }
+        }
         const auto begin = std::chrono::steady_clock::now();
         jobs.RunOrWait(entry->job);
         std::scoped_lock lock{mutex};

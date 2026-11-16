@@ -1202,6 +1202,8 @@ TRACE_LOG = """[  42.9] Render.Vulkan <Info> vk_scheduler.cpp:949:TraceGpuSubmis
 [  99.1] Render.Vulkan <Info> vk_scheduler.cpp:771:ReportWorkTimes: DKB gpu_work renderer_frame=3300 timed=412 dropped=0 timed_sum_ms=21.900 submission_sum_ms=23.100 untimed_ms=1.200 slowest: s1:1917b5b970b5f601+s5:78134ce8125d5959#m=15.125ms/40x(max 2.500ms size 1920x1080x1) s6:5f43233f59d916f8=2.250ms/3x(max 1.000ms size 240x135x1)""" + "".join(
     f" s1:{index:016x}+s5:{index + 1:016x}=0.{9 - index}00ms/1x(max 0.{9 - index}00ms size 6x1x0)" for index in range(8)) + """
 [  99.1] Render.Vulkan <Info> vk_scheduler.cpp:860:ReportPassTimes: DKB gpu_pass renderer_frame=3300 passes=31 timed=31 dropped=0 targets=9 pass_sum_ms=22.400 top: 1920x1080/B10G11R11_FLOAT/1/D32_FLOAT/1=16.500ms/4x(max 15.200ms) 2560x1440/A8B8G8R8_SRGB/1/-/1=0.107ms/1x(max 0.107ms)
+[  99.1] Render.Vulkan <Info> vk_scheduler.cpp:1364:ReportPassTimes: DKB gpu_passes renderer_frame=3300 passes=31 timed_ms=22.400
+[  99.1] Render.Vulkan <Info> vk_scheduler.cpp:1377:ReportPassTimes: DKB gpu_pass 16.500ms submission=0 pass 1920x1080 draws=412 dispatches=3 shaders=s1:1917b00000000000+s5:0000000000000001 untracked_uses=0
 """
 
 

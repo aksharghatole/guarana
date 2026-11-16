@@ -201,7 +201,7 @@ public:
             return;
         }
         const u32 query = trace_work_count * 2;
-        trace_work_items[trace_work_count++] = {hash, fragment_hash, size, kind, trace_pass_open};
+        trace_work_items[trace_work_count++] = {hash, fragment_hash, size, kind, cost_pass_open};
         cmdbuf.WriteTimestamp(VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, *trace_work_pool, query);
         work();
         cmdbuf.WriteTimestamp(VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, *trace_work_pool, query + 1);
@@ -641,10 +641,10 @@ private:
     void AllocateWorkerCommandBuffer();
 
     void TraceGpuSubmission();
-    /// Reads the work timestamps into trace_work_ms and trace_pass_*_ms; the item count.
+    /// Reads the work timestamps into trace_work_ms and cost_pass_*_ms; the item count.
     u32 FetchWorkTimes();
     void ReportWorkTimes(u32 count, double submission_sum_ms, VideoCore::GpuCostSnapshot& costs);
-    void ReportPassTimes(VideoCore::GpuCostSnapshot& costs);
+    void ReportCostPassTimes(VideoCore::GpuCostSnapshot& costs);
     /// Recording thread: whether draws and passes are to be timed in sampled frames.
     [[nodiscard]] bool TraceCostsWanted() const {
         return Common::DkbFrameTrace::Enabled() || cost_sampling.load(std::memory_order_relaxed);
@@ -660,6 +660,16 @@ private:
     void ReportSiteTimes(const std::vector<u64>& submission_begin,
                          const std::vector<u64>& submission_end);
     void TraceShader(u64 hash, u32 stage);
+    void TracePassShaders(u64 hash, u32 stage, u64 fragment_hash);
+    /// Worker thread, just before a render pass of a sampled submission ends: timestamps it and
+    /// keeps what was recorded since the previous pass ended.
+    void TracePassEnd(vk::CommandBuffer cmdbuf, VkExtent2D extent);
+    /// Logs the sampled frame's GPU time by render pass (the 16 most expensive). Each pass is
+    /// timed from the end of the one before it, so compute and copies between them count with it.
+    /// MoltenVK samples timestamps only at Metal encoder boundaries, so this is the finest split
+    /// it gives.
+    void ReportPassTimes(const std::vector<u64>& submission_begin,
+                         const std::vector<u64>& submission_end);
 
     /// Where a flush or a render pass end was asked from (static strings; null when unknown).
     struct TraceSite {
@@ -756,7 +766,7 @@ private:
     SubmissionTrace trace_work;
     std::vector<SubmissionTrace> trace_submissions;
     static constexpr u32 TraceMaxWork = 8192;
-    static constexpr u32 TraceMaxPasses = 2048;
+    static constexpr u32 CostMaxPasses = 2048;
     static constexpr u32 TraceNoPass = ~u32{0};
     static constexpr char TraceEmuKind = 'x'; ///< WorkTrace::kind of emulator work
     struct WorkTrace {
@@ -778,8 +788,8 @@ private:
     u32 trace_sub_work_begin{};         ///< Worker: work and pass counts when this
     u32 trace_sub_pass_begin{};         ///< submission started
     /// What DKB gpu_pass groups render passes by. Formats are PixelFormat values.
-    struct PassTrace {
-        auto operator<=>(const PassTrace&) const = default;
+    struct CostPass {
+        auto operator<=>(const CostPass&) const = default;
 
         u32 width{};
         u32 height{};
@@ -790,21 +800,21 @@ private:
     };
     /// Worker thread: timestamps around a render pass of a sampled submission. Four per pass:
     /// before and after vkCmdBeginRenderPass, before vkCmdEndRenderPass and after its barrier.
-    void TracePassBegin(vk::CommandBuffer cmdbuf, const PassTrace& pass);
-    void TracePassStamp(vk::CommandBuffer cmdbuf, u32 stamp);
-    void TracePassEnd(vk::CommandBuffer cmdbuf, PassEnd reason);
-    vk::QueryPool trace_pass_pool;
-    std::vector<PassTrace> trace_pass_items;
-    std::vector<PassEnd> trace_pass_reasons;
-    std::vector<double> trace_pass_draw_ms; ///< Guest work timed inside each pass
-    std::vector<double> trace_pass_emu_ms;  ///< Emulator work timed inside each pass
+    void CostPassBegin(vk::CommandBuffer cmdbuf, const CostPass& pass);
+    void CostPassStamp(vk::CommandBuffer cmdbuf, u32 stamp);
+    void CostPassEnd(vk::CommandBuffer cmdbuf, PassEnd reason);
+    vk::QueryPool cost_pass_pool;
+    std::vector<CostPass> cost_pass_items;
+    std::vector<PassEnd> cost_pass_reasons;
+    std::vector<double> cost_pass_draw_ms; ///< Guest work timed inside each pass
+    std::vector<double> cost_pass_emu_ms;  ///< Emulator work timed inside each pass
     /// Recording thread: why the open traced pass is about to end (set by the caller of
     /// EndRenderPass, Other otherwise).
     PassEnd pass_end_reason{PassEnd::Other};
-    u32 trace_pass_count{};
-    u32 trace_pass_dropped{};
-    u32 trace_pass_open{TraceNoPass};
-    bool trace_pass_begun{}; ///< Recording thread: the open render pass recorded TracePassBegin
+    u32 cost_pass_count{};
+    u32 cost_pass_dropped{};
+    u32 cost_pass_open{TraceNoPass};
+    bool cost_pass_begun{}; ///< Recording thread: the open render pass recorded CostPassBegin
     static constexpr u32 TraceMaxSites = 32768;
     struct SiteTrace {
         const char* file{};
@@ -814,7 +824,29 @@ private:
     vk::QueryPool trace_site_pool;
     std::vector<SiteTrace> trace_site_items;
     u32 trace_site_count{};
-
+    /// A Metal counter sample buffer holds at most 4096 timestamps; MoltenVK emulates larger
+    /// pools with timestamps that do not measure the GPU.
+    static constexpr u32 TraceMaxPasses = 4096;
+    struct PassTrace {
+        struct Shaders {
+            u64 hash{};
+            u64 fragment_hash{};
+            u32 stage{};
+        };
+        u32 submission{};
+        u32 draws{};
+        u32 dispatches{};
+        VkExtent2D extent{};
+        u32 num_shaders{};
+        u32 untracked_uses{};
+        std::array<Shaders, 4> shaders{};
+    };
+    vk::QueryPool trace_pass_pool;
+    std::vector<PassTrace> trace_pass_items;
+    /// What each sampled submission recorded after its last render pass ended.
+    std::vector<PassTrace> trace_pass_tails;
+    PassTrace trace_pass;
+    u32 trace_pass_count{};
     Common::DkbFrameTrace::RateLimit trace_gpu_rate;
     u64 trace_gpu_tick{};
     u64 trace_frame_end{};
