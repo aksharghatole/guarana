@@ -140,7 +140,8 @@ class AdapterTest(unittest.TestCase):
                                  "capture_image", "capture_bundle", "reject_shaders", "set_shading_rate",
                                  "set_prepass", "sample", "speed_limit", "read_memory",
                                  "search_memory", "read_gpu_memory", "input",
-                                 "input_sequence", "host_timing", "power", "power_set",
+                                 "input_sequence", "input_latency", "host_timing", "power",
+                                 "power_set",
                                  "gpu_costs", "gpu_perf", "frame_budget", "autopilot", "memory", "trace_record",
                                  "trace_stop", "trace_status", "thread_stats", "present_stats",
                                  "cache_stats", "readbacks", "boot_timing"])

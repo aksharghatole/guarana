@@ -55,10 +55,13 @@ Ocarina of Time measures it, with the DLSS contract as a second provider of the 
 |---|---|---|
 | NVIDIA | 16x8x16 cooperative matrix in registers | one product, no memory traffic |
 | AMD RDNA 3 (780M, 890M) | 16x16x16 cooperative matrix through shared memory | every lane stores A, B (columns 8-15 zero) and C to per-subgroup scratch, barrier, three cooperative loads, one product (K=16 rounded once), store, barrier, two loads back |
-| Intel Xe-LPG+, Xe2 (140T, 140V) with `EDEN_NX2_INTEL_COOP_MATRIX=1` | 8x16x16 through shared memory | as AMD, but K=16 is split into two K=8 products per 8-row half so the fp16 accumulator rounds where the guest's does (Fritchii-Intel-Fixes 0008): four products, three barriers |
+| Intel Xe2 (Arc 140V, B580) with `EDEN_NX2_INTEL_COOP_MATRIX=1` | 8x16x16 through shared memory | as AMD, but K=16 is split into two K=8 products per 8-row half so the fp16 accumulator rounds where the guest's does (Fritchii-Intel-Fixes 0008): four products, three barriers |
+| Intel Xe-LPG+ (Arc 140T) | software, whatever the switch | its driver lists no shape the paths above take (below) |
 | Intel by default | software | shuffles (or shared-memory gathers with `EDEN_NX2_SW_MATRIX_SHARED`) and per-lane fp32 FMAs, rounded to fp16 after each K=8 group |
 
-Two facts shape everything after:
+Three facts shape everything after:
+
+- **The Arc 140T has no 8x16x16 shape.** Asked directly (`vkGetPhysicalDeviceCooperativeMatrixPropertiesKHR`, driver 101.9175, the owner's laptop, 2026-11-16), it lists three shapes: 8x8x16 with fp16 inputs and **fp32** accumulator and result, and 8x8x32 with signed or unsigned 8-bit inputs and 32-bit results. No fp16 accumulator and no 16-column shape, so `EDEN_NX2_INTEL_COOP_MATRIX` (8x16x16 fp16) and the A1 switches below do nothing there; they apply to Xe2 (Arc 140V, B580) and AMD RDNA 3. The 140T needs its own path (A1b). Its 8x8x16 has the guest's own N=8, so no zero columns, and its 8x8x32 int8 shape is what A3's INT8 would use.
 
 - **The Intel preset hides the network.** `ApplyGamePresets` (`renderer_vulkan.cpp`) counts a GPU
   as "without matrix cores" unless it has the 16x8x16 or 16x16x16 path; the 8x16x16 path does not
@@ -79,8 +82,8 @@ Two facts shape everything after:
 | Ocarina, Panther Lake 4 Xe3 cores, network at the 1440x810 step (Max Resolution off) | about 20 ms of 39.6 ms of game passes | measured, one run ([#98][98]) |
 | Ocarina, Arc 140T, output pass, software, 2560x1440 | 30 to 45 ms | estimate: 15.1 ms times the B580's fp32 rate over the 140T's (about 13.7 / 4.8 TFLOPS) |
 | Same, 1440x810 step | 8 to 12 ms | estimate: #98's 20 ms times the 4-core Xe3's fp32 rate over the 140T's (about 2.6 / 4.8) |
-| Same, 8x16x16 | 2.5 to 4 ms (1440p), about 1 ms (810p step) | estimate: 1.25 ms times the B580's XMX rate over the 140T's (about 3x), and the 0007 ratio for the step |
-| Same, after the steps of 2.3 A1 | 30 to 50% below the 8x16x16 figure | estimate: 0008's split costs +43%; the zero accumulators and shared operands remove about half of the remaining scratch traffic |
+| Same, on its 8x8x16 matrices (A1b) | 2.5 to 4 ms (1440p), about 1 ms (810p step) | estimate: 1.25 ms times the B580's XMX rate over the 140T's (about 3x), and the 0007 ratio for the step; it assumes A1b costs per product what 8x16x16 does |
+| Xe2 or RDNA 3, after the steps of 2.3 A1 | 30 to 50% below their 8x16x16 or 16x16x16 figure | estimate: 0008's split costs +43%; the zero accumulators and shared operands remove about half of the remaining scratch traffic |
 | Same, host network (A3) | 1 ms or less at 1440p | goal, not an estimate: the network's arithmetic at a third of XMX peak |
 
 Device rates are vendor peak figures, so every estimate above carries a factor of two either way.
@@ -120,6 +123,8 @@ in `src/tests/video_core/spirv_software_matrix.cpp` check the emitted SPIR-V (st
 barriers and products per `HMMA`), as the existing 8x16x16 tests do, and a CPU model of the
 arithmetic checks the rounding (2.4). The first pull request (#226) built `EDEN_NX2_TENSOR_LOG`,
 `EDEN_NX2_HMMA_ZERO_C` and `EDEN_NX2_HMMA_K16_ONCE`; `SHARE_A` and `PAIR_N` are the second.
+
+**A1b. The Arc 140T's own path (`EDEN_NX2_INTEL_COOP_MATRIX_8X8`).** The guest's 16x8x16 HMMA as two 8x8x16 products (one per 8-row half) with fp32 accumulators: the B tile is the guest's 16x8 exactly, no zero columns, and C goes to shared memory as fp32. Each lane rounds its D values to fp16 once per HMMA: as the guest for K=8, once instead of twice for K=16 (`K16_ONCE`'s rounding, which the CPU model bounds). Exact midpoint rounding would need an fp16 accumulator type the driver does not list. `EDEN_NX2_HMMA_ZERO_C` applies; a shared A is the next step, as for A1. Built with SPIR-V tests; unverified on the hardware.
 
 **A2. Fewer passes (ports).** Lichii #864 and #1985 skip a game's network passes whose output only
 feeds a pass a replacement overwrites (measured upstream: Duskbloods on a Steam Deck 56.6 -> 40.4 ms
@@ -260,8 +265,9 @@ time and the vblank wait only, the game's own queue the same in both):
 
 So the target is reachable only within about 4 ms by position in the pipeline, with extrapolation
 or with interpolation's onset; meeting it outright needs a shorter queue than the 60 frame baseline
-(the cadence's phase lock, which keeps real frames done about 3 ms before their slot, or
-`EDEN_NX2_QUEUE_LIMIT`). What is measured today is the presenter's part, `real frame age at
+(the cadence's phase lock, which keeps real frames done about 3 ms before their slot; a cap on
+the GPU queue, `EDEN_NX2_QUEUE_LIMIT`, showed no gain and was removed). What is measured today
+is the presenter's part, `real frame age at
 display` in the `Fluid presenter` line. An onset probe does not exist: B3 adds one to the debug
 server (a right-stick step through `input`, then the time to the first shown frame whose picture
 moved, from `shown_frames`), so both arms of the target can be measured on the owner's machine.
@@ -272,7 +278,7 @@ moved, from `shown_frames`), so both arms of the target can be measured on the o
 |---|---|---|
 | B1 | `EDEN_NX2_FG_GAME_MOTION=1` | With `EDEN_NX2_FLUID_INTERP`: in-between frames from the guide and the depth fill (3.2) instead of the optical-flow chain; the guide is made without `EDEN_NX2_EXTRAPOLATE`; each real frame's guide is copied. As built, the optical flow still runs as the fallback for frames without two guides; skipping it when a batch needs none is the next step |
 | B2 | `EDEN_NX2_FG_GAME_MOTION=2` | B1, and extrapolated frames (`EDEN_NX2_FLUID` without interpolation) take the parallax fill |
-| B3 | debug server `input_latency` | the onset probe of 3.5 |
+| B3 | debug server `input_latency` | the onset probe of 3.5: built (a right-stick step, then the first shown frame whose picture moved, timed from when the game read the step) |
 | B4 | `EDEN_NX2_FG_GAME_MOTION` with a DLSS-contract game | the second provider (3.1); measured once such a game has a bench scene |
 | B5 | ports | the HUD depth and motion passes of CheezerWheezer/Lichii `amd-superior` (a mask that holds when the scene is smaller than the output), Lichii #1493 (generated frames in HDR) and #1945 (one set of intermediates, about 70 MiB less at 1440p) |
 
@@ -292,10 +298,12 @@ python -I tools/bench/bench.py suite tools/bench/suites/game-network.json @commo
 
 | Suite | Arrives with | Compares |
 |---|---|---|
-| `game-network.json` | this design (A0) | network on: software, shared-memory software, 8x16x16; No sharpening as the floor |
-| `game-network-a1.json` | A1 | 8x16x16 alone, then with each A1 switch, then all |
+| `game-network.json` | this design (A0) | network on: software, shared-memory software, 8x16x16 (a no-op on the Arc 140T: its row equals software, and its log line says why); No sharpening as the floor |
+| `game-network-a1.json` | A1 | 8x16x16 alone, then with each A1 switch, then all. For a GPU that lists 8x16x16 fp16 (Xe2) or 16x16x16 (RDNA 3, where only `ZERO_C` applies), not the Arc 140T |
 | `game-network-render-low.json` | A4 | Max Resolution off at a pinned step with the network on, against the preset |
 | `game-motion-fg.json` | B1 | `FLUID_INTERP` with optical flow against B1, and extrapolation as the latency reference; the 120 Hz set's frame generation pinned, fullscreen, pacing counters on (B2 adds its arm) |
+
+Every arm of an A suite emits new SPIR-V for the network, so its first boot compiles cold: run each suite twice in one session and read only the second pass. On the Arc 140T the matrix arms are no-ops until A1b exists; the owner's A0 rows there compare software with the shared-memory gather, and say what the network costs on this GPU at all.
 
 What counts:
 

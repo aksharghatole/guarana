@@ -239,7 +239,7 @@ auto b = std::getenv(fmt::format("EDEN_NX2_{}", suffix).c_str());
         self.assertIn('error: src/a.cpp:7: "EDEN_NX2_FLUID_" looks like a switch name built at run time', out)
         self.assertIn('error: src/a.cpp:8: "EDEN_NX2_{}" looks like a switch name built at run time', out)
         listed = 'return !(name.starts_with("EDEN_NX2_") || name == "EDEN_DKB_FRAME_TRACE");\n'
-        code, out = self.tree({"src/a.cpp": DOCUMENTED, "src/lichii/nx2_switches.h": listed}).run()
+        code, out = self.tree({"src/a.cpp": DOCUMENTED, "src/common/nx2_switch_file.h": listed}).run()
         self.assertEqual(code, 0, out)
 
     def test_without_the_upstream_list_every_name_needs_a_row(self):

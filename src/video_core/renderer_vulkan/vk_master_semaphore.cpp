@@ -69,7 +69,14 @@ void MasterSemaphore::Refresh() {
     u64 counter{};
     do {
         this_tick = gpu_tick.load(std::memory_order_acquire);
-        counter = semaphore.GetCounter();
+        try {
+            counter = semaphore.GetCounter();
+        } catch (const vk::Exception& exception) {
+            if (exception.GetResult() == VK_ERROR_DEVICE_LOST) {
+                device.ReportLoss();
+            }
+            throw;
+        }
         // Unchanged: no store, which would take the cache line from the threads reading it.
         if (counter <= this_tick) {
             return;
@@ -115,36 +122,15 @@ void MasterSemaphore::Wait(u64 tick) {
         while (!semaphore.Wait(tick)) {
         }
     } catch (const vk::Exception& exception) {
-        // The throw ends the process; say why first (a device loss reached nothing else here).
+        if (exception.GetResult() == VK_ERROR_DEVICE_LOST) {
+            device.ReportLoss();
+        }
+        // The throw ends the process; say why first.
         LOG_CRITICAL(Render_Vulkan, "Waiting for GPU tick {} failed: {}", tick, exception.what());
         throw;
     }
 
     Refresh();
-}
-
-bool MasterSemaphore::WaitFor(u64 tick, std::chrono::nanoseconds timeout) {
-    if (IsFree(tick)) {
-        return true;
-    }
-    Refresh();
-    if (IsFree(tick)) {
-        return true;
-    }
-    const VideoCommon::Nx2Profile::Scope scope{VideoCommon::Nx2Profile::Zone::GpuWait};
-    if (!semaphore) {
-        const auto deadline = std::chrono::steady_clock::now() + timeout;
-        while (gpu_tick.load(std::memory_order_acquire) < tick) {
-            if (std::chrono::steady_clock::now() >= deadline) {
-                return false;
-            }
-            std::this_thread::sleep_for(std::chrono::microseconds{100});
-        }
-        return true;
-    }
-    const bool reached = semaphore.Wait(tick, static_cast<u64>(timeout.count()));
-    Refresh();
-    return reached || IsFree(tick);
 }
 
 VkResult MasterSemaphore::SubmitQueue(vk::CommandBuffer& cmdbuf, vk::CommandBuffer& upload_cmdbuf,

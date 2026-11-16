@@ -18,6 +18,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)  # -I leaves the script's directory off sys.path.
 sys.path.insert(0, os.path.dirname(HERE))
 
+import evidence  # noqa: E402
 import ingest  # noqa: E402
 import issue_forms  # noqa: E402
 from fakes import REPO, FakeGitHub, git, make_issue  # noqa: E402
@@ -201,6 +202,22 @@ class ReportTests(unittest.TestCase):
         }
         for key, value in expected.items():
             self.assertEqual(record[key], value, key)
+        # The Graphics card answer spans two GPU families; it names candidates, not a family.
+        self.assertEqual(record["device_class"], {"family": None, "status": "unresolved",
+                                                  "candidates": ["IntelArrowLakeH", "IntelArcLunarLake"],
+                                                  "from": "Graphics card answer", "name": None})
+        self.assertEqual(record["title_id"], "0400486024DEC000")
+
+    def test_the_launchers_gpu_line_names_the_family(self):
+        body = replace_answer(fixture("device-report-manual.md"), "Anything else",
+                              "Filled in by the Guarana launcher. GPU: Intel(R) Arc(TM) 140V GPU (16GB). Display "
+                              "2880x1800 at 120 Hz.")
+        record = parse(body)[0]
+        self.assertEqual(record["device_class"], {"family": "IntelArcLunarLake", "status": "family", "candidates": [],
+                                                  "from": "GPU name in the report", "name": "Intel Arc 140V GPU"})
+        self.assertEqual(record["gpu"], "Intel Arc 140T / 140V")  # the leaderboard keeps the answer
+        self.assertIn("| GPU family | Intel Arc 140V / 130V (Lunar Lake), read from the GPU name in the report |",
+                      ingest.comment_body(ingest.Report(1, record), {"reports": {}}, None, REPO))
 
     def test_a_bench_report_takes_the_newest_valid_baseline_row(self):
         record, problems, warnings = parse(fixture("device-report-bench.md"), 12)
@@ -217,6 +234,14 @@ class ReportTests(unittest.TestCase):
         self.assertIn("probe", warnings[0])
         # The highest fps in the paste is the probe's 31.2 and the wrong scene's 30.1: neither is listed.
         self.assertNotIn(31.2, [run["fps"] for run in record["runs"]])
+        self.assertEqual((record["device_class"]["family"], record["device_class"]["from"], record["title_id"]),
+                         ("IntelArrowLakeH", "GPU name in a tools/bench row", "0400486024DEC000"))
+        # What evidence.py needs to pair rows: when, where, which build and power, and a quiet machine.
+        gm11 = record["runs"][1]
+        self.assertEqual({key: gm11[key] for key in ("settings", "measured", "machine_id", "build", "power", "quiet",
+                                                     "within_2ms_pct", "warnings")},
+                         {"settings": {}, "measured": "2026-11-19T18:09:40Z", "machine_id": "6bfb7b55b5",
+                          "build": "v20.0.2", "power": "ac", "quiet": True, "within_2ms_pct": None, "warnings": []})
 
     def test_rows_that_are_all_invalid_keep_the_report_off(self):
         body = fixture("device-report-bench.md")
@@ -432,8 +457,25 @@ class PublishTests(unittest.TestCase):
         self.assertEqual((pull["title"], pull["head"]["ref"], pull["base"]["ref"]),
                          (ingest.PULL_TITLE, ingest.BRANCH, "main"))
         for text in (ingest.PR_MARKER, "| #7 | added |", "| #12 | added |", "verified scene (tools/bench)",
-                     "Left out until their problems are fixed", "#15", "close and reopen it"):
+                     "Left out until their problems are fixed", "#15", "close and reopen it", evidence.DATA_PATH):
             self.assertIn(text, pull["body"])
+        # The evidence file comes in the same commit, made from the records it sits next to.
+        shown = git("show", f"{ingest.BRANCH}:{evidence.DATA_PATH}", cwd=self.origin.bare)
+        self.assertEqual(json.loads(shown), evidence.build(doc))
+        self.assertEqual(json.loads(shown)["families"]["IntelArrowLakeH"]["reports"], 1)
+        self.assertEqual(json.loads(shown)["unresolved"][0]["issues"], [7])
+
+    def test_a_stale_evidence_file_on_the_branch_is_rewritten(self):
+        self.publish()
+        head = self.origin.ref(ingest.BRANCH)
+        content = git("show", f"{head}:{ingest.DATA_PATH}", cwd=self.origin.bare) + "\n"
+        stale = ingest.Git(self.origin.work).commit_files(self.origin.ref("main"), {
+            ingest.DATA_PATH: content, evidence.DATA_PATH: "{}\n"}, "stale")
+        git("push", "-q", "-f", "origin", f"{stale}:refs/heads/{ingest.BRANCH}", cwd=self.origin.work)
+        summary = self.publish()
+        self.assertTrue(summary["pushed"])
+        shown = git("show", f"{ingest.BRANCH}:{evidence.DATA_PATH}", cwd=self.origin.bare)
+        self.assertEqual(json.loads(shown), evidence.build(self.branch_doc()))
 
     def test_a_second_run_changes_nothing(self):
         self.publish()

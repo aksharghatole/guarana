@@ -127,6 +127,17 @@ struct AsyncDecodeContext {
 
 using TextureCacheGPUMap = ::Common::unordered_map<u64, std::vector<ImageId>, Common::IdentityHash<u64>>;
 
+/// The current draw's render targets as the asynchronous shaders' skip rule sees them
+/// (TextureCache::ClassifyDrawTargets): the class of the draw, and the target that gave it (the
+/// first of the draw's least safe class; address 0 for a draw without targets).
+struct DrawTargets {
+    DrawTargetClass kind{DrawTargetClass::Recurring};
+    GPUVAddr gpu_addr{};
+    u32 width{};
+    u32 height{};
+    VideoCore::Surface::PixelFormat format{};
+};
+
 class TextureCacheChannelInfo : public ChannelInfo {
 public:
     TextureCacheChannelInfo() = delete;
@@ -216,6 +227,10 @@ class TextureCache : public VideoCommon::ChannelSetupCaches<TextureCacheChannelI
     /// Why the next DeleteImage happens, for EDEN_NX2_TC_TRACE: the collector (and its mode),
     /// an unmap or a join. Read and reset by DeleteImage.
     const char* trace_delete_reason = "other";
+    /// The collector's deleted image: its flags before UnregisterImage cleared BadOverlap, and
+    /// whether its contents were written back to guest memory. Read and reset by DeleteImage.
+    u32 trace_delete_flags{};
+    bool trace_delete_downloaded{};
     u64 scale_epoch{};
     std::map<u64, std::pair<u32, GPUVAddr>> created_shapes;
     bool debug_stats{}; ///< Collect what only the debug statistics lines use
@@ -420,6 +435,12 @@ public:
 
     /// Mark images in a range as modified from the CPU
     void WriteMemory(DAddr cpu_addr, size_t size);
+
+    /// EDEN_NX2_ASYNC_DISCARD=2: classifies the render targets the current registers bind (the
+    /// bound ones when they are current, otherwise the registered images at the registers'
+    /// addresses; nothing is created). Takes the cache's lock. Meant for a draw whose pipeline is
+    /// missing, so it runs per miss, not per draw.
+    [[nodiscard]] DrawTargets ClassifyDrawTargets();
 
     /// Download contents of host images to guest memory in a region
     void DownloadMemory(DAddr cpu_addr, size_t size);
@@ -677,6 +698,10 @@ private:
     /// Returns true if the current clear parameters clear the whole image of a given image view
     [[nodiscard]] bool IsFullClear(ImageViewId id);
 
+    /// UpdateRenderTargets(true): records a full clear on the targets the clear writes (the
+    /// colour target it names, the depth target when depth is cleared), for ClassifyDrawTargets.
+    void NoteFullClears();
+
     /// Returns true if the current clear's render area and scissor cover a width x height image
     [[nodiscard]] bool ClearCovers(u32 width, u32 height) const;
 
@@ -800,6 +825,8 @@ private:
     bool alias_trace_in_sync{};   ///< SynchronizeAliases is copying
     bool alias_trace_dst_write{}; ///< PrepareImage: the image is prepared to be written
     bool is_rescaling = false;
+    /// The bound depth target is wider than tall by padding only (see FindDepthBuffer).
+    bool depth_target_padded = false;
     u64 total_used_memory = 0;
     u64 minimum_memory;
     u64 expected_memory;

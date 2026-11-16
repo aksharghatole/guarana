@@ -16,16 +16,23 @@ namespace Vulkan {
 /// @param index_count    Index count of the draw.
 /// @param vertex_count   Vertex count of the draw.
 /// @param discard_native Allow skipping depth-tested native draws (EDEN_NX2_ASYNC_DISCARD=1).
+/// @param recurring_target Every render target of the draw is cleared and redrawn every frame
+///                         (EDEN_NX2_ASYNC_DISCARD=2 asks; otherwise true). Native draws into any
+///                         other target wait.
 /// @return True when the draw may be skipped.
 constexpr bool CanDiscardPendingDraw(bool native, bool depth_enabled, u32 index_count,
-                                    u32 vertex_count, bool discard_native = false) {
+                                    u32 vertex_count, bool discard_native = false,
+                                    bool recurring_target = true) {
     // Native draws can produce persistent resources, even with depth enabled. They are only
     // skipped when the user opts in (EDEN_NX2_ASYNC_DISCARD=1), trading a possible missing
-    // effect for no stall while a new pipeline builds.
+    // effect for no stall while a new pipeline builds. With EDEN_NX2_ASYNC_DISCARD=2 only those
+    // into targets the frame clears and redraws are (Fritchii a962f20533): a skipped draw into a
+    // layer rendered once is missing for good (title text, chat bubbles), one into a per-frame
+    // target for a frame.
     if (native) {
         // Eglantine #785 (7a940ca19d): Star Fox builds persistent font atlases with no
         // depth buffer and 30-672 vertices. Skipping a draw loses its glyph for the session.
-        return discard_native && depth_enabled;
+        return discard_native && recurring_target && depth_enabled;
     }
     // Preserve the legacy async-shader heuristic.
     return depth_enabled || (index_count > 6 && vertex_count > 6);

@@ -1729,6 +1729,29 @@ class SuiteTest(RunCase):
         self.assertIn("variant vrs-2x2-trace:", output.getvalue())
         self.assertEqual((self.launches, self.host.commands), ([], []))
 
+    def test_shipped_game_network_a1b_suite(self):
+        args, defaults = self.suite_args(os.path.join(HERE, "suites", "game-network-a1b.json"))
+        plans, compare_to = bench.load_suite(args.suite, args, defaults)
+        self.assertEqual(len(plans), 1)
+        plan = plans[0]
+        self.assertEqual((plan.suite, plan.scene["name"]), ("game-network-a1b", "oot-hyrule-field"))
+        base = {"EDEN_NX2_NO_PRESETS": "1", "EDEN_NX2_COST_SAMPLING": "1", "EDEN_NX2_TENSOR_LOG": "1"}
+        coop = {**base, "EDEN_NX2_INTEL_COOP_MATRIX_8X8": "1"}
+        env = {variant["name"]: variant.get("env") or {} for variant in plan.variants}
+        self.assertEqual(env, {
+            "software": base,
+            "coop-8x8": coop,
+            "coop-8x8-zero-c": {**coop, "EDEN_NX2_HMMA_ZERO_C": "1"}})
+        self.assertEqual(list(env)[0], "software")
+        for variant in plan.variants:
+            self.assertEqual(variant["settings"]["Renderer"], {"oot_anti_aliasing": 0, "frame_gen": False})
+        self.assertTrue(all(compare_to[("oot-hyrule-field", name)] == "software" for name in env))
+        with open(os.path.join(HERE, "..", "..", "docs", "switches.md"), encoding="utf-8") as file:
+            documented = file.read()
+        for switches in env.values():
+            for name in switches:
+                self.assertIn(f"`{name}`", documented)
+
     def test_shipped_game_motion_fg_suite(self):
         args, defaults = self.suite_args(os.path.join(HERE, "suites", "game-motion-fg.json"))
         plans, compare_to = bench.load_suite(args.suite, args, defaults)
@@ -1849,7 +1872,7 @@ class SuiteTest(RunCase):
         self.assertEqual(len(plans), 1)
         plan = plans[0]
         self.assertEqual((plan.suite, plan.scene["name"]), ("game-network", "oot-hyrule-field"))
-        base = {"EDEN_NX2_NO_PRESETS": "1", "EDEN_NX2_COST_SAMPLING": "1"}
+        base = {"EDEN_NX2_NO_PRESETS": "1", "EDEN_NX2_COST_SAMPLING": "1", "EDEN_NX2_TENSOR_LOG": "1"}
         env = {variant["name"]: variant.get("env") or {} for variant in plan.variants}
         self.assertEqual(env, {
             "software": base,
@@ -2655,6 +2678,35 @@ class BootSuiteTest(RunCase):
         self.assertEqual(code, 2)
         self.assertEqual([(row["cache_state"], row["invalid_reasons"]) for row in rows],
                          [("cold", ["cache_not_cold"]), ("second", ["second_source_incomplete"])])
+        self.assert_caches_back()
+
+    def test_a_driver_with_its_own_cache_needs_no_saved_one(self):
+        def own_cache(env):
+            self.emulator_runs(env)
+            path = os.path.join(self.user, "log", "eden_log.txt")
+            with open(path, encoding="utf-8") as file:
+                text = file.read()
+            text = "\n".join(line for line in text.splitlines() if "pipelines cached at" not in line)
+            with open(path, "w", encoding="utf-8") as file:
+                file.write(text + "\n[   1.500000] Render_Vulkan <Info> Driver keeps its own pipeline cache, "
+                                  "not saving a Vulkan one\n")
+        self.on_launch = own_cache
+        code, rows, _ = self.run_suite(None, "--only-variants", "baseline", "--cache-states", "cold,second")
+        self.assertEqual(code, 0, self.log)
+        self.assertEqual([(row["cache_state"], row["boot"]["driver_cache_saved_at_exit"]) for row in rows],
+                         [("cold", None), ("second", None)])
+        self.assert_caches_back()
+
+    def test_a_cold_run_no_second_run_copies_leaves_no_caches(self):
+        suite = json.loads(json.dumps(BOOT_SUITE))
+        suite["runs"][0]["variants"][1]["cache_states"] = ["cold"]
+        code, rows, _ = self.run_suite(suite, "--cache-states", "cold,second")
+        self.assertEqual(code, 0, self.log)
+        self.assertEqual([(row["variant"], row["cache_state"]) for row in rows],
+                         [("baseline", "cold"), ("x", "cold"), ("baseline", "second")])
+        session = os.path.join(self.work, os.listdir(self.work)[0])
+        self.assertEqual(os.listdir(os.path.join(session, "runs")) if os.path.isdir(os.path.join(session, "runs"))
+                         else [], [])
         self.assert_caches_back()
 
     def test_a_guard_cut_boot_is_invalid(self):

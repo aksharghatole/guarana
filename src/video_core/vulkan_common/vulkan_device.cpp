@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <bitset>
 #include <cctype>
 #include <chrono>
@@ -25,6 +26,7 @@
 #include "common/fs/fs.h"
 #include "common/fs/path_util.h"
 #include "common/literals.h"
+#include "common/logging.h"
 #include <ranges>
 #include "common/settings.h"
 #include "common/settings_enums.h"
@@ -40,6 +42,10 @@
 #include "video_core/shader_cache_v2/cache.h"
 #ifdef EGLANTINE_STREAMLINE
 #include "video_core/vulkan_common/streamline.h"
+#endif
+
+#ifdef _WIN32
+#include <windows.h>
 #endif
 
 #if defined(__ANDROID__) && defined(ARCHITECTURE_arm64)
@@ -1327,11 +1333,26 @@ VkFormat Device::GetSupportedFormat(VkFormat wanted_format, VkFormatFeatureFlags
 }
 
 void Device::ReportLoss() const {
+    static std::atomic_flag reported;
+    if (reported.test_and_set()) {
+        // The first thread to see the loss reports it and ends the process.
+        for (;;) {
+            std::this_thread::sleep_for(std::chrono::hours{1});
+        }
+    }
     LOG_CRITICAL(Render_Vulkan, "Device loss occurred!");
     ReportDeviceFault();
-
-    // Wait for the log to flush and for Nsight Aftermath to dump the results
-    std::this_thread::sleep_for(std::chrono::seconds{15});
+    if (nsight_aftermath_tracker) {
+        // Give Nsight Aftermath time to write its dump.
+        std::this_thread::sleep_for(std::chrono::seconds{15});
+    }
+    LOG_CRITICAL(Render_Vulkan, "Closing Guarana: the GPU driver lost the Vulkan device");
+    Common::Log::Flush();
+#ifdef _WIN32
+    // Skips DLL detach, which runs the GPU driver's teardown on the lost device.
+    TerminateProcess(GetCurrentProcess(), EXIT_FAILURE);
+#endif
+    std::_Exit(EXIT_FAILURE);
 }
 
 void Device::ReportDeviceFault() const {
@@ -2209,17 +2230,33 @@ void Device::RemoveUnsuitableExtensions() {
         LOG_WARNING(Render_Vulkan, "EDEN_NX2_FORCE_MESH_FALLBACK: VK_EXT_mesh_shader disabled");
         extensions.mesh_shader = false;
     }
-    // RADV on RDNA2 (GFX10.3) faults on native task/mesh draws: TCP read faults at one fixed
-    // address per machine, then a ring timeout and often a MODE1 reset (#489, #1275, #1699), while
-    // the compute fallback ran for an hour. RADV exposes mesh shaders from GFX10.3 on and reports
-    // accelerated 16-bit dot products only before GFX11, which singles out GFX10.3 here.
-    const bool radv_rdna2_mesh =
-        extensions.mesh_shader && properties.driver.driverID == VK_DRIVER_ID_MESA_RADV &&
-        properties.integer_dot_product.integerDotProduct16BitUnsignedAccelerated;
-    if (radv_rdna2_mesh) {
-        LOG_INFO(Render_Vulkan, "RADV on RDNA2: task/mesh draws use the compute fallback, because "
-                                "native mesh draws fault the GPU there");
+    // Native task/mesh draws hang RDNA2 GPUs, while the compute fallback runs there. RADV faults
+    // the TCP at one fixed address per machine, then times out a ring, often with a MODE1 reset
+    // (#489, #1275, #1699). AMD's own driver loses the device (#871; in #1934 an RX 6800 XT lost
+    // it after 6 minutes and ran 32 on the fallback). RADV exposes mesh shaders from GFX10.3 on
+    // and reports accelerated 16-bit dot products only before GFX11. AMD's driver exposes them
+    // from RDNA2 on and reports accelerated mixed-signedness dot4 from RDNA3 on. The Mesh Shaders
+    // setting picks Native or Compute instead (from community PR #814).
+    const VkDriverId mesh_driver = properties.driver.driverID;
+    const auto& dot_product = properties.integer_dot_product;
+    const bool rdna2_mesh =
+        (mesh_driver == VK_DRIVER_ID_MESA_RADV &&
+         dot_product.integerDotProduct16BitUnsignedAccelerated) ||
+        ((mesh_driver == VK_DRIVER_ID_AMD_PROPRIETARY ||
+          mesh_driver == VK_DRIVER_ID_AMD_OPEN_SOURCE) &&
+         !dot_product.integerDotProduct4x8BitPackedMixedSignednessAccelerated);
+    const Settings::MeshShaderMode mesh_mode = Settings::values.mesh_shaders.GetValue();
+    if (extensions.mesh_shader && mesh_mode == Settings::MeshShaderMode::Compute) {
+        LOG_INFO(Render_Vulkan, "Mesh Shaders setting: task/mesh draws use the compute fallback");
         extensions.mesh_shader = false;
+    } else if (extensions.mesh_shader && rdna2_mesh) {
+        if (mesh_mode == Settings::MeshShaderMode::Native) {
+            LOG_INFO(Render_Vulkan, "Mesh Shaders setting: native task/mesh draws on AMD RDNA2");
+        } else {
+            LOG_INFO(Render_Vulkan, "AMD RDNA2: task/mesh draws use the compute fallback, because "
+                                    "native mesh draws hang the GPU there");
+            extensions.mesh_shader = false;
+        }
     }
     RemoveExtensionFeatureIfUnsuitable(extensions.mesh_shader, features.mesh_shader,
                                        VK_EXT_MESH_SHADER_EXTENSION_NAME);
@@ -2389,6 +2426,37 @@ void Device::RemoveUnsuitableExtensions() {
                      shapes.size(), has_8x16x16, guest_warp, usable,
                      cooperative_hmma_8x16x16);
         }
+        // EDEN_NX2_INTEL_COOP_MATRIX_8X8=1 (default off, parsed like the switch above): Intel's
+        // Xe-LPG+ driver (Arc 140T, 101.9175) lists no fp16-accumulator shape, only 8x8x16 with fp16
+        // inputs and fp32 accumulator and result (and 8x8x32 8-bit). Each HMMA then runs as two
+        // 8x8x16 products through shared memory, rounding once to fp16 (emit_spirv_tensor.cpp).
+        // Only where none of the paths above applies.
+        static const bool intel_coop_matrix_8x8 = [] {
+            const char* value = std::getenv("EDEN_NX2_INTEL_COOP_MATRIX_8X8");
+            return value != nullptr && std::strtoul(value, nullptr, 10) != 0;
+        }();
+        if (intel_coop_matrix_8x8 && properties.properties.vendorID == intel_vendor_id) {
+            const bool has_8x8x16 = std::ranges::any_of(
+                shapes, [](const VkCooperativeMatrixPropertiesKHR& shape) {
+                    return shape.MSize == 8 && shape.NSize == 8 && shape.KSize == 16 &&
+                           shape.AType == VK_COMPONENT_TYPE_FLOAT16_KHR &&
+                           shape.BType == VK_COMPONENT_TYPE_FLOAT16_KHR &&
+                           shape.CType == VK_COMPONENT_TYPE_FLOAT32_KHR &&
+                           shape.ResultType == VK_COMPONENT_TYPE_FLOAT32_KHR &&
+                           shape.saturatingAccumulation == VK_FALSE &&
+                           shape.scope == VK_SCOPE_SUBGROUP_KHR;
+                });
+            const bool other_path =
+                cooperative_hmma_16x8x16 || cooperative_hmma_16x16x16 || cooperative_hmma_8x16x16;
+            const bool guest_warp = IsGuestWarpSizeSupported(VK_SHADER_STAGE_COMPUTE_BIT);
+            cooperative_hmma_8x8x16 = usable && has_8x8x16 && guest_warp && !other_path;
+            LOG_INFO(Render_Vulkan,
+                     "EDEN_NX2_INTEL_COOP_MATRIX_8X8: {} cooperative matrix shapes listed, 8x8x16 "
+                     "fp16 with fp32 accumulators {}, 32-lane compute subgroups {}, usable {}, "
+                     "another path {}: 8x8x16 HMMA {}",
+                     shapes.size(), has_8x8x16, guest_warp, usable, other_path,
+                     cooperative_hmma_8x8x16);
+        }
         const auto has_fp32_result_shape = [&](VkComponentTypeKHR input) {
             return std::ranges::any_of(shapes, [=](const VkCooperativeMatrixPropertiesKHR& shape) {
                 return shape.MSize == 16 && shape.NSize == 16 && shape.KSize == 16 &&
@@ -2401,8 +2469,8 @@ void Device::RemoveUnsuitableExtensions() {
         };
         fp8_matrix_shapes = has_fp32_result_shape(VK_COMPONENT_TYPE_FLOAT16_KHR) &&
                             has_fp32_result_shape(VK_COMPONENT_TYPE_FLOAT8_E4M3_EXT);
-        extensions.cooperative_matrix =
-            cooperative_hmma_16x8x16 || cooperative_hmma_16x16x16 || cooperative_hmma_8x16x16;
+        extensions.cooperative_matrix = cooperative_hmma_16x8x16 || cooperative_hmma_16x16x16 ||
+                                        cooperative_hmma_8x16x16 || cooperative_hmma_8x8x16;
         features.cooperative_matrix.cooperativeMatrixRobustBufferAccess = VK_FALSE;
         RemoveExtensionFeatureIfUnsuitable(extensions.cooperative_matrix,
                                            features.cooperative_matrix,

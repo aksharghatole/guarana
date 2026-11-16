@@ -271,8 +271,10 @@ public:
     bool IsFormatSupported(VkFormat wanted_format, VkFormatFeatureFlags wanted_usage,
                            FormatType format_type) const;
 
-    /// Reports a device loss.
-    void ReportLoss() const;
+    /// Logs a device loss and what the driver knows about it, then ends the process. Nothing can
+    /// run on a lost device, and the vk::Exception a caller would throw ends it anyway, as an
+    /// unhandled exception on whichever thread saw the loss (#1934).
+    [[noreturn]] void ReportLoss() const;
 
     /// Logs what VK_EXT_device_fault reports about a device loss.
     void ReportDeviceFault() const;
@@ -857,6 +859,11 @@ FN_MAX_LIMIT_LIST
     /// Intel device whose driver lists that shape, with EDEN_NX2_INTEL_COOP_MATRIX=1.
     bool IsCooperativeHmma8x16x16Supported() const {
         return cooperative_hmma_8x16x16;
+    }
+
+    /// EDEN_NX2_INTEL_COOP_MATRIX_8X8: HMMA runs as 8x8x16 products with fp32 accumulators.
+    bool IsCooperativeHmma8x8x16Supported() const {
+        return cooperative_hmma_8x8x16;
     }
 
     /// Returns true if the device supports VK_KHR_shader_quad_control.
@@ -1617,6 +1624,7 @@ private:
     bool cooperative_hmma_16x8x16{};           ///< HMMA runs on the guest's matrix shape.
     bool cooperative_hmma_16x16x16{};          ///< HMMA runs on 16x16x16 matrices.
     bool cooperative_hmma_8x16x16{};           ///< HMMA runs on 8x16x16 matrices (Intel, opt-in).
+    bool cooperative_hmma_8x8x16{}; ///< HMMA runs on 8x8x16 fp32-accumulator matrices (Intel, opt-in).
     bool fp8_matrix_shapes{}; ///< 16x16x16 FP16 and FP8 matrices with FP32 results (fsr4-vk).
     bool is_integrated{};                      ///< Is GPU an iGPU.
     bool is_virtual{};                         ///< Is GPU a virtual GPU.

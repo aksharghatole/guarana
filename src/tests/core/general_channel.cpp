@@ -76,18 +76,26 @@ TEST_CASE("General channel data queued at shutdown signals the next kernel's eve
         KernelSession first{system};
         system.PushGeneralChannelData({0x42});
         REQUIRE(Signaled(system));
-        // ShutdownMainProcess closes the event before kernel.Shutdown().
         first.End();
     }
     CHECK(system.GetGeneralChannel().size() == 1);
     {
         KernelSession second{system};
-        CHECK(Signaled(system));
         std::vector<u8> out;
         REQUIRE(system.TryPopGeneralChannel(out));
         CHECK(out == std::vector<u8>{0x42});
         CHECK_FALSE(Signaled(system));
         second.End();
+    }
+    {
+        KernelSession third{system};
+        system.PushGeneralChannelData({0x43});
+        third.End();
+    }
+    {
+        KernelSession fourth{system};
+        CHECK(Signaled(system));
+        fourth.End();
     }
 }
 

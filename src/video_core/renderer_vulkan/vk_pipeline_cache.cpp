@@ -569,7 +569,11 @@ VideoCommon::ShaderWarm::DriverStamp PrecachedListStamp(const Device& device,
         variant = Common::CityHash64WithSeed(reinterpret_cast<const char*>(&variant),
                                              sizeof(variant), 0x8816ULL);
     }
-    // EDEN_NX2_HMMA_ZERO_C and EDEN_NX2_HMMA_K16_ONCE, the same way.
+    // EDEN_NX2_INTEL_COOP_MATRIX_8X8, EDEN_NX2_HMMA_ZERO_C and EDEN_NX2_HMMA_K16_ONCE, the same way.
+    if (profile.support_cooperative_hmma_8x8x16) {
+        variant = Common::CityHash64WithSeed(reinterpret_cast<const char*>(&variant),
+                                             sizeof(variant), 0x88160032ULL);
+    }
     if (profile.cooperative_hmma_zero_c) {
         variant = Common::CityHash64WithSeed(reinterpret_cast<const char*>(&variant),
                                              sizeof(variant), 0x2e40cULL);
@@ -1103,22 +1107,31 @@ PipelineCache::PipelineCache(Tegra::MaxwellDeviceMemoryManager& device_memory_,
     profile.support_cooperative_hmma_8x16x16 = !profile.support_cooperative_hmma &&
                                                !profile.support_cooperative_hmma_16x16x16 &&
                                                device.IsCooperativeHmma8x16x16Supported();
+    // EDEN_NX2_INTEL_COOP_MATRIX_8X8=1: the device offers the 8x8x16 path only then (see Device).
+    profile.support_cooperative_hmma_8x8x16 = !profile.support_cooperative_hmma &&
+                                              !profile.support_cooperative_hmma_16x16x16 &&
+                                              !profile.support_cooperative_hmma_8x16x16 &&
+                                              device.IsCooperativeHmma8x8x16Supported();
     if (profile.support_cooperative_hmma_16x16x16) {
         LOG_INFO(Render_Vulkan, "Guest tensor operations run on 16x16x16 cooperative matrices");
     } else if (profile.support_cooperative_hmma_8x16x16) {
         LOG_INFO(Render_Vulkan, "Guest tensor operations run on 8x16x16 cooperative matrices");
+    } else if (profile.support_cooperative_hmma_8x8x16) {
+        LOG_INFO(Render_Vulkan, "Guest tensor operations run on 8x8x16 cooperative matrices with "
+                                "fp32 accumulators");
     }
     // EDEN_NX2_HMMA_ZERO_C=1 and EDEN_NX2_HMMA_K16_ONCE=1 (experiments): less shared memory
     // traffic around each guest tensor operation on the paths that go through shared memory.
     const bool shared_memory_matrices = profile.support_cooperative_hmma_16x16x16 ||
-                                        profile.support_cooperative_hmma_8x16x16;
+                                        profile.support_cooperative_hmma_8x16x16 ||
+                                        profile.support_cooperative_hmma_8x8x16;
     if (NumberSwitchOn("EDEN_NX2_HMMA_ZERO_C")) {
         profile.cooperative_hmma_zero_c = shared_memory_matrices;
         LOG_INFO(Render_Vulkan, "EDEN_NX2_HMMA_ZERO_C: {}",
                  shared_memory_matrices
                      ? "a guest tensor operation that starts from zero skips its accumulator tile"
-                     : "no effect: guest tensor operations do not run on 16x16x16 or 8x16x16 "
-                       "matrices here");
+                     : "no effect: guest tensor operations do not run on 16x16x16, 8x16x16 or "
+                       "8x8x16 matrices here");
     }
     if (NumberSwitchOn("EDEN_NX2_HMMA_K16_ONCE")) {
         profile.cooperative_hmma_k16_once = profile.support_cooperative_hmma_8x16x16;
@@ -3399,20 +3412,24 @@ void ReportUnsupportedMeshPipeline(const GraphicsPipelineCacheKey& key, const Pr
             others += fmt::format(" {}", line);
         }
     }
+    std::string primitive_attributes;
+    for (const u32 line : info.primitive_lines) {
+        primitive_attributes += fmt::format(" {}", line);
+    }
     with_task += task != nullptr;
     per_primitive += !info.primitive_lines.empty();
     non_triangle += info.topology != 4;
     LOG_WARNING(Render_Vulkan,
                 "Mesh emulation survey #{}: task={} (payload {} words, wg {}x{}x{}) mesh wg "
                 "{}x{}x{} max_vertices={} max_primitives={} topology={} vertex_lines={} "
-                "(position {} generic {} other {}:{}) primitive_lines={} pixel={} | totals: "
+                "(position {} generic {} other {}:{}) primitive_lines={}:{} pixel={} | totals: "
                 "task {} per-primitive {} non-triangle {}",
                 total, task != nullptr, info.payload_words, task ? task->workgroup_size[0] : 0,
                 task ? task->workgroup_size[1] : 0, task ? task->workgroup_size[2] : 0,
                 mesh->workgroup_size[0], mesh->workgroup_size[1], mesh->workgroup_size[2],
                 info.max_vertices, info.max_primitives, info.topology, info.vertex_lines.size(),
-                position, generic, other, others, info.primitive_lines.size(), has_pixel,
-                with_task, per_primitive, non_triangle);
+                position, generic, other, others, info.primitive_lines.size(), primitive_attributes,
+                has_pixel, with_task, per_primitive, non_triangle);
 }
 } // Anonymous namespace
 
@@ -3787,15 +3804,21 @@ void PipelineCache::EvictUnusedPipelines() {
 
 PipelineCache::PendingDrawPolicy PipelineCache::CurrentPendingDrawPolicy() const {
     // EDEN_NX2_ASYNC_DISCARD=1: skip native draws whose pipeline is still building instead of
-    // waiting for it (experimental; the draw may be missing for a frame or more).
-    static const bool discard_native = [] {
+    // waiting for it (experimental; the draw may be missing for a frame or more). =2 (Fritchii
+    // a962f20533): skip only those into render targets the frame clears and redraws; draws into
+    // a target cleared for the first time, or not cleared this frame, wait.
+    static const int discard_mode = [] {
         const char* value = std::getenv("EDEN_NX2_ASYNC_DISCARD");
-        const bool enabled = value != nullptr && value[0] == '1';
-        if (enabled) {
+        const int mode = value == nullptr ? 0 : value[0] == '1' ? 1 : value[0] == '2' ? 2 : 0;
+        if (mode == 1) {
             LOG_INFO(Render_Vulkan, "EDEN_NX2_ASYNC_DISCARD: native draws skip unbuilt pipelines");
+        } else if (mode == 2) {
+            LOG_INFO(Render_Vulkan, "EDEN_NX2_ASYNC_DISCARD=2: native draws skip unbuilt "
+                                    "pipelines only into render targets cleared every frame");
         }
-        return enabled;
+        return mode;
     }();
+    const bool discard_native = discard_mode != 0;
     const auto& draw_state = maxwell3d->draw_manager.draw_state;
     const bool native = maxwell3d->GetNativeMacroEngine().native_turing;
     NativePendingMode mode = NativePendingMode::Wait;
@@ -3814,9 +3837,17 @@ PipelineCache::PendingDrawPolicy PipelineCache::CurrentPendingDrawPolicy() const
             mode = NativePendingMode::Skip;
         }
     }
+    // Classified only when a native draw could otherwise be skipped: it takes the texture cache's
+    // lock and looks up the bound targets.
+    bool recurring_target = true;
+    if (discard_mode == 2 && native && mode != NativePendingMode::Wait) {
+        recurring_target =
+            texture_cache.ClassifyDrawTargets().kind == VideoCommon::DrawTargetClass::Recurring;
+    }
     const bool can_discard = CanDiscardPendingDraw(
         native, maxwell3d->regs.zeta_enable != 0, draw_state.draw_element_count,
-        draw_state.draw_element_count, native && mode != NativePendingMode::Wait);
+        draw_state.draw_element_count, native && mode != NativePendingMode::Wait,
+        recurring_target);
     return {.native = native, .mode = mode, .can_discard = can_discard};
 }
 
@@ -4100,7 +4131,7 @@ std::unique_ptr<GraphicsPipeline> PipelineCache::CreateGraphicsPipeline(
             std::span{stages.data(), num_stages}, host_info);
     }
     // Mesh emulation without VK_EXT_mesh_shader (prototype): a mesh program, after an optional
-    // task program, drawing triangles without per-primitive outputs, before a pixel program only.
+    // task program, before a pixel program only.
     std::optional<MeshEmulationSetup> mesh_emulation;
     size_t mesh_index{};
     if (mesh_unsupported) {
@@ -4119,7 +4150,6 @@ std::unique_ptr<GraphicsPipeline> PipelineCache::CreateGraphicsPipeline(
         // Points (0), lines (1) and triangles (4).
         const u32 topology{mesh.mesh.topology};
         eligible = eligible && (topology == 0 || topology == 1 || topology == 4) &&
-                   mesh.mesh.primitive_lines.empty() &&
                    !mesh.mesh.vertex_lines.empty() && mesh.mesh.max_vertices != 0 &&
                    mesh.mesh.max_primitives != 0;
         for (size_t index = 1; index < Maxwell::MaxShaderProgram && eligible; ++index) {
@@ -4128,6 +4158,56 @@ std::unique_ptr<GraphicsPipeline> PipelineCache::CreateGraphicsPipeline(
                        programs[index].stage == Shader::Stage::Fragment;
         }
         if (!eligible) {
+            return nullptr;
+        }
+        // Per-primitive outputs reach the pixel program flat through the vertex shader. A vertex
+        // shader writes Layer and ViewportIndex only with VK_EXT_shader_viewport_index_layer, and
+        // PrimitiveId goes through a generic location nothing else uses.
+        std::bitset<Shader::IR::NUM_GENERICS> vertex_generics, primitive_generics;
+        for (const u32 line : mesh.mesh.vertex_lines) {
+            const auto attribute{static_cast<Shader::IR::Attribute>(line)};
+            if (Shader::IR::IsGeneric(attribute)) {
+                vertex_generics.set(Shader::IR::GenericAttributeIndex(attribute));
+            }
+        }
+        bool writes_primitive_id{};
+        const char* primitive_reason{};
+        for (const u32 line : mesh.mesh.primitive_lines) {
+            const auto attribute{static_cast<Shader::IR::Attribute>(line)};
+            if (Shader::IR::IsGeneric(attribute)) {
+                primitive_generics.set(Shader::IR::GenericAttributeIndex(attribute));
+            } else if (attribute == Shader::IR::Attribute::PrimitiveId) {
+                writes_primitive_id = true;
+            } else if ((attribute == Shader::IR::Attribute::Layer ||
+                        attribute == Shader::IR::Attribute::ViewportIndex) &&
+                       !profile.support_viewport_index_layer_non_geometry) {
+                primitive_reason =
+                    "Layer or ViewportIndex without VK_EXT_shader_viewport_index_layer";
+            }
+        }
+        if ((vertex_generics & primitive_generics).any()) {
+            primitive_reason = "a generic written both per vertex and per primitive";
+        }
+        const size_t pixel_index{static_cast<size_t>(Maxwell::ShaderType::Pixel)};
+        const Shader::Info* const pixel{
+            key.unique_hashes[pixel_index] != 0 ? &programs[pixel_index].info : nullptr};
+        u32 primitive_id_location{~0U};
+        if (writes_primitive_id && pixel && pixel->loads[Shader::IR::Attribute::PrimitiveId]) {
+            const auto used{vertex_generics | primitive_generics};
+            for (u32 index = 0; index < Shader::IR::NUM_GENERICS && !pixel->loads.Legacy();
+                 ++index) {
+                if (!used[index] && !pixel->loads.Generic(index)) {
+                    primitive_id_location = index;
+                    break;
+                }
+            }
+            if (primitive_id_location == ~0U) {
+                primitive_reason = "no free generic location for PrimitiveId";
+            }
+        }
+        if (primitive_reason) {
+            LOG_WARNING(Render_Vulkan, "Mesh emulation skipped for pipeline {:016x}: {}", hash,
+                        primitive_reason);
             return nullptr;
         }
         // Task and mesh share the compute stage, including the fallback's storage buffers.
@@ -4182,6 +4262,7 @@ std::unique_ptr<GraphicsPipeline> PipelineCache::CreateGraphicsPipeline(
         }
         mesh_emulation.emplace();
         mesh_emulation->output_binding = output_binding;
+        mesh_emulation->primitive_id_location = primitive_id_location;
         if (has_task) {
             // After the output: the task payload, offset and argument buffers.
             mesh_emulation->has_task = true;
@@ -4375,12 +4456,17 @@ std::unique_ptr<GraphicsPipeline> PipelineCache::CreateGraphicsPipeline(
                     profile, program.mesh, mesh_emulation->output_binding,
                     mesh_emulation->has_task ? mesh_emulation->args_binding : ~0U,
                     runtime_info.convert_depth_mode && !profile.support_native_ndc,
-                    runtime_info.fixed_state_point_size.value_or(1.0f));
+                    runtime_info.fixed_state_point_size.value_or(1.0f),
+                    mesh_emulation->primitive_id_location);
             }
         }
         if (prepass_shaders && prepass_shaders->invariant_position &&
             program.stage != Shader::Stage::Fragment) {
             runtime_info.invariant_position = true;
+        }
+        if (mesh_emulation && program.stage == Shader::Stage::Fragment) {
+            runtime_info.per_primitive_flat = true;
+            runtime_info.primitive_id_location = mesh_emulation->primitive_id_location;
         }
         ConvertLegacyToGeneric(program, runtime_info);
         if (index == static_cast<size_t>(Maxwell::ShaderType::Geometry)) {

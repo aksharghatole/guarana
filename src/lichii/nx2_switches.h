@@ -13,6 +13,7 @@
 
 #include "common/fs/fs_paths.h"
 #include "common/fs/path_util.h"
+#include "common/nx2_switch_file.h"
 #include "common/switch_origin.h"
 
 // The NX2 switches are read from the environment (EDEN_NX2_*), which a GUI launch has no way to
@@ -27,33 +28,7 @@
 // (Common::SwitchOrigin), so a game's switch defaults can replace them and nothing else.
 static void ParseSwitchFile(const std::filesystem::path& path,
                             std::map<std::string, std::string>& entries) {
-    std::ifstream file{path};
-    if (!file) {
-        return;
-    }
-    constexpr const char* blank = " \t\r";
-    std::string line;
-    while (std::getline(file, line)) {
-        line.erase(0, line.find_first_not_of(blank));
-        line.erase(line.find_last_not_of(blank) + 1);
-        if (line.empty() || line[0] == '#') {
-            continue;
-        }
-        const auto eq = line.find('=');
-        if (eq == std::string::npos) {
-            continue;
-        }
-        std::string name = line.substr(0, eq);
-        std::string value = line.substr(eq + 1);
-        name.erase(name.find_last_not_of(blank) + 1);
-        value.erase(0, value.find_first_not_of(blank));
-        if (value.size() >= 2 && value.front() == '"' && value.back() == '"') {
-            value = value.substr(1, value.size() - 2);
-        }
-        if (!name.empty()) {
-            entries.insert_or_assign(std::move(name), std::move(value));
-        }
-    }
+    Common::Nx2SwitchFile::Parse(path, entries);
 }
 
 static std::filesystem::path GetSwitchExeDirectory(const char* argv0) {
@@ -133,14 +108,7 @@ static void LoadNx2Switches(const char* argv0) {
         parse_players_file(portable_dir / "nx2_switches.txt");
     }
     std::erase_if(entries, [](const auto& entry) {
-        const auto& name = entry.first;
-        return !(name.starts_with("EDEN_NX2_") || name == "EDEN_DKB_FRAME_TRACE" ||
-                 name == "EDEN_DKB_INDIRECT_READBACK" || name == "EDEN_NATIVE_DRAW_CAPTURE" ||
-                 name == "EDEN_NATIVE_DRAW_DIAGNOSTICS" || name == "EDEN_NATIVE_FRAME_CAPTURE" ||
-                 name == "EDEN_NATIVE_SHADER_OVERRIDE_DIR" || name == "EDEN_PUNCH_HOLE" ||
-                 name == "EDEN_STARFOX_WINDOW_TRACE" || name == "EDEN_VI2_MAX_RESOLUTION_MODE" ||
-                 name == "EGLANTINE_EXPERIMENTAL_STATIC_VERTEX_REPACK" ||
-                 name == "EGLANTINE_TEST_VERTEX_REPACK");
+        return !Common::Nx2SwitchFile::IsSwitchName(entry.first);
     });
     if (portable_dir.empty()) {
 #ifdef _WIN32
@@ -161,15 +129,5 @@ static void LoadNx2Switches(const char* argv0) {
     Common::SwitchOrigin::RecordShippedOnly(Common::SwitchOrigin::ShippedOnly(
         shipped, entries, named_by_player,
         [](const std::string& name) { return std::getenv(name.c_str()) != nullptr; }));
-    for (const auto& [name, value] : entries) {
-        if (std::getenv(name.c_str()) != nullptr) {
-            continue;
-        }
-#ifdef _WIN32
-        _putenv_s(name.c_str(), value.c_str());
-#else
-        setenv(name.c_str(), value.c_str(), 1);
-#endif
-        Common::SwitchOrigin::RecordSetByProcess(name);
-    }
+    Common::Nx2SwitchFile::Apply(entries);
 }

@@ -354,8 +354,7 @@ frame) and `frame_gen_extrapolate` (one frame predicted from the game's motion v
 `EDEN_NX2_EXTRAPOLATE`). With `EDEN_NX2_FLUID_INTERP` a sampled frame has one
 `frame_gen_process` and one `frame_gen_interpolate` per in-between frame made: five on the 144 Hz
 set while real frames keep to their six slots, more when a real frame comes late, fewer when no
-swapchain frame is free. With `EDEN_NX2_FLUID_SPLIT_SUBMIT` a real frame's predictions are
-recorded after its frame ends, so they count in the next sampled frame.
+swapchain frame is free.
 What the driver's compiler made of those shaders is a launch option, not a tool:
 `EDEN_NX2_PIPELINE_STATS=<dir>` enables VK_KHR_pipeline_executable_properties, builds every guest
 graphics and compute pipeline with `VK_PIPELINE_CREATE_CAPTURE_STATISTICS_BIT_KHR` and appends one
@@ -536,6 +535,24 @@ How the reads are safe:
 
 **`input`** `{buttons?, left_stick?, right_stick?, frames, timeout_s?}` holds the buttons and
 sticks for `frames` presented frames and then releases them. It returns when they are done.
+**`input_latency`** `{right_stick?, frames?, count?, height?, threshold?, timeout_s?}` times input
+to picture ([design](../design/game-reconstruction-and-motion.md), 3.5). It holds a right-stick
+step (default `[1, 0]`, full right) on player 1 (or the handheld controller) from the next present
+on, for at most `frames` presented frames (default 60), while it captures the next `count` shown
+frames (4 to 32, default 32) with pictures `height` lines tall (default 144), and releases the
+stick when it returns. The clock starts when the game first reads the step (the controller's
+injector is called by the npad update), not when the request arrives. Per frame (`frames`): `kind`,
+`since_input_ms` (the present call's return less that first read; negative for frames shown before
+it) and `difference`, the picture's mean absolute difference from the first picture over its blue,
+green and red bytes (0 to 255; null without a picture). `onset_ms` and `onset_kind` are the first
+frame whose difference is over `threshold` (default 2): with frame generation that can be a
+predicted or interpolated frame; `real_onset_ms` is the first real frame over it. `input_read` is
+false and the times null when the game never read the step while the frames were shown (paused,
+a menu). Stand still where the camera can turn and nothing else moves much: animation counts as
+difference too, so compare `difference` before the onset with the threshold. Times are when the
+present call returned, not the scanout (as `shown_frames`), so the display's own lag comes on top.
+Uses the shown-frames capture: it fails while a `shown_frames` call runs.
+
 **`input_sequence`** `{steps: [{buttons?, left_stick?, right_stick?, frames}, ...], timeout_s?}`
 runs the steps back to back, at most 1000 steps and 36000 frames per call. A step with no
 buttons and no sticks injects nothing, so it works as a pause between moves.

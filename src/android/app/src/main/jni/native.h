@@ -6,6 +6,10 @@
 #include <optional>
 
 #include <android/native_window_jni.h>
+#include <atomic>
+#include <memory>
+#include <mutex>
+#include <string>
 #include "common/android/applets/software_keyboard.h"
 #include "core/core.h"
 #include "core/file_sys/registered_cache.h"
