@@ -8,7 +8,7 @@
   trace_replay.py check --cli <guarana-cli> --corpus tests/gpu_traces/corpus.json [--traces <dir>]
   trace_replay.py bench --cli <guarana-cli> <trace> --out <dir> [--variant NAME[=KEY=VALUE,...]]...
                         [--build NAME=<guarana-cli>]... [--repeat N] [--skip N] [--frames N]
-                        [--no-images] [--allow-different]
+                        [--no-images] [--allow-different] [--noise-margin DB]
 
 <guarana-cli> is the path of the SDL frontend (eden-cli before v20.2).
 
@@ -23,7 +23,14 @@ bench is a paired A/B on the same frames. Each variant is a set of environment s
 baseline's bit for bit and the time a frame took to replay. The game does not run, so the scene is
 the same by construction and the guest CPU is not part of the time: this measures the emulator's
 GPU thread and the host GPU on a fixed workload. It exits 1 when a variant's frames differ from
-the baseline's (unless --allow-different) or the baseline's own runs differ from each other.
+the baseline's (unless --allow-different).
+
+Some drivers do not replay bit for bit: on Intel's Windows driver two replays of the same build
+differ a little in every frame. When the baseline's own runs differ, bench measures by how much
+(the lowest PSNR between them, over a sample of the differing frames) and judges each variant
+against that noise floor: within --noise-margin dB of it is "within noise", below it "differs".
+Without images (--no-images) there is nothing to measure, and a baseline whose runs differ proves
+nothing: bench then exits 1.
 """
 
 import argparse
@@ -40,6 +47,11 @@ import zlib
 from pathlib import Path
 
 SAMPLE_TRACE = "sample"
+# The noise floor and a variant's distance from the baseline are measured on at most this many of
+# the frames that differ, spread over the replay, on every NOISE_STRIDE-th byte of each: enough for
+# the PSNR of noise spread over a frame, and fast enough in pure Python on 2560x1440 frames.
+NOISE_FRAMES = 8
+NOISE_STRIDE = 16
 
 
 def replay(cli, trace, out, extra=(), switches=None):
@@ -117,19 +129,21 @@ def read_png(path):
     return width, height, pixels
 
 
-def difference(a, b):
-    """Largest channel difference, mean difference and PSNR (inf when equal) of two images."""
+def difference(a, b, stride=1):
+    """Largest channel difference, mean difference and PSNR (inf when equal) of two images, over
+    every `stride`-th byte."""
     if a[0] != b[0] or a[1] != b[1]:
         return {"size_differs": True}
+    first, second = a[2][::stride], b[2][::stride]
     largest = 0
     total = 0
     squares = 0
-    for x, y in zip(a[2], b[2]):
+    for x, y in zip(first, second):
         d = abs(x - y)
         largest = max(largest, d)
         total += d
         squares += d * d
-    count = len(a[2]) or 1
+    count = len(first) or 1
     mse = squares / count
     psnr = math.inf if mse == 0 else 10 * math.log10(255 * 255 / mse)
     return {"max": largest, "mean": total / count, "psnr": psnr}
@@ -226,7 +240,37 @@ def differing_frames(base, other):
     return sorted(index for index in set(a) | set(b) if a.get(index) != b.get(index))
 
 
-def bench(variants, trace, out, repeat=3, skip=10, extra=(), run=replay):
+def worst_psnr(first_dir, first, second_dir, second, frames=NOISE_FRAMES, stride=NOISE_STRIDE):
+    """The lowest PSNR over a sample of the frames two replays disagree on: inf when they agree,
+    0 when one replay lacks a frame, None when a frame has no image to measure."""
+    differing = differing_frames(first, second)
+    if not differing:
+        return math.inf
+    sample = differing[::max(1, len(differing) // frames)][:frames]
+    a = {frame["index"]: frame for frame in first["frames"]}
+    b = {frame["index"]: frame for frame in second["frames"]}
+    worst = math.inf
+    for index in sample:
+        x, y = a.get(index), b.get(index)
+        if not x or not y:
+            return 0.0
+        if not x.get("file") or not y.get("file"):
+            return None
+        x_path, y_path = Path(first_dir) / x["file"], Path(second_dir) / y["file"]
+        if not x_path.exists() or not y_path.exists():
+            return None
+        result = difference(read_png(x_path), read_png(y_path), stride)
+        worst = min(worst, result.get("psnr", 0.0))
+    return worst
+
+
+def finite(value):
+    """A PSNR for the report: rounded, None for inf (identical) and for unknown."""
+    return None if value is None or math.isinf(value) else round(value, 2)
+
+
+def bench(variants, trace, out, repeat=3, skip=10, extra=(), run=replay, margin=1.0,
+          noise_frames=NOISE_FRAMES, noise_stride=NOISE_STRIDE):
     """Replays `trace` under each of `variants` (dicts with name, cli and switches; the first is
     the baseline), `repeat` times in turn, and returns the report bench.json holds."""
     out = Path(out)
@@ -242,6 +286,16 @@ def bench(variants, trace, out, repeat=3, skip=10, extra=(), run=replay):
     report = {"trace": Path(trace).name, "renderer": reference.get("renderer", ""),
               "program_id": reference.get("program_id", ""), "repeat": repeat, "skip": skip,
               "timing": key, "variants": []}
+    # How much the baseline differs from itself: the floor every variant is judged against.
+    base_runs = results[base_name]
+    floor = math.inf
+    for index in range(1, len(base_runs)):
+        psnr = worst_psnr(out / base_name / "run-1", base_runs[0],
+                          out / base_name / f"run-{index + 1}", base_runs[index],
+                          noise_frames, noise_stride)
+        floor = None if psnr is None or floor is None else min(floor, psnr)
+    report["noise_floor_db"] = finite(floor)
+    report["noise_margin_db"] = margin
     base_median = None
     for variant in variants:
         runs = results[variant["name"]]
@@ -254,6 +308,14 @@ def bench(variants, trace, out, repeat=3, skip=10, extra=(), run=replay):
         # A replay without frames compared nothing: it is not identical to anything.
         row["identical_to_baseline"] = (bool(reference["frames"]) and not differing and
                                         row["repeats_itself"])
+        worst = worst_psnr(out / base_name / "run-1", reference, out / variant["name"] / "run-1",
+                           runs[0], noise_frames, noise_stride) if reference["frames"] else None
+        row["worst_psnr_db"] = finite(worst)
+        # Within noise: no further from the baseline than the baseline is from itself (less the
+        # margin). A baseline that repeats itself bit for bit leaves no room: identical or not.
+        row["within_noise"] = row["identical_to_baseline"] or (
+            floor is not None and not math.isinf(floor) and worst is not None and
+            worst >= floor - margin)
         if differing:
             index = differing[0]
             frames = [{frame["index"]: frame for frame in result["frames"]}.get(index)
@@ -277,9 +339,12 @@ def bench_table(report):
     def number(value):
         return "-" if value is None else f"{value:.2f}"
 
+    floor = report.get("noise_floor_db")
     lines = [f"{report['trace']} on {report['renderer'] or 'an unnamed device'}: "
              f"{report['repeat']} runs each, first {report['skip']} frames not timed, "
-             f"times are {report['timing']}",
+             f"times are {report['timing']}" +
+             (f"; the baseline's own runs differ by up to PSNR {floor:.1f} dB, the noise floor"
+              if floor is not None else ""),
              f"{'variant':<20} {'frames':>6} {'median':>9} {'best':>9} {'worst':>9} {'p95':>9} "
              f"{'change':>8}  image"]
     for row in report["variants"]:
@@ -288,12 +353,15 @@ def bench_table(report):
         change = f"{row['change_percent']:+.1f}%" if "change_percent" in row else ""
         if not runs or not runs[0]["frames"]:
             image = "no frames"
-        elif not row["repeats_itself"]:
+        elif not row["repeats_itself"] and floor is None:
             image = "its own runs differ"
         elif row is report["variants"][0]:
             image = "baseline"
         elif row["identical_to_baseline"]:
             image = "identical"
+        elif row.get("within_noise"):
+            worst = row.get("worst_psnr_db")
+            image = "within noise" + (f" (worst PSNR {worst:.1f} dB)" if worst is not None else "")
         else:
             image = f"{len(row['differing_frames'])} frames differ"
             first = row.get("first_difference")
@@ -420,6 +488,9 @@ def main():
                         help="hashes and times only (needs builds that know --no-images)")
     paired.add_argument("--allow-different", action="store_true",
                         help="exit 0 when a variant's frames differ from the baseline's")
+    paired.add_argument("--noise-margin", type=float, default=1.0, metavar="DB",
+                        help="how far below the baseline's own noise floor (PSNR) a variant may "
+                             "fall and still count as within noise (default 1.0)")
     args = parser.parse_args()
 
     if args.command == "bench":
@@ -437,17 +508,18 @@ def main():
         extra = (["--frames", str(args.frames)] if args.frames else []) + (
             ["--no-images"] if args.no_images else [])
         report = bench(variants, args.trace, args.out, max(args.repeat, 1), max(args.skip, 0),
-                       extra)
+                       extra, margin=args.noise_margin)
         (Path(args.out) / "bench.json").write_text(json.dumps(report, indent=2) + "\n")
         print("\n".join(bench_table(report)))
         baseline = report["variants"][0]
         if not baseline["runs"] or baseline["runs"][0]["frames"] == 0:
             print("The baseline replayed no frames: nothing was compared.")
             return 1
-        if not baseline["repeats_itself"]:
-            print("The baseline's own runs differ: the comparison proves nothing.")
+        if not baseline["repeats_itself"] and report["noise_floor_db"] is None:
+            print("The baseline's own runs differ and there are no images to measure by how much: "
+                  "the comparison proves nothing.")
             return 1
-        different = [row["name"] for row in report["variants"] if not row["identical_to_baseline"]]
+        different = [row["name"] for row in report["variants"][1:] if not row["within_noise"]]
         return 1 if different and not args.allow_different else 0
     if args.command == "replay":
         result = replay(args.cli, args.trace, args.out)

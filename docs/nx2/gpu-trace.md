@@ -29,7 +29,8 @@ python3 -I tools/nx2/trace_replay.py bench --cli <guarana-cli> <trace> --out <di
 
 A variant is a set of environment switches, a build, or both; the first one is the baseline. Every variant replays the trace `--repeat` times in turn (A B A B), and the report (`<dir>/bench.json`, and a table on the terminal) says for each one:
 
-- **image**: whether its frames are the baseline's bit for bit. Where they are not, how many differ and, with images kept, the largest channel difference and PSNR of the first one. A variant whose own runs differ from each other is reported as that: it proves nothing either way.
+- **image**: whether its frames are the baseline's bit for bit. Where they are not, how many differ and, with images kept, the largest channel difference and PSNR of the first one.
+- **noise**: some drivers do not replay bit for bit (on Intel's Windows driver every frame of two replays of the same build differs a little, PSNR 37 to 45 dB). When the baseline's own runs differ, bench takes the lowest PSNR between them, over a sample of the differing frames, as the noise floor, and reports a variant no further from the baseline than that (less `--noise-margin`, 1 dB by default) as within noise. Without images (`--no-images`) a baseline whose runs differ proves nothing, and bench exits 1.
 - **time**: the median, best, worst and 95th percentile of the time a frame took to replay (`replay_ms`, or `ms` when a build in the comparison is older than `replay_ms`), without each run's first `--skip` frames, which build shaders and upload textures.
 
 It exits 1 when a variant's frames differ from the baseline's (unless `--allow-different`) or the baseline does not repeat itself.
