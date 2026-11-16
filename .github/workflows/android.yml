@@ -6,9 +6,11 @@ name: android
 # nightly, whose APK is published as guarana-<version>-android-arm64.apk. Nobody on the project has
 # an Android device: the APK is compiled here and tested by players (docs/ARM64.md).
 #
-# Signing: with the ANDROID_KEYSTORE_B64, ANDROID_KEYSTORE_PASS and ANDROID_KEY_ALIAS secrets the
-# APK is signed with the project's release key; without them with the debug key committed in
-# src/android, under the id io.github.karimalsalah.guarana.preview (docs/SIGNING.md).
+# Signing: a build that release-binaries.yml asks to sign (`sign`: tags, the nightly and runs on
+# main) gets the ANDROID_KEYSTORE_B64, ANDROID_KEYSTORE_PASS and ANDROID_KEY_ALIAS secrets and is
+# signed with the project's release key. Every other build, and every build while those secrets are
+# unset, is signed with the debug key committed in src/android, under the id
+# io.github.karimalsalah.guarana.preview (docs/SIGNING.md).
 
 on:
   pull_request:
@@ -46,6 +48,10 @@ on:
         required: true
       save_caches:
         description: Save the compiler cache (tags, the nightly and runs on main)
+        type: boolean
+        default: false
+      sign:
+        description: Sign with the release key if its secrets are set (tags, the nightly and runs on main)
         type: boolean
         default: false
     secrets:
@@ -132,9 +138,12 @@ jobs:
         env:
           CCACHE: "true"
           GIT_TAG_NAME: ${{ inputs.version || format('pr{0}-{1}', github.event.pull_request.number || 'test', github.sha) }}
-          ANDROID_KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
-          ANDROID_KEYSTORE_PASS: ${{ secrets.ANDROID_KEYSTORE_PASS }}
-          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          # Only a build that release-binaries.yml asks to sign gets the release key. A pull request
+          # from a branch of this repository, or a run dispatched by hand, builds code no release has
+          # taken yet: it must not run with the key, nor leave a test APK signed with it.
+          ANDROID_KEYSTORE_B64: ${{ inputs.sign && secrets.ANDROID_KEYSTORE_B64 || '' }}
+          ANDROID_KEYSTORE_PASS: ${{ inputs.sign && secrets.ANDROID_KEYSTORE_PASS || '' }}
+          ANDROID_KEY_ALIAS: ${{ inputs.sign && secrets.ANDROID_KEY_ALIAS || '' }}
           BUILD_TAG: ${{ inputs.build_tag }}
         run: |
           set -eu
@@ -155,7 +164,7 @@ jobs:
       - name: Name the APK
         id: apk
         env:
-          SIGNED: ${{ secrets.ANDROID_KEYSTORE_B64 != '' }}
+          SIGNED: ${{ inputs.sign && secrets.ANDROID_KEYSTORE_B64 != '' }}
         run: |
           set -euo pipefail
           apk=artifacts/app-mainline-release.apk

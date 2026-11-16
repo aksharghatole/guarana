@@ -15,6 +15,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))  # -I leaves the script's directory off sys.path.
 
 import device_classes as dc  # noqa: E402
+import issue_forms  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(HERE)))
 
@@ -147,6 +148,20 @@ class PciTests(unittest.TestCase):
                 self.assertEqual((found["status"], found["family"]), expected)
                 self.assertEqual(found["from"], dc.FROM_PCI)
 
+    def test_a_bench_rows_pci_id_decides_where_its_name_cannot(self):
+        # Meteor Lake's 7D55 is matched by its ID alone, whatever the driver calls it.
+        found = dc.classify("Intel Arc (Meteor Lake)", "intel", "integrated",
+                            [{"name": "Intel(R) Arc(TM) Graphics", "pci": dc.parse_pci_field("8086:7D55")}])
+        self.assertEqual((found["status"], found["family"], found["from"]), ("family", "IntelArcMeteorLake", dc.FROM_PCI))
+        # The ID of the discrete GPU next to it does not count for an integrated answer.
+        found = dc.classify("Intel Arc 140T / 140V", "intel", "integrated",
+                            [{"name": "NVIDIA GeForce RTX 4060 Laptop GPU", "pci": (0x10DE, 0x28A0)},
+                             {"name": "Intel(R) Arc(TM) 140T GPU (16GB)", "pci": (dc.INTEL, 0x7D51)}])
+        self.assertEqual((found["family"], found["from"]), ("IntelArrowLakeH", dc.FROM_PCI))
+        self.assertEqual(dc.parse_pci_field("1002:15bf"), (0x1002, 0x15BF))
+        for value in (None, "", "8086-7D51", "8086:7D5", "x8086:7D51"):
+            self.assertIsNone(dc.parse_pci_field(value))
+
     def test_an_id_whose_family_needs_a_name_without_one_is_unresolved(self):
         found = dc.classify(report_pci=(dc.AMD, 0x150E))
         self.assertEqual((found["status"], found["candidates"]), ("unresolved", ["AmdRadeon880M", "AmdRadeon890M"]))
@@ -177,6 +192,20 @@ class LauncherLineTests(unittest.TestCase):
 
 
 class FormAnswerTests(unittest.TestCase):
+    def test_every_graphics_card_answer_has_its_place(self):
+        # A new integrated answer in the forms must be given its candidate families, or be put outside every
+        # family, here; an answer named here must still be one of the forms'.
+        shorts = {short: kind for short, _, kind in issue_forms.GPU_OPTIONS.values()}
+        for short, kind in shorts.items():
+            if kind == "integrated":
+                with self.subTest(answer=short):
+                    self.assertTrue((short in dc.OPTION_CANDIDATES) != (short in dc.OPTION_OUTSIDE))
+        for short in list(dc.OPTION_CANDIDATES) + list(dc.OPTION_OUTSIDE):
+            with self.subTest(named=short):
+                self.assertEqual(shorts.get(short), "integrated")
+        for candidates in dc.OPTION_CANDIDATES.values():
+            self.assertTrue(set(candidates) <= set(dc.FAMILIES))
+
     def test_the_answer_alone_gives_candidates_never_a_family(self):
         cases = [
             ("Intel Arc 140T / 140V", "intel", "integrated", ["IntelArrowLakeH", "IntelArcLunarLake"]),

@@ -167,6 +167,11 @@ fn fields(sys: &SystemInfo, o: &ShareOffer, launcher_version: &str, scrub: &Scru
     let device = format!("{} {}", sys.device.manufacturer, sys.device.model).trim().to_string();
     let gpu = sys.primary();
     let gpu_name = gpu.map(|g| g.name.clone()).unwrap_or_default();
+    // The report bot gives the report the engine's GPU family from the name and the PCI ID together.
+    let gpu_line = gpu
+        .filter(|g| g.vendor_id != 0 && g.device_id != 0)
+        .map(|g| format!("{} [{:04X}:{:04X}]", g.name, g.vendor_id, g.device_id))
+        .unwrap_or_else(|| gpu_name.clone());
     let device_line = if device.is_empty() { gpu_name.clone() } else { device };
     let os = format!("{} {} ({})", sys.os.name, sys.os.display_version, system::os_build_full());
     let power = format!(
@@ -200,7 +205,7 @@ fn fields(sys: &SystemInfo, o: &ShareOffer, launcher_version: &str, scrub: &Scru
             "notes",
             format!(
                 "Filled in by the Guarana launcher's \"Share my numbers\" from the last session's log; nothing was sent automatically. \
-                 GPU: {gpu_name}. Display {}x{} at {} Hz. {} \
+                 GPU: {gpu_line}. Display {}x{} at {} Hz. {} \
                  Still to add by hand: the scene, a screenshot of it, the form factor, graphics card, game and power source.",
                 sys.display.width,
                 sys.display.height,
@@ -421,6 +426,19 @@ mod tests {
         assert_eq!(results.matches(" fps").count(), 2, "{results}"); // "25.2 fps (game fps: ..."
         assert!(results.contains("25.2 fps") && !results.contains("49.6") && !results.contains("p50") && !results.contains("p99"));
         assert!(!results.contains("frames per second") && !results.contains("frames/s"));
+    }
+
+    #[test]
+    fn the_notes_name_the_gpu_with_its_pci_id() {
+        let scrub = Scrubber::for_names("alice", "ALICE-PC");
+        let mut s = sys();
+        let notes = |s: &SystemInfo| {
+            fields(s, &offer(), "0.1.0", &scrub, false).into_iter().find(|(k, _)| *k == "notes").unwrap().1
+        };
+        // No device ID read: the name alone, as before.
+        assert!(notes(&s).contains("GPU: Intel(R) Arc(TM) 140T GPU (16GB). Display"), "{}", notes(&s));
+        s.gpus[0].device_id = 0x7d51;
+        assert!(notes(&s).contains("GPU: Intel(R) Arc(TM) 140T GPU (16GB) [8086:7D51]. Display"), "{}", notes(&s));
     }
 
     #[test]

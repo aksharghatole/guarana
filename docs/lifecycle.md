@@ -45,6 +45,7 @@ paths are in `launcher/src-tauri/src/`.
 |---|---|---|---|---|
 | Mode, profile, overrides, autopilot state, `last_warm_driver` | `%LOCALAPPDATA%\Guarana\launcher-state.json` (`paths.rs:53-55`, `state.rs:16-52`). No stamp | Changing the mode resets the autopilot state for the new mode (today, `modes.rs:318-328`). An override that names an unknown toggle fails the whole apply today (`profiles.rs:537`). [Proposed (S5)][125]: such an override is left out of what is applied, logged, and kept in the file for a newer launcher | At every launch and every mode call (today, `modes.rs:213-243`) | `settings_file` reports overrides that name no toggle: [proposed (S1)][125] |
 | Current emulator version | `current.json` (`paths.rs:49-51`) | Rewritten by an update or rollback | At every launch | `emulator_version` (today) |
+| The folder the current version runs from | `%LOCALAPPDATA%\Guarana\app\`: copies of the version's programs, hard links to its other files, and `app-version.json` naming it (`appdir.rs`) | Switched whole after an update or rollback and at launcher start, or at the next launch or warm-up while Guarana or a warm-up runs (today) | At every launch and warm-up | none |
 | Game Booster journal | `booster-journal.json` (`paths.rs:57-61`) | Replayed and removed after a crash, at launcher start (today, `main.rs:81-83`) | Launcher start | none |
 | Backups of the two files the launcher writes | A `guarana-backups\` folder beside each file: `%APPDATA%\guarana\guarana-backups\` for `nx2_switches.txt`, `%APPDATA%\guarana\config\guarana-backups\` for `qt-config.ini`. The ten newest copies of each are kept (today, `util.rs:77-106`). The file name carries the time | Rotation only | Never by code | none |
 | Hygiene journal: for each key and switch the launcher writes, the value before and the value written | `%LOCALAPPDATA%\Guarana\hygiene-journal.json` | Never on its own; updated at each launcher write | Before every launcher write, and by the flush | [proposed (S5)][125] |
@@ -219,6 +220,33 @@ emulator keeps that file. On other drivers a missing file is normal, and nothing
 | Debug server `power_set`, `frame_budget`, `speed_limit` | Memory | Not reset between games today (`src/core/debugger/nx2_debug_tools.cpp`); not covered by [#125][125] |
 | Global settings | `qt-config.ini` | Saved when the emulator closes (today, `qt_config.cpp:59-62`). This is why a flush must wait until the emulator is closed (R5) |
 
+### The stop, step by step
+
+A stop logs `Shutdown begins`, then one `Shutdown step N took X ms: <step> (progress P)` line per
+step as it ends, and `Shutdown took X ms in N steps; the slowest took Y ms: <step>` ([#239][239]).
+The steps, in order: the debug server and sessions, cheats, the GPU threads, guest threads
+suspended, services closed, guest cores, services destroyed, file systems and loader, audio; then
+the renderer (`GPU: ...`): the wait for the GPU to idle, frame generation, the rasterizer's last
+work, its fences and upscalers, the pipeline cache (prebuild stopped, shader workers joined,
+optimized builds, queued cache records, used pipelines list, driver pipeline cache saved, shader
+cache v2 closed, then graphics, evicted and compute pipelines and the translated ones never
+adopted destroyed with their counts, pipeline binaries, then its libraries, pools and workers), the query, buffer and texture caches, render passes, descriptors
+and staging buffers, the swapchain and presenter, the scheduler, the memory allocator, the Vulkan
+device, and the Vulkan instance; then host1x, the CPU manager, the kernel (the application process
+closed, guest memory unmapped, the rest), network, and for a Switch 2 game the release of guest
+memory (its zero-page trim, Windows only, is stopped when the teardown begins). Steps are in
+`core/core.cpp` (`ShutdownMainProcess`), `core/hle/kernel/kernel.cpp`,
+`renderer_vulkan.cpp`, `vk_rasterizer.cpp` and `vk_pipeline_cache.cpp`; the renderer's and
+rasterizer's member destruction is timed by the `ShutdownStepMarker` members in their headers.
+
+The frontend waits 10 s at a time for the teardown while it moves: a step was done, or the
+emulation thread used at least 1 s of CPU since the last check (a step that frees memory notes no
+progress but keeps the thread busy). A busy thread alone passes 6 checks in a row at most, since a
+thread that spins on a lock is busy too. The frontend gives up 3 minutes after the stop, or when a
+check finds neither, and then logs `Emulation thread failed to stop after N ms (shutdown progress P, last step
+done: <step>)`: the step after the one named is the one that hung. `Emulation cleanup completed in N
+ms` is the frontend's own part, after the emulation thread ended.
+
 ## When the doctor runs
 
 | Moment | What runs | Status |
@@ -235,3 +263,4 @@ emulator keeps that file. On other drivers a missing file is normal, and nothing
 [107]: https://github.com/karimalsalah/guarana/issues/107
 [122]: https://github.com/karimalsalah/guarana/pull/122
 [125]: https://github.com/karimalsalah/guarana/issues/125
+[239]: https://github.com/karimalsalah/guarana/issues/239

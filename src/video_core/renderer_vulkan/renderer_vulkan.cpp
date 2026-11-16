@@ -85,21 +85,6 @@ constexpr size_t FLUID_MAX_PREDICTIONS = 12;
 /// EDEN_NX2_CADENCE: real frames are paced to be done this long before their slot's present.
 constexpr s64 FLUID_PHASE_MARGIN_NS = 3'000'000;
 
-/// EDEN_NX2_FLUID_SPARE=<n>: predictions for n slots beyond the one the next real frame is
-/// expected for (default 0), so a real frame later than that leaves no slot with nothing to show.
-/// Each costs one frame dispatch and one of the presenter's frames, and reaches at most
-/// FLUID_MAX_ADVANCE frame intervals ahead.
-/// EDEN_NX2_FLUID_SPLIT_SUBMIT=1: the real frame is submitted before its predictions are recorded,
-/// and each prediction in its own submission in slot order, so a frame is done when its own work is
-/// rather than when the whole batch is.
-[[nodiscard]] bool FluidSplitSubmit() {
-    static const bool on = [] {
-        const char* value = std::getenv("EDEN_NX2_FLUID_SPLIT_SUBMIT");
-        return value != nullptr && std::strtoul(value, nullptr, 10) != 0;
-    }();
-    return on;
-}
-
 [[nodiscard]] bool FluidInterpPhase() {
     static const bool on = [] {
         const char* value = std::getenv("EDEN_NX2_FLUID_INTERP_PHASE");
@@ -108,6 +93,10 @@ constexpr s64 FLUID_PHASE_MARGIN_NS = 3'000'000;
     return on;
 }
 
+/// EDEN_NX2_FLUID_SPARE=<n>: predictions for n slots beyond the one the next real frame is
+/// expected for (default 0), so a real frame later than that leaves no slot with nothing to show.
+/// Each costs one frame dispatch and one of the presenter's frames, and reaches at most
+/// FLUID_MAX_ADVANCE frame intervals ahead.
 [[nodiscard]] u32 FluidSpareSlots() {
     static const u32 spare = [] {
         const char* value = std::getenv("EDEN_NX2_FLUID_SPARE");
@@ -508,6 +497,7 @@ try
 RendererVulkan::~RendererVulkan() {
     scheduler.RegisterOnSubmit([] {});
     void(device.GetLogical().WaitIdle());
+    Common::ShutdownStepDone("GPU: renderer waited for the GPU to idle");
 }
 
 void RendererVulkan::Composite(std::span<const Tegra::FramebufferConfig> framebuffers) {
@@ -564,12 +554,11 @@ void RendererVulkan::Composite(std::span<const Tegra::FramebufferConfig> framebu
     // Frames predicted from this one (EDEN_NX2_EXTRAPOLATE): presented after it, unlike
     // interpolated frames. The extrapolation pass writes SDR, so HDR output pauses it.
     std::vector<Frame*> predicted_frames;
-    bool real_flushed = false;
     const bool fluid = present_manager.Fluid();
     if (output.IsHdr() && ExtrapolationRequested()) {
         frame_gen.Pause();
         if (fluid) {
-            RecordFluidFrames(frame, output, predicted_frames, real_flushed);
+            RecordFluidFrames(frame, output, predicted_frames);
         }
     } else {
         if (!output.IsHdr()) {
@@ -589,7 +578,7 @@ void RendererVulkan::Composite(std::span<const Tegra::FramebufferConfig> framebu
         const bool predict = frame_gen.Extrapolating();
         if (fluid && (predict || generated_frames == 0)) {
             // EDEN_NX2_FLUID: the present thread shows each frame at its vblank slot.
-            RecordFluidFrames(frame, output, predicted_frames, real_flushed);
+            RecordFluidFrames(frame, output, predicted_frames);
         } else if (fluid && FrameGen::FluidInterpolation()) {
             // EDEN_NX2_FLUID_INTERP: interpolated frames on the vblank slots before the real one.
             RecordFluidInterpolated(frame, output, generated_frames, predicted_frames);
@@ -637,12 +626,10 @@ void RendererVulkan::Composite(std::span<const Tegra::FramebufferConfig> framebu
     }
 #endif
 
-    if (!real_flushed) {
-        if (const auto mark = scheduler.NextFrameMark(); mark != Scheduler::FrameMark::None) {
-            scheduler.MarkFrameEnd(++trace_frame, mark);
-        }
-        frame->gpu_tick = scheduler.Flush(*frame->render_ready);
+    if (const auto mark = scheduler.NextFrameMark(); mark != Scheduler::FrameMark::None) {
+        scheduler.MarkFrameEnd(++trace_frame, mark);
     }
+    frame->gpu_tick = scheduler.Flush(*frame->render_ready);
 #ifdef EGLANTINE_STREAMLINE
     {
         const Streamline::FrameGenFrame ended = Streamline::FrameGenEndFrame();
@@ -666,9 +653,7 @@ void RendererVulkan::Composite(std::span<const Tegra::FramebufferConfig> framebu
                                  : std::chrono::steady_clock::time_point{};
 #ifdef HAS_LSFG
     for (Frame* predicted : predicted_frames) {
-        if (!real_flushed) {
-            predicted->gpu_tick = scheduler.Flush(*predicted->render_ready);
-        }
+        predicted->gpu_tick = scheduler.Flush(*predicted->render_ready);
         present_manager.Present(predicted);
     }
     scheduler.DispatchWork();
@@ -701,8 +686,7 @@ void RendererVulkan::Composite(std::span<const Tegra::FramebufferConfig> framebu
 
 #ifdef HAS_LSFG
 void RendererVulkan::RecordFluidFrames(Frame* frame, const HdrPresent& output,
-                                       std::vector<Frame*>& predicted_frames,
-                                       bool& real_flushed) {
+                                       std::vector<Frame*>& predicted_frames) {
     using std::chrono::duration_cast;
     using std::chrono::nanoseconds;
     const auto recorded = std::chrono::steady_clock::now();
@@ -784,7 +768,6 @@ void RendererVulkan::RecordFluidFrames(Frame* frame, const HdrPresent& output,
     const nanoseconds behind = FluidMode() == 2 ? slots.latency + slots.lead : nanoseconds{};
     size_t predicted = 0;
     bool cut_short = false;
-    const bool split = FluidSplitSubmit();
     u64 slot = first;
     for (; slot <= last && predicted < max_predictions; slot += slots.divisor) {
         const nanoseconds ahead =
@@ -794,14 +777,6 @@ void RendererVulkan::RecordFluidFrames(Frame* frame, const HdrPresent& output,
         if (slot == first && (advance <= FLUID_REAL_ADVANCE || filled)) {
             // The real frame is on time for its slot.
             continue;
-        }
-        if (split && !real_flushed) {
-            // EDEN_NX2_FLUID_SPLIT_SUBMIT: the real frame goes to the GPU before its predictions.
-            if (const auto mark = scheduler.NextFrameMark(); mark != Scheduler::FrameMark::None) {
-                scheduler.MarkFrameEnd(++trace_frame, mark);
-            }
-            frame->gpu_tick = scheduler.Flush(*frame->render_ready);
-            real_flushed = true;
         }
         // Never waits: with no frame to spare the batch ends here.
         Frame* const generated = present_manager.TryGetRenderFrame();
@@ -825,9 +800,6 @@ void RendererVulkan::RecordFluidFrames(Frame* frame, const HdrPresent& output,
             ++predicted;
         }
         predicted_frames.push_back(generated);
-        if (real_flushed) {
-            generated->gpu_tick = scheduler.Flush(*generated->render_ready);
-        }
     }
     frame_gen.NoteFluidGenerated(predicted);
     present_manager.NoteFluidBatch(true, cut_short,

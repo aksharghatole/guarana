@@ -219,4 +219,9 @@ void SetDriverAdvice(std::string advice);
 /// source on every call.
 [[nodiscard]] DeviceProfile DetectHostProfile();
 
+/// Windows' hardware-accelerated GPU scheduling as the registry has it (the value HwSchMode of
+/// SYSTEM/CurrentControlSet/Control/GraphicsDrivers in HKLM: 2 on, 1 off), read once: "on",
+/// "off", or "unknown" where the value is missing and on other hosts. A change needs a reboot.
+[[nodiscard]] std::string_view HardwareGpuScheduling();
+
 } // namespace Common

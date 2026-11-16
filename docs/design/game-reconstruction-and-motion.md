@@ -124,7 +124,7 @@ barriers and products per `HMMA`), as the existing 8x16x16 tests do, and a CPU m
 arithmetic checks the rounding (2.4). The first pull request (#226) built `EDEN_NX2_TENSOR_LOG`,
 `EDEN_NX2_HMMA_ZERO_C` and `EDEN_NX2_HMMA_K16_ONCE`; `SHARE_A` and `PAIR_N` are the second.
 
-**A1b. The Arc 140T's own path (`EDEN_NX2_INTEL_COOP_MATRIX_8X8`, not built).** The guest's 16x8x16 HMMA as two 8x8x16 products (one per 8-row half) with fp32 accumulators: the B tile is the guest's 16x8 exactly, no zero columns. The accumulator rounds to fp16 where the guest's does by converting the matrix (fp32 to fp16 and back) after each K=8 half, or once per output for the fp32 variant of 2.4, whose error the CPU model already bounds. The A1 ideas (zero accumulators, a shared A) apply unchanged. Tests as for 8x16x16, on the emitted SPIR-V.
+**A1b. The Arc 140T's own path (`EDEN_NX2_INTEL_COOP_MATRIX_8X8`).** The guest's 16x8x16 HMMA as two 8x8x16 products (one per 8-row half) with fp32 accumulators: the B tile is the guest's 16x8 exactly, no zero columns, and C goes to shared memory as fp32. Each lane rounds its D values to fp16 once per HMMA: as the guest for K=8, once instead of twice for K=16 (`K16_ONCE`'s rounding, which the CPU model bounds). Exact midpoint rounding would need an fp16 accumulator type the driver does not list. `EDEN_NX2_HMMA_ZERO_C` applies; a shared A is the next step, as for A1. Built with SPIR-V tests; unverified on the hardware.
 
 **A2. Fewer passes (ports).** Lichii #864 and #1985 skip a game's network passes whose output only
 feeds a pass a replacement overwrites (measured upstream: Duskbloods on a Steam Deck 56.6 -> 40.4 ms
@@ -218,7 +218,10 @@ output pixel, `t` the in-between frame's position from the previous real frame (
   except where the camera's own translation reveals what the previous frame showed (parallax): the
   same reprojection fills those pixels; the rest keep today's background rule.
 - **HUD.** Today's mask (`hud_reference` against `hud_composite`): HUD pixels come from the newest
-  frame, unmoved.
+  frame, unmoved. Scene pixels must not drag it along, as extrapolation's rule says: a source on
+  the mask (the newest frame's, standing for both: the HUD stays put) gives way to the other
+  frame's; where every source a pixel uses lies on it, the scene under the HUD
+  (`EDEN_NX2_EXTRAPOLATE_HUD_FILL`) or the newest frame's colour there, unmoved.
 
 The arithmetic lives in a header shared by the test (C++ on plain arrays: pans, a foreground over a
 moving background, a disocclusion in each direction, a cut) and mirrored line by line in the shader;
@@ -265,11 +268,11 @@ time and the vblank wait only, the game's own queue the same in both):
 
 So the target is reachable only within about 4 ms by position in the pipeline, with extrapolation
 or with interpolation's onset; meeting it outright needs a shorter queue than the 60 frame baseline
-(the cadence's phase lock, which keeps real frames done about 3 ms before their slot, or
-`EDEN_NX2_QUEUE_LIMIT`). What is measured today is the presenter's part, `real frame age at
-display` in the `Fluid presenter` line. An onset probe does not exist: B3 adds one to the debug
-server (a right-stick step through `input`, then the time to the first shown frame whose picture
-moved, from `shown_frames`), so both arms of the target can be measured on the owner's machine.
+(the cadence's phase lock, which keeps real frames done about 3 ms before their slot; a cap on
+the GPU queue, `EDEN_NX2_QUEUE_LIMIT`, showed no gain and was removed). The presenter's part is
+`real frame age at display` in the `Fluid presenter` line. The whole of it, from when the game
+reads the input to the first shown frame whose picture moved, is B3's probe, the debug server's
+`input_latency`; section 4 says how to measure both arms of the target with it.
 
 ### 3.6 Steps
 
@@ -277,9 +280,9 @@ moved, from `shown_frames`), so both arms of the target can be measured on the o
 |---|---|---|
 | B1 | `EDEN_NX2_FG_GAME_MOTION=1` | With `EDEN_NX2_FLUID_INTERP`: in-between frames from the guide and the depth fill (3.2) instead of the optical-flow chain; the guide is made without `EDEN_NX2_EXTRAPOLATE`; each real frame's guide is copied. As built, the optical flow still runs as the fallback for frames without two guides; skipping it when a batch needs none is the next step |
 | B2 | `EDEN_NX2_FG_GAME_MOTION=2` | B1, and extrapolated frames (`EDEN_NX2_FLUID` without interpolation) take the parallax fill |
-| B3 | debug server `input_latency` | the onset probe of 3.5 |
+| B3 | debug server `input_latency` | the onset probe of 3.5: built (a right-stick step, then the first shown frame whose picture moved, timed from when the game read the step) |
 | B4 | `EDEN_NX2_FG_GAME_MOTION` with a DLSS-contract game | the second provider (3.1); measured once such a game has a bench scene |
-| B5 | ports | the HUD depth and motion passes of CheezerWheezer/Lichii `amd-superior` (a mask that holds when the scene is smaller than the output), Lichii #1493 (generated frames in HDR) and #1945 (one set of intermediates, about 70 MiB less at 1440p) |
+| B5 | ports | from the HUD passes of CheezerWheezer's Lichii fork (`f0ff1554ba`, `57dc6d8d0c`), which feed AMD frame generation (not in Guarana): their rule that the HUD carries no motion, as B1's (scene pixels no longer drag the HUD along, 3.2; #258). Open: the case they were written for, a scene smaller than the output. Guarana's guide path keeps the mask only when the presented image and the scene copy match in size; otherwise it logs `Frame extrapolation: no HUD mask for frame N (...): the presented image and the scene differ in size`, and the HUD moves with the scene in generated frames. That would happen with a scene below the output size (Max Resolution off, A4); not verified. The shaders already read both images by UV, so the fix would keep the mask at any size: look for that line in the B suite's and A4's logs first. Still to port: Lichii #1493 (generated frames in HDR) and #1945 (one set of intermediates, about 70 MiB less at 1440p) |
 
 ## 4. Measurement plan
 
@@ -298,11 +301,12 @@ python -I tools/bench/bench.py suite tools/bench/suites/game-network.json @commo
 | Suite | Arrives with | Compares |
 |---|---|---|
 | `game-network.json` | this design (A0) | network on: software, shared-memory software, 8x16x16 (a no-op on the Arc 140T: its row equals software, and its log line says why); No sharpening as the floor |
+| `game-network-a1b.json` | A1b | the Arc 140T's own shape: software against 8x8x16 with fp32 accumulators (`EDEN_NX2_INTEL_COOP_MATRIX_8X8`), alone and with `EDEN_NX2_HMMA_ZERO_C` |
 | `game-network-a1.json` | A1 | 8x16x16 alone, then with each A1 switch, then all. For a GPU that lists 8x16x16 fp16 (Xe2) or 16x16x16 (RDNA 3, where only `ZERO_C` applies), not the Arc 140T |
 | `game-network-render-low.json` | A4 | Max Resolution off at a pinned step with the network on, against the preset |
 | `game-motion-fg.json` | B1 | `FLUID_INTERP` with optical flow against B1, and extrapolation as the latency reference; the 120 Hz set's frame generation pinned, fullscreen, pacing counters on (B2 adds its arm) |
 
-Every arm of an A suite emits new SPIR-V for the network, so its first boot compiles cold: run each suite twice in one session and read only the second pass. On the Arc 140T the matrix arms are no-ops until A1b exists; the owner's A0 rows there compare software with the shared-memory gather, and say what the network costs on this GPU at all.
+Every arm of an A suite emits new SPIR-V for the network, so its first boot compiles cold: run each suite twice in one session and read only the second pass. On the Arc 140T the 8x16x16 arms are no-ops: its A0 rows compare software with the shared-memory gather and say what the network costs on this GPU at all, and `game-network-a1b.json` measures its 8x8x16 path.
 
 What counts:
 
@@ -315,6 +319,24 @@ What counts:
   game's fps and p99. B: `Fluid presenter` slots on time and misses, `Shown frames` within 2 ms and
   p99, `frames received`, `real frame age at display`, and the `frame_gen_*` rows.
 - Nothing becomes a default from this plan alone: a default needs these rows plus the image checks.
+
+Onset latency (B3, the target of 3.5), on the same build after the B suite. Start Ocarina of Time
+once per arm, with `EDEN_NX2_DEBUG_SERVER=127.0.0.1:6545` and the arm's switches from
+`game-motion-fg.json` (its base `env` plus the arm's own, and frame generation on with FSR3 in the
+graphics settings). Then start it once more without frame generation and without the FLUID switches,
+on a 60 Hz display, as the reference. In Hyrule Field, standing still with nothing moving nearby and
+the camera free to turn right, run this five times per arm, a few seconds apart:
+
+```powershell
+python -I tools/nx2/debug_mcp.py --server 127.0.0.1:6545 --call input_latency
+```
+
+A call counts when `input_read` is true, `onset_ms` is positive (a frame shown before the game read
+the step cannot show it) and the frames before the onset stay under half the `threshold`; otherwise
+stand somewhere stiller or raise the threshold. Report each arm's
+median `onset_ms` and `real_onset_ms`, and their differences from the reference's. The target is an
+onset within about 4 ms of the reference's at 40 real frames shown at 120 (3.5). Times are taken
+when the present call returns, so the display's own lag comes on top in every arm alike.
 
 Image checks (screenshots the suite saves, plus `EDEN_NX2_FRAME_DUMP` where named):
 
@@ -332,7 +354,9 @@ Image checks (screenshots the suite saves, plus `EDEN_NX2_FRAME_DUMP` where name
    ghosting or doubling there is the known limit of the Ocarina provider (3.1), recorded, not a
    failure of the warp.
 6. **B, cuts and HUD**: through a door and into the pause screen and back: no frame of the old scene
-   after the new one; HUD text steady during a pan.
+   after the new one; HUD text steady during a pan,
+   and no copy of the hearts or buttons beside them (`EDEN_NX2_EXTRAPOLATE_DEBUG=1`: yellow where the
+   HUD rule acted).
 
 ## 5. Ports and what is not ported
 
@@ -341,7 +365,7 @@ Already in Guarana: Lichii #779 and Fritchii-Intel-Fixes 0007 and 0008 (the 8x16
 the guide. To port, in this order: Lichii #864 and #1985 (A2), #1941 (A2), #1243 (a tensor bench
 in `tools/shader-sweep` that measures the paths without the game, with a CPU reference: the best
 home for A1's numbers between owner runs), Fritchii-Intel-Fixes 0009 if the title movie shows its
-symptom with 8x16x16, and B5's three. Not ported: NVIDIA DLSS frame generation and Reflex, NVIDIA
+symptom with 8x16x16, and B5's two. Not ported: NVIDIA DLSS frame generation and Reflex, NVIDIA
 optical flow (NVIDIA only), Lossless Scaling (image only, no game data). The survey that found these
 is summarised in the pull request that adds this page.
 

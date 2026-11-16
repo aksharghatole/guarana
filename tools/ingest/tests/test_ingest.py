@@ -219,6 +219,14 @@ class ReportTests(unittest.TestCase):
         self.assertIn("| GPU family | Intel Arc 140V / 130V (Lunar Lake), read from the GPU name in the report |",
                       ingest.comment_body(ingest.Report(1, record), {"reports": {}}, None, REPO))
 
+    def test_a_bench_rows_pci_id_names_the_family(self):
+        body = fixture("device-report-bench.md").replace('"driver_version": "32.0.101.9175"}',
+                                                         '"driver_version": "32.0.101.9175", "pci": "8086:7D51"}')
+        self.assertIn('"pci": "8086:7D51"', body)
+        record, problems, _ = parse(body, 12)
+        self.assertEqual(problems, [])
+        self.assertEqual((record["device_class"]["family"], record["device_class"]["from"]), ("IntelArrowLakeH", "PCI ID"))
+
     def test_a_bench_report_takes_the_newest_valid_baseline_row(self):
         record, problems, warnings = parse(fixture("device-report-bench.md"), 12)
         self.assertEqual(problems, [])

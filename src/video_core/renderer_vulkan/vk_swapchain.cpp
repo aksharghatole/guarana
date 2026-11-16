@@ -24,6 +24,7 @@
 #include "common/settings.h"
 #include "common/settings_enums.h"
 #include "video_core/renderer_vulkan/fluid_present_mode.h"
+#include "video_core/renderer_vulkan/present_telemetry.h"
 #include "video_core/renderer_vulkan/vk_present_manager.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
 #include "video_core/renderer_vulkan/vk_swapchain.h"
@@ -78,6 +79,43 @@ bool FrameGenLoaded() {
         return value != nullptr && std::strtoul(value, nullptr, 10) != 0;
     }();
     return requested;
+}
+
+/// EDEN_NX2_PRESENT_MODE=immediate|fifo|fifo_relaxed|mailbox (diagnostic): the present mode to
+/// ask for whatever the vsync setting, frame generation and EDEN_NX2_FLUID choose, for an A/B of
+/// present modes. Read once; another value is ignored with a warning.
+[[nodiscard]] std::optional<Settings::VSyncMode> PresentModeOverride() {
+    static const std::optional<Settings::VSyncMode> mode =
+        []() -> std::optional<Settings::VSyncMode> {
+        const char* value = std::getenv("EDEN_NX2_PRESENT_MODE");
+        if (value == nullptr || *value == '\0') {
+            return std::nullopt;
+        }
+        const auto parsed = ParsePresentModeOverride(value);
+        if (!parsed) {
+            LOG_WARNING(Render_Vulkan,
+                        "EDEN_NX2_PRESENT_MODE={}: not immediate, fifo, fifo_relaxed or mailbox, "
+                        "ignored",
+                        value);
+        }
+        return parsed;
+    }();
+    return mode;
+}
+
+[[nodiscard]] VkPresentModeKHR ToPresentMode(Settings::VSyncMode mode) {
+    switch (mode) {
+    case Settings::VSyncMode::Immediate:
+        return VK_PRESENT_MODE_IMMEDIATE_KHR;
+    case Settings::VSyncMode::Mailbox:
+        return VK_PRESENT_MODE_MAILBOX_KHR;
+    case Settings::VSyncMode::Fifo:
+        return VK_PRESENT_MODE_FIFO_KHR;
+    case Settings::VSyncMode::FifoRelaxed:
+        return VK_PRESENT_MODE_FIFO_RELAXED_KHR;
+    default:
+        return VK_PRESENT_MODE_FIFO_KHR;
+    }
 }
 
 #ifdef EGLANTINE_STREAMLINE
@@ -140,6 +178,19 @@ static VkPresentModeKHR ChooseSwapPresentMode(bool has_imm, bool has_mailbox,
     if (FrameGenPresents(format) && (has_imm || has_mailbox)) {
         return has_imm ? VK_PRESENT_MODE_IMMEDIATE_KHR : VK_PRESENT_MODE_MAILBOX_KHR;
     }
+    if (const auto forced = PresentModeOverride()) {
+        if (SurfaceOffers(*forced, has_imm, has_mailbox, has_fifo_relaxed)) {
+            return ToPresentMode(*forced);
+        }
+        // Called on every present-mode check: say it once.
+        static std::once_flag missing;
+        std::call_once(missing, [&forced] {
+            LOG_WARNING(Render_Vulkan,
+                        "EDEN_NX2_PRESENT_MODE: the surface does not offer {}, choosing as "
+                        "without the switch",
+                        Settings::CanonicalizeEnum(*forced));
+        });
+    }
     // Mailbox doesn't lock the application like FIFO (vsync)
     // FIFO present mode locks the framerate to the monitor's refresh rate
     Settings::VSyncMode setting = [has_imm, has_mailbox]() {
@@ -179,19 +230,7 @@ static VkPresentModeKHR ChooseSwapPresentMode(bool has_imm, bool has_mailbox,
         (setting == Settings::VSyncMode::FifoRelaxed && !has_fifo_relaxed)) {
         setting = Settings::VSyncMode::Fifo;
     }
-
-    switch (setting) {
-    case Settings::VSyncMode::Immediate:
-        return VK_PRESENT_MODE_IMMEDIATE_KHR;
-    case Settings::VSyncMode::Mailbox:
-        return VK_PRESENT_MODE_MAILBOX_KHR;
-    case Settings::VSyncMode::Fifo:
-        return VK_PRESENT_MODE_FIFO_KHR;
-    case Settings::VSyncMode::FifoRelaxed:
-        return VK_PRESENT_MODE_FIFO_RELAXED_KHR;
-    default:
-        return VK_PRESENT_MODE_FIFO_KHR;
-    }
+    return ToPresentMode(setting);
 }
 
 const char* PresentModeName(VkPresentModeKHR mode) {

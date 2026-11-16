@@ -284,6 +284,7 @@ json ResolutionState() {
         item["current"] = entry.current;
         item["reason"] = std::string{entry.reason};
         item["evidence"] = evidence(entry.evidence);
+        item["community"] = entry.community;
         settings.push_back(std::move(item));
     }
     json addons = json::array();
@@ -305,6 +306,7 @@ json ResolutionState() {
         item["shipped"] = entry.shipped ? json(*entry.shipped) : json(nullptr);
         item["reason"] = std::string{entry.reason};
         item["evidence"] = evidence(entry.evidence);
+        item["community"] = entry.community;
         switches.push_back(std::move(item));
     }
     result["title_id"] = fmt::format("{:016X}", last->title_id);
@@ -1476,6 +1478,130 @@ json Input(ToolState& state, const json& params, const ClientGone& client_gone) 
     return RunInput(state, {ParseInputStep(step)}, params, client_gone);
 }
 
+/// input_latency (docs/design/game-reconstruction-and-motion.md, 3.5): holds a right-stick step
+/// from the next present on while the next shown frames are captured with small pictures, and
+/// times each shown frame from when the game first read the step. The onset is the first shown
+/// frame whose picture moved away from the first one, generated frames included; the real onset
+/// the first real frame that did. The stick is released when the call returns.
+json InputLatency(ToolState& state, const json& params, const ClientGone& client_gone) {
+    namespace Shown = VideoCore::Nx2ShownFrames;
+    if (!IsVulkan()) {
+        throw std::runtime_error{"input_latency needs the Vulkan renderer"};
+    }
+    const u32 count = Param<u32>(params, "count", 32, 4, 32);
+    const u32 height = Param<u32>(params, "height", 144, 144, 540);
+    const u64 frames = Param<u64>(params, "frames", 60, 1, 600);
+    const double threshold = Param<double>(params, "threshold", 2.0, 0.1, 128.0);
+    const int timeout = Param<int>(params, "timeout_s", 15, 1, 60);
+    json step = {{"frames", frames}};
+    step["right_stick"] =
+        params.contains("right_stick") ? params.at("right_stick") : json::array({1.0, 0.0});
+    const InputStep parsed = ParseInputStep(step);
+
+    auto& hid = state.system.HIDCore();
+    HID::EmulatedController* controller = hid.GetEmulatedController(HID::NpadIdType::Player1);
+    std::string name = "player1";
+    if (!controller->IsConnected()) {
+        controller = hid.GetEmulatedController(HID::NpadIdType::Handheld);
+        name = "handheld";
+    }
+    if (!controller->IsConnected()) {
+        throw std::runtime_error{"neither player 1 nor the handheld controller is connected"};
+    }
+    // The capture first: its first frames are shown before the step can change anything.
+    const u64 id = ++state.shown_captures;
+    if (!Shown::RequestCapture({.id = id, .count = count, .height = height})) {
+        throw std::runtime_error{"another shown_frames capture is still running"};
+    }
+    const auto steady_ns = [] {
+        return static_cast<s64>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                    std::chrono::steady_clock::now().time_since_epoch())
+                                    .count());
+    };
+    const u64 start = g_nx2_present_count.load(std::memory_order_relaxed) + 1;
+    const auto script = std::make_shared<const std::vector<InputStep>>(std::vector<InputStep>{parsed});
+    const auto first_read = std::make_shared<std::atomic<s64>>(0);
+    controller->SetInputInjector([script, start, first_read, steady_ns] {
+        std::optional<HID::InjectedInput> input =
+            InputAt(*script, start, g_nx2_present_count.load(std::memory_order_relaxed));
+        if (input) {
+            s64 unread = 0;
+            first_read->compare_exchange_strong(unread, steady_ns(), std::memory_order_relaxed);
+        }
+        return input;
+    });
+    SCOPE_EXIT {
+        controller->SetInputInjector({});
+    };
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds{timeout};
+    std::optional<Shown::Result> captured;
+    while (!(captured = Shown::WaitCapture(id, 50ms))) {
+        if (state.stopping.load(std::memory_order_relaxed) || client_gone() ||
+            std::chrono::steady_clock::now() >= deadline) {
+            Shown::CancelCapture(id);
+            throw std::runtime_error{fmt::format(
+                "{} frames were not shown within {} s (paused, loading or client gone); input "
+                "released",
+                count, timeout)};
+        }
+    }
+    const Shown::Result& result = *captured;
+    std::vector<s32> pictures;
+    pictures.reserve(result.frames.size());
+    for (const Shown::Shown& frame : result.frames) {
+        pictures.push_back(frame.picture);
+    }
+    const PictureOnset onset =
+        FindPictureOnset(pictures, result.pixels, result.width, result.height, threshold);
+    const s64 read_ns = first_read->load(std::memory_order_relaxed);
+    const auto since_read = [read_ns](s64 ns) {
+        return read_ns != 0 ? json(static_cast<double>(ns - read_ns) / 1'000'000.0) : json(nullptr);
+    };
+    std::optional<size_t> real_onset;
+    json shown = json::array();
+    for (size_t index = 0; index < result.frames.size(); ++index) {
+        const Shown::Shown& frame = result.frames[index];
+        const double difference = onset.differences[index];
+        if (onset.onset && index >= *onset.onset && !real_onset &&
+            frame.kind == Shown::Kind::Real && difference > threshold) {
+            real_onset = index;
+        }
+        shown.push_back({
+            {"index", index},
+            {"kind", std::string{Shown::KindName(frame.kind)}},
+            {"since_input_ms", since_read(frame.presented_ns)},
+            {"difference", difference >= 0.0 ? json(difference) : json(nullptr)},
+        });
+    }
+    const auto frame_ms = [&](const std::optional<size_t>& index) {
+        return index ? since_read(result.frames[*index].presented_ns) : json(nullptr);
+    };
+    json notes = json::array();
+    if (read_ns == 0) {
+        notes.push_back("the game did not read the step while the frames were shown");
+    }
+    if (!result.picture_note.empty()) {
+        notes.push_back(result.picture_note);
+    }
+    if (!onset.onset) {
+        notes.push_back("no shown frame moved past the threshold: the camera may not turn here, or "
+                        "the frames ended first (raise count, lower threshold)");
+    }
+    return {
+        {"controller", name},
+        {"right_stick", step["right_stick"]},
+        {"threshold", threshold},
+        {"input_read", read_ns != 0},
+        {"onset_ms", frame_ms(onset.onset)},
+        {"onset_kind", onset.onset ? json(std::string{Shown::KindName(
+                                         result.frames[*onset.onset].kind)})
+                                   : json(nullptr)},
+        {"real_onset_ms", frame_ms(real_onset)},
+        {"frames", std::move(shown)},
+        {"notes", std::move(notes)},
+    };
+}
+
 json InputSequence(ToolState& state, const json& params, const ClientGone& client_gone) {
     const json& list = params.at("steps");
     if (!list.is_array() || list.empty() || list.size() > MAX_INPUT_STEPS) {
@@ -1820,6 +1946,7 @@ Handlers MakeHandlers(const std::shared_ptr<ToolState>& state) {
         {"read_gpu_memory", handler(ReadGpuMemory)},
         {"input", waiting(Input)},
         {"input_sequence", waiting(InputSequence)},
+        {"input_latency", waiting(InputLatency)},
         {"thread_stats", handler(ThreadStats)},
         {"present_stats", handler(PresentStatsTool)},
         {"cache_stats", handler(CacheStats)},
@@ -2041,6 +2168,47 @@ std::optional<HID::InjectedInput> InputAt(std::span<const InputStep> steps, u64 
         }
     }
     return std::nullopt;
+}
+
+PictureOnset FindPictureOnset(std::span<const s32> pictures, std::span<const u8> pixels, u32 width,
+                              u32 height, double threshold) {
+    PictureOnset result;
+    result.differences.assign(pictures.size(), -1.0);
+    const size_t texels = size_t{width} * height;
+    const size_t bytes = texels * 4;
+    const auto picture_at = [&](s32 index) -> const u8* {
+        if (index < 0 || bytes == 0) {
+            return nullptr;
+        }
+        const size_t offset = static_cast<size_t>(index) * bytes;
+        return offset + bytes <= pixels.size() ? pixels.data() + offset : nullptr;
+    };
+    const u8* reference = nullptr;
+    for (size_t frame = 0; frame < pictures.size(); ++frame) {
+        const u8* const picture = picture_at(pictures[frame]);
+        if (picture == nullptr) {
+            continue;
+        }
+        if (reference == nullptr) {
+            reference = picture;
+            result.differences[frame] = 0.0;
+            continue;
+        }
+        u64 sum = 0;
+        for (size_t byte = 0; byte < bytes; byte += 4) {
+            for (size_t channel = 0; channel < 3; ++channel) {
+                const int delta = static_cast<int>(picture[byte + channel]) -
+                                  static_cast<int>(reference[byte + channel]);
+                sum += static_cast<u64>(delta < 0 ? -delta : delta);
+            }
+        }
+        const double difference = static_cast<double>(sum) / static_cast<double>(texels * 3);
+        result.differences[frame] = difference;
+        if (!result.onset && difference > threshold) {
+            result.onset = frame;
+        }
+    }
+    return result;
 }
 
 Service::Service(System& system, std::string title, u64 program_id, const Endpoint& endpoint,

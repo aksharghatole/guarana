@@ -13,6 +13,7 @@
 
 #include "common/device_profile.h"
 #include "common/dynamic_library.h"
+#include "common/shutdown_progress.h"
 #include "core/game_settings.h"
 #include "video_core/host1x/gpu_device_memory_manager.h"
 #include "video_core/renderer_base.h"
@@ -233,8 +234,7 @@ private:
     /// its motion can be extrapolated, records a prediction for each slot until the next real
     /// frame is due and one more, each as of its slot's time.
     void RecordFluidFrames(Frame* frame, const HdrPresent& output,
-                           std::vector<Frame*>& predicted_frames,
-                           bool& real_flushed);
+                           std::vector<Frame*>& predicted_frames);
     /// EDEN_NX2_FLUID_INTERP: records the in-between frames of the last two real frames, each on
     /// the slot before the next, and gives the real frame the slot after them.
     void RecordFluidInterpolated(Frame* frame, const HdrPresent& output, size_t generations,
@@ -294,16 +294,23 @@ private:
     /// Read once, before the device (CreateDevice fills it).
     DeviceStartProfile start_profile;
 
+    // Each marker ends the teardown step (#239) of the members declared after it, up to the next
+    // marker: members are destroyed in reverse order. The rasterizer ends steps of its own.
+    Common::ShutdownStepMarker device_destroyed{"GPU: Vulkan device"};
     Device device;
+    Common::ShutdownStepMarker allocator_destroyed{"GPU: memory allocator and state tracker"};
     MemoryAllocator memory_allocator;
     StateTracker state_tracker;
+    Common::ShutdownStepMarker scheduler_destroyed{"GPU: scheduler"};
     Scheduler scheduler;
+    Common::ShutdownStepMarker presentation_destroyed{"GPU: swapchain, presenter and blits"};
     Swapchain swapchain;
     PresentManager present_manager;
     BlitScreen blit_swapchain;
     BlitScreen blit_capture;
     BlitScreen blit_applet;
     RasterizerVulkan rasterizer;
+    Common::ShutdownStepMarker frames_destroyed{"GPU: frame generation and frames"};
 #ifdef HAS_LSFG
     FrameGen frame_gen;
 #endif

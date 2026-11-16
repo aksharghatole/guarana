@@ -31,6 +31,13 @@ const uint FLAG_DEBUG = 2u;
 const uint FLAG_HUD_LINEAR = 4u; // hud_reference is linear, hud_composite sRGB-encoded
 const uint FLAG_HUD_EXACT = 8u;  // both are linear and equal wherever there is no HUD
 const uint FLAG_HUD_DILATE = 32u;
+const uint FLAG_HUD_FILL = 64u;    // a source under the HUD takes the scene there (EXTRAPOLATE_HUD_FILL)
+
+// What GuardHud did (GameMotionWarp::HudGuard).
+const uint GUARD_NONE = 0u;
+const uint GUARD_OTHER_FRAME = 1u;
+const uint GUARD_SCENE_UNDER_HUD = 2u;
+const uint GUARD_UNMOVED = 3u;
 
 const float CONVERGED_PIXELS = 2.0;
 const float SAME_SURFACE_RATIO = 1.1;
@@ -136,6 +143,48 @@ bool IsHud(vec2 uv) {
            IsHudAt(uv + vec2(0.0, texel.y)) || IsHudAt(uv - vec2(0.0, texel.y));
 }
 
+// The newest frame's scene under the HUD at uv, as frame_extrapolation.comp's SceneUnderHud: the
+// presented frame plus the difference between the scene and the composite there.
+vec3 SceneUnderHud(vec2 uv, vec2 frame_uv) {
+    vec3 reference = textureLod(hud_reference, uv, 0.0).rgb;
+    vec3 composite = textureLod(hud_composite, uv, 0.0).rgb;
+    if ((params.flags & FLAG_HUD_EXACT) != 0u) {
+        reference = Encode(reference);
+        composite = Encode(composite);
+    } else if ((params.flags & FLAG_HUD_LINEAR) != 0u) {
+        reference = Encode(reference);
+    }
+    vec3 presented = textureLod(newest_color, frame_uv, 0.0).rgb;
+    return clamp(presented + reference - composite, 0.0, 1.0);
+}
+
+// Scene pixels must not drag the HUD along: GameMotionWarp::GuardHud, line for line. The newest
+// frame's mask stands for both frames.
+uint GuardHud(inout Pick pick, vec2 target) {
+    bool newest_used = pick.newest_weight > 0.0;
+    bool previous_used = pick.newest_weight < 1.0;
+    bool newest_on = newest_used && IsHud(pick.newest);
+    bool previous_on = previous_used && IsHud(pick.previous);
+    if (!newest_on && !previous_on) {
+        return GUARD_NONE;
+    }
+    if (newest_on && previous_used && !previous_on) {
+        pick = Pick(pick.previous, pick.previous, 0.0, pick.kind);
+        return GUARD_OTHER_FRAME;
+    }
+    if (previous_on && newest_used && !newest_on) {
+        pick = Pick(pick.newest, pick.newest, 1.0, pick.kind);
+        return GUARD_OTHER_FRAME;
+    }
+    if ((params.flags & FLAG_HUD_FILL) != 0u) {
+        vec2 source = newest_used ? pick.newest : pick.previous;
+        pick = Pick(source, source, 1.0, pick.kind);
+        return GUARD_SCENE_UNDER_HUD;
+    }
+    pick = Pick(target, target, 1.0, pick.kind);
+    return GUARD_UNMOVED;
+}
+
 void main() {
     ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
     ivec2 extent = imageSize(out_frame);
@@ -151,14 +200,21 @@ void main() {
     }
 
     Pick pick = Interpolate(target, params.t);
+    uint guard = (params.flags & FLAG_HUD) != 0u ? GuardHud(pick, target) : GUARD_NONE;
     vec2 frame_size = vec2(textureSize(newest_color, 0));
     vec2 newest_uv = (params.screen_origin + pick.newest * params.screen_size) / frame_size;
     vec2 previous_uv = (params.screen_origin + pick.previous * params.screen_size) / frame_size;
-    vec3 color = mix(textureLod(previous_color, previous_uv, 0.0).rgb,
-                     textureLod(newest_color, newest_uv, 0.0).rgb, pick.newest_weight);
-    if ((params.flags & FLAG_DEBUG) != 0u && pick.kind != 0u) {
-        // Magenta: filled from the previous frame alone (a disocclusion); red: neither solved.
-        color = mix(color, pick.kind == 1u ? vec3(1.0, 0.0, 1.0) : vec3(1.0, 0.0, 0.0), 0.6);
+    vec3 color = guard == GUARD_SCENE_UNDER_HUD
+                     ? SceneUnderHud(pick.newest, newest_uv)
+                     : mix(textureLod(previous_color, previous_uv, 0.0).rgb,
+                           textureLod(newest_color, newest_uv, 0.0).rgb, pick.newest_weight);
+    if ((params.flags & FLAG_DEBUG) != 0u && (guard != GUARD_NONE || pick.kind != 0u)) {
+        // Yellow: a source on the HUD gave way or was replaced; magenta: filled from the previous
+        // frame alone (a disocclusion); red: neither solved.
+        vec3 tint = guard != GUARD_NONE ? vec3(1.0, 1.0, 0.0)
+                    : pick.kind == 1u   ? vec3(1.0, 0.0, 1.0)
+                                        : vec3(1.0, 0.0, 0.0);
+        color = mix(color, tint, 0.6);
     }
     imageStore(out_frame, pixel, vec4(color, 1.0));
 }

@@ -97,6 +97,7 @@ add_library(
     hex_util.h
     host_memory.cpp
     host_memory.h
+    ini_peek.h
     input.h
     intrusive_red_black_tree.h
     literals.h
@@ -127,6 +128,7 @@ add_library(
     ${CMAKE_CURRENT_BINARY_DIR}/scm_rev.cpp
     scm_rev.h
     scope_exit.h
+    shutdown_progress.cpp
     shutdown_progress.h
     spin_recursive_mutex.h
     scratch_buffer.h

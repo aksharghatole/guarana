@@ -88,6 +88,11 @@ public:
         return image_count;
     }
 
+    /// The present mode of the swapchain the last Create made.
+    VkPresentModeKHR GetPresentMode() const {
+        return present_mode;
+    }
+
     VkImage CurrentImage() const {
         return images[image_index];
     }

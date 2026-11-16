@@ -1736,6 +1736,9 @@ void TextureCache<P>::UpdateRenderTargets(bool is_clear, bool is_draw) {
             prepare_target(render_targets.color_buffer_ids[index], color_writable);
         }
         prepare_target(render_targets.depth_buffer_id, depth_writable);
+        if (is_clear) {
+            NoteFullClears();
+        }
         return;
     }
 
@@ -1787,6 +1790,9 @@ void TextureCache<P>::UpdateRenderTargets(bool is_clear, bool is_draw) {
     if (render_targets != previous_render_targets) {
         ++render_targets_serial;
     }
+    if (is_clear) {
+        NoteFullClears();
+    }
 
     flags[Dirty::DepthBiasGlobal] = true;
 }
@@ -1800,6 +1806,41 @@ typename P::Framebuffer* TextureCache<P>::GetFramebuffer() {
     last_framebuffer_id = framebuffer_id;
     last_framebuffer_serial = render_targets_serial;
     return &slot_framebuffers[framebuffer_id];
+}
+
+template <class P>
+bool TextureCache<P>::ColorTargetWrittenBeforeThisFrame() noexcept {
+    if (!maxwell3d) {
+        return false;
+    }
+    const auto& regs = maxwell3d->regs;
+    if (regs.rt_control.count == 0) {
+        return false;
+    }
+    const auto& rt = regs.rt[0];
+    const GPUVAddr gpu_addr = rt.Address();
+    if (gpu_addr == 0 || rt.format == Tegra::RenderTargetFormat::NONE) {
+        return false;
+    }
+    std::scoped_lock lock{mutex};
+    ImageId image_id{};
+    if (!maxwell3d->dirty.flags[Dirty::RenderTargets] &&
+        !maxwell3d->dirty.flags[Dirty::ColorBuffer0]) {
+        image_id = rt_image_id[0];
+    } else {
+        const ImageInfo info(rt, regs.anti_alias_samples_mode);
+        if (info.format == PixelFormat::Invalid || info.size.width == 0 || info.size.height == 0 ||
+            info.size.depth == 0 || info.size.width > 65536 || info.size.height > 65536 ||
+            info.size.depth > 2048 || info.resources.layers <= 0 || info.resources.layers > 2048) {
+            return false;
+        }
+        image_id = FindImage(info, gpu_addr, RelaxedOptions{});
+    }
+    if (!image_id) {
+        return false;
+    }
+    const ImageBase& image = slot_images[image_id];
+    return image.first_written_frame != 0 && image.first_written_frame < frame_tick + 1;
 }
 
 template <class P>
@@ -5023,6 +5064,9 @@ template <class P>
 void TextureCache<P>::MarkModification(ImageBase& image) noexcept {
     image.flags |= ImageFlagBits::GpuModified;
     SetModificationTick(slot_images, image, ++modification_tick);
+    if (!clearing_render_targets) {
+        image.drawn_since_clear = true;
+    }
 }
 
 template <class P>
@@ -5151,6 +5195,9 @@ void TextureCache<P>::PrepareImage(ImageId image_id, bool is_modification, bool 
             VideoCommon::Nx2FastDraw::Break(VideoCommon::Nx2FastDraw::Reason::Invalidation);
         }
         MarkModification(image);
+        if (!clearing_render_targets && image.first_written_frame == 0) {
+            image.first_written_frame = frame_tick + 1;
+        }
     }
     lru_cache.Touch(image.lru_index, frame_tick);
 }
@@ -5443,6 +5490,96 @@ bool TextureCache<P>::IsFullClear(ImageViewId id) {
     }
     // Make sure the clear covers all texels in the subresource
     return ClearCovers(size.width, size.height);
+}
+
+template <class P>
+void TextureCache<P>::NoteFullClears() {
+    // Not PrepareImage's invalidate path itself: UpdateRenderTargets(true) invalidates every bound
+    // target, also those the clear leaves alone (the other colour targets, the depth target of a
+    // colour clear), and those must not count as cleared here.
+    const auto& clear = maxwell3d->regs.clear_surface;
+    const bool color = clear.R || clear.G || clear.B || clear.A;
+    const auto note = [&](ImageViewId view_id) {
+        if (!view_id || view_id == NULL_IMAGE_VIEW_ID) {
+            return;
+        }
+        const ImageViewBase& view = slot_image_views[view_id];
+        if (view.IsBuffer() || !IsFullClear(view_id)) {
+            return;
+        }
+        ImageBase& image = slot_images[view.image_id];
+        if (image.last_clear_frame != frame_tick) {
+            // Only a clear after a write starts a new one: two clears with nothing between are
+            // the same clear, wherever the frame's tick fell.
+            if (image.drawn_since_clear) {
+                image.previous_clear_frame = image.last_clear_frame;
+            }
+            image.last_clear_frame = frame_tick;
+        }
+        image.drawn_since_clear = false;
+    };
+    if (color && clear.RT < NUM_RT) {
+        note(render_targets.color_buffer_ids[clear.RT]);
+    }
+    // A stencil-only clear leaves the depth contents.
+    if (clear.Z) {
+        note(render_targets.depth_buffer_id);
+    }
+}
+
+template <class P>
+DrawTargets TextureCache<P>::ClassifyDrawTargets() {
+    std::scoped_lock lock{mutex};
+    const auto& regs = maxwell3d->regs;
+    // The bound targets are the registers' while their dirty flag is clear (UpdateRenderTargets
+    // finds them again when it is set); otherwise the images at the registers' addresses.
+    const bool bound_current = !maxwell3d->dirty.flags[VideoCommon::Dirty::RenderTargets];
+    DrawTargets result{};
+    bool any_target{};
+    const auto take = [&](ImageViewId bound, const ImageInfo& info, GPUVAddr gpu_addr) {
+        any_target = true;
+        const ImageBase* image{};
+        if (bound_current) {
+            if (bound && bound != NULL_IMAGE_VIEW_ID && !slot_image_views[bound].IsBuffer()) {
+                image = &slot_images[slot_image_views[bound].image_id];
+            }
+        } else if (const ImageId image_id = FindImage(info, gpu_addr, RelaxedOptions{});
+                   image_id) {
+            image = &slot_images[image_id];
+        }
+        // Not registered yet: the draw is the first use of the target.
+        const DrawTargetClass kind =
+            image ? ClassifyClearedTarget(image->last_clear_frame, image->previous_clear_frame,
+                                          frame_tick)
+                  : DrawTargetClass::FirstTime;
+        if (kind > result.kind) {
+            result.kind = kind;
+            result.gpu_addr = gpu_addr;
+            result.width = image ? image->info.size.width : info.size.width;
+            result.height = image ? image->info.size.height : info.size.height;
+            result.format = image ? image->info.format : info.format;
+        }
+    };
+    const u32 color_count =
+        (std::min)(static_cast<u32>(regs.rt_control.count), static_cast<u32>(NUM_RT));
+    for (u32 index = 0; index < color_count; ++index) {
+        const auto& rt = regs.rt[index];
+        const GPUVAddr gpu_addr = rt.Address();
+        if (gpu_addr == 0 || rt.format == Tegra::RenderTargetFormat::NONE) {
+            continue;
+        }
+        const ImageInfo info(rt, regs.anti_alias_samples_mode);
+        take(render_targets.color_buffer_ids[index], info, gpu_addr);
+    }
+    if (regs.zeta_enable && regs.zeta.Address() != 0) {
+        const ImageInfo info(regs.zeta, regs.zeta_size, regs.anti_alias_samples_mode);
+        take(render_targets.depth_buffer_id, info, regs.zeta.Address());
+    }
+    if (!any_target) {
+        // No colour or depth target: what the draw does stays in storage it writes.
+        result.kind = DrawTargetClass::Persistent;
+    }
+    return result;
 }
 
 template <class P>
