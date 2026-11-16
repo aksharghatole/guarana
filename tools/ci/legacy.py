@@ -203,10 +203,6 @@ def dump(doc):
     return json.dumps(doc, indent=2, ensure_ascii=False) + "\n"
 
 
-def person_label(entry):
-    return entry["login"] or entry["name"]
-
-
 def avatar_html(entry, size):
     login = entry["login"]
     return (f'<a href="https://github.com/{login}"><img src="https://github.com/{login}.png?size={size * 2}" '

@@ -766,10 +766,6 @@ def parse_issue(issue, titles=None, validate=None):
 # ---------------------------------------------------------------------------------------------
 # community.json
 
-def empty_document(repo):
-    return {"schema_version": SCHEMA_VERSION, "reports": {}, "repository": repo}
-
-
 def load_document(text):
     try:
         doc = json.loads(text) if text else {}
