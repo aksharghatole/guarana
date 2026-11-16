@@ -416,6 +416,11 @@ public:
     /// UpdateRenderTargets should be called before this
     Framebuffer* GetFramebuffer();
 
+    /// Whether render target 0 of the current draw was first written in an earlier frame
+    /// (cleared this frame or not): a target the game draws every frame rather than one it
+    /// fills once (Eglantine #874).
+    [[nodiscard]] bool ColorTargetWrittenBeforeThisFrame() noexcept;
+
     [[nodiscard]] const RenderTargets& GetRenderTargets() const noexcept {
         return render_targets;
     }
