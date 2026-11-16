@@ -67,6 +67,7 @@ Work taken from other forks of Lichii. Their authors as recorded in git; each fo
 | Fork | Commits | Author | Change |
 |---|---|---|---|
 | [Fritchii](https://github.com/Frizti/Fritchii) (v5.8.4) | [58f55cb7d9](https://github.com/Frizti/Fritchii/commit/58f55cb7d9ee912931ce060ea8683694796e6ac3), [8627ff4233](https://github.com/Frizti/Fritchii/commit/8627ff4233323977fd5ead274867e4dd2ce66d5c) | [Frizti](https://github.com/Frizti) | The performance overlay's RAM and VRAM readouts: what the emulator holds and the room left, amber under 2 GB of RAM or 1 GB of video memory (hand port onto our overlay; the room of an integrated GPU's shared memory is also bounded by the free RAM) |
+| [CheezyEmu](https://github.com/CheezerWheezer/CheezyEmu) | [76f03c3c03](https://github.com/CheezerWheezer/CheezyEmu/commit/76f03c3c034b9be972b6a0129a83a90aa1fc9da2), [51eb67792f](https://github.com/CheezerWheezer/CheezyEmu/commit/51eb67792f3367f40bfb07c25bf7df3c43943fa9) | [CheezerWheezer](https://github.com/CheezerWheezer) | The status bar chip for Ocarina of Time's upscaler: which one draws and at what sizes, or why the game's own upscaler draws; a click turns Ocarina FSR on or off between games (hand port onto our upscale path) |
 
 ## Artwork
 

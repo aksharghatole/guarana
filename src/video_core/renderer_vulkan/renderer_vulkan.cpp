@@ -1205,4 +1205,21 @@ std::optional<VideoCore::VideoMemoryUsage> RendererVulkan::GetVideoMemoryUsage()
     };
 }
 
+VideoCore::UpscalerStatus RendererVulkan::GetUpscalerStatus() const {
+    VideoCore::UpscalerStatus status;
+    status.upscaled_frames = rasterizer.UpscaledFrames();
+    const u64 sizes = rasterizer.UpscaleSizes();
+    status.render_width = static_cast<u32>((sizes >> 48) & 0xffff);
+    status.render_height = static_cast<u32>((sizes >> 32) & 0xffff);
+    status.output_width = static_cast<u32>((sizes >> 16) & 0xffff);
+    status.output_height = static_cast<u32>(sizes & 0xffff);
+    if (const char* const name = rasterizer.UpscalerName()) {
+        status.name = name;
+    }
+    const auto [tag, reason] = rasterizer.UpscalerIdleReason();
+    status.idle_tag = tag;
+    status.idle_reason = reason;
+    return status;
+}
+
 } // namespace Vulkan

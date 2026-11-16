@@ -3815,6 +3815,36 @@ void RasterizerVulkan::TracePendingCpuWrites(bool compute, std::span<const u64> 
     });
 }
 
+// The tags and reasons follow CheezyEmu's (76f03c3c03, 51eb67792f) for our upscale path.
+std::pair<const char*, const char*> RasterizerVulkan::UpscalerIdleReason() const {
+    if (oot_upscaler_failed.load(std::memory_order_relaxed)) {
+        return {"UNAVAILABLE", "The upscaler could not start on this GPU or driver (the log says "
+                               "why under \"Ocarina temporal\"). The game's own upscaler draws."};
+    }
+    if (oot_upscaler_off.load(std::memory_order_relaxed)) {
+        return {"OFF", "Ocarina FSR is off (Graphics), so the game's own upscaler draws."};
+    }
+    const char* const reason = oot_idle_reason.load(std::memory_order_relaxed);
+    if (reason == nullptr) {
+        return {"WAITING", "Waiting for the first frame the upscaler can take."};
+    }
+    const std::string_view why{reason};
+    if (why == "unexpected upscale images") {
+        return {"RES 1X", "The game's images are not the size or format the upscaler takes. "
+                          "A Resolution other than 1X does that: set it to 1X."};
+    }
+    if (why == "no scene camera this frame") {
+        return {"NO CAMERA", "No game camera this frame: menus, cutscenes and loading screens "
+                             "are drawn by the game's own upscaler."};
+    }
+    if (why == "no scene depth this frame") {
+        return {"NO DEPTH", "No scene depth this frame: menus, cutscenes and loading screens "
+                            "are drawn by the game's own upscaler."};
+    }
+    return {"WAITING", "The game's own upscaler draws this scene; the upscaler takes over in "
+                       "gameplay."};
+}
+
 bool RasterizerVulkan::OcarinaTemporalEnabled() const {
     constexpr u64 ocarina_program = 0x0400486024DEC000ULL;
     if (program_id != ocarina_program || oot_live_failed) {
@@ -3824,6 +3854,8 @@ bool RasterizerVulkan::OcarinaTemporalEnabled() const {
         return *oot_backend != VideoCommon::OcarinaUpscaleBackend::Native;
     }
     oot_backend = ResolveOcarinaUpscaler(device);
+    oot_upscaler_off.store(*oot_backend == VideoCommon::OcarinaUpscaleBackend::Native,
+                           std::memory_order_relaxed);
     if (*oot_backend == VideoCommon::OcarinaUpscaleBackend::Native &&
         Settings::values.ocarina_fsr.GetValue() && !Fsr3Upscaler::IsSupported(device)) {
         LOG_WARNING(Render_Vulkan, "Ocarina FSR 3.1 unsupported on this device; using native upscale");
@@ -4105,6 +4137,7 @@ bool RasterizerVulkan::TryOcarinaUpscale(const ComputePipeline& pipeline, u64 na
     // With EDEN_NX2_OOT_FSR_ANY as a warning that names the pass and the sizes known so far.
     VkExtent2D output_size{};
     const auto fail = [&](const char* reason) {
+        oot_idle_reason.store(reason, std::memory_order_relaxed);
         if (reason != oot_fallback_reason || ++oot_fallback_repeats % 120 == 0) {
             if (any_step) {
                 LOG_WARNING(Render_Vulkan,
@@ -4260,6 +4293,14 @@ bool RasterizerVulkan::TryOcarinaUpscale(const ComputePipeline& pipeline, u64 na
             oot_4k_guest_present = VK_NULL_HANDLE;
         }
         oot_dlss_frame = render_trace_frame;
+        // For the status bar (CheezyEmu 76f03c3c03): which upscaler drew this frame, at what sizes.
+        const auto packed = [](VkExtent2D size) {
+            return (u64{size.width & 0xffff} << 16) | u64{size.height & 0xffff};
+        };
+        oot_upscale_sizes.store((packed(drawn) << 32) | packed(output_extent),
+                                std::memory_order_relaxed);
+        oot_upscaler_name.store(oot_live_dlss->LastUpscalerName(), std::memory_order_relaxed);
+        oot_upscaled_frames.fetch_add(1, std::memory_order_relaxed);
         // AMD's jitter phase count for FSR: 8 * (output / render width)^2, so 18 for 1440p -> 4K
         // and 8 for native AA.
         const f32 ratio = static_cast<f32>(output_extent.width) / static_cast<f32>(drawn.width);
@@ -4299,6 +4340,7 @@ bool RasterizerVulkan::TryOcarinaUpscale(const ComputePipeline& pipeline, u64 na
     } catch (const vk::Exception& error) {
         LOG_WARNING(Render_Vulkan, "Ocarina temporal upscaling unavailable: {}", error.what());
         oot_live_failed = true;
+        oot_upscaler_failed.store(true, std::memory_order_relaxed);
         texture_cache_runtime.ocarina_fsr_failed = true; // samplers drop the FSR LOD bias
         return false;
     }
@@ -4643,6 +4685,7 @@ std::optional<FramebufferTextureInfo> RasterizerVulkan::AccelerateDisplay(
         } catch (const vk::Exception& error) {
             LOG_WARNING(Render_Vulkan, "Ocarina temporal 4K presentation unavailable: {}", error.what());
             oot_live_failed = true;
+            oot_upscaler_failed.store(true, std::memory_order_relaxed);
             texture_cache_runtime.ocarina_fsr_failed = true; // samplers drop the FSR LOD bias
         }
     }

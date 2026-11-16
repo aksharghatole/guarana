@@ -6,10 +6,12 @@
 #pragma once
 
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <optional>
 #include <string_view>
 #include <unordered_set>
+#include <utility>
 
 #include <boost/container/static_vector.hpp>
 
@@ -199,6 +201,23 @@ public:
     /// after AccelerateDisplay.
     std::optional<ExtrapolationSource> OcarinaExtrapolationSource() const;
 
+    /// Ocarina of Time's temporal upscaler, for the status bar (read on the UI thread): frames it
+    /// drew in place of the game's upscale so far.
+    [[nodiscard]] u64 UpscaledFrames() const noexcept {
+        return oot_upscaled_frames.load(std::memory_order_relaxed);
+    }
+    /// The last upscaled frame's sizes: render width, height, output width, height (16 bits
+    /// each, from the top).
+    [[nodiscard]] u64 UpscaleSizes() const noexcept {
+        return oot_upscale_sizes.load(std::memory_order_relaxed);
+    }
+    /// "FSR 3.1", "FSR 4" or "DLSS": what drew the last upscaled frame; null before one.
+    [[nodiscard]] const char* UpscalerName() const noexcept {
+        return oot_upscaler_name.load(std::memory_order_relaxed);
+    }
+    /// Why the game's own upscale draws: a short tag and the full reason.
+    [[nodiscard]] std::pair<const char*, const char*> UpscalerIdleReason() const;
+
 private:
     static constexpr const u64 NEEDS_D24[] = {
         0x01006A800016E000ULL, // SSBU
@@ -374,6 +393,13 @@ private:
     bool oot_live_failed{};
     const char* oot_fallback_reason{};
     u32 oot_fallback_repeats{};
+    /// For the status bar, read on the UI thread. The names and reasons are string literals.
+    std::atomic<u64> oot_upscaled_frames{};
+    std::atomic<u64> oot_upscale_sizes{};
+    std::atomic<const char*> oot_upscaler_name{};
+    std::atomic<const char*> oot_idle_reason{};
+    mutable std::atomic<bool> oot_upscaler_off{};
+    std::atomic<bool> oot_upscaler_failed{};
     std::optional<u64> oot_dlss_frame;
     std::array<f32, 2> oot_jitter_applied{}; ///< in the viewport state now (render pixels)
     std::array<f32, 2> oot_jitter_offset{};  ///< what oot_jitter_frame's scene draws used

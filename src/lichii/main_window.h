@@ -204,6 +204,10 @@ public:
         return dlss_status_text;
     }
 
+    /// The game-specific upscaler's status bar text while a game that has one runs (Ocarina of
+    /// Time's FSR or DLSS), else empty
+    [[nodiscard]] QString UpscaleStatusText() const;
+
     /// Started with --launcher-session and a game: the window is never shown in its desktop form.
     [[nodiscard]] bool IsLauncherSession() const {
         return launcher_session;
@@ -511,6 +515,7 @@ private:
     void UpdateAAText();
     void UpdatePostShaderText();
     void UpdateFrameGenButton();
+    void UpdateUpscaleButton();
     void UpdateVolumeUI();
     void UpdateStatusBar();
     void UpdateGPUAccuracyButton();
@@ -620,6 +625,15 @@ private:
     QPushButton* aa_status_button = nullptr;
     QPushButton* post_shader_status_button = nullptr;
     QPushButton* frame_gen_status_button = nullptr;
+    QPushButton* upscale_status_button = nullptr;
+    u64 upscale_frames = 0;
+    bool upscale_running = false;
+    bool upscale_game = false; ///< The running game has a game-specific upscaler
+    QString upscale_name;
+    QString upscale_sizes;       ///< "720p → 1080p"
+    QString upscale_size_detail; ///< "1280x720 to 1920x1080"
+    QString upscale_idle_tag;
+    QString upscale_idle_reason;
     VideoCore::FrameGenState frame_gen_state{};
     u64 frame_gen_frames = 0;
     u64 dlss_evaluations = 0;
