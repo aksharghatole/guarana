@@ -10,6 +10,8 @@
 #include <cmath>
 #include <cstdint>
 #include <dlfcn.h>
+#include <chrono>
+#include <memory>
 
 #include "common/android/id_cache.h"
 #include "common/logging.h"
