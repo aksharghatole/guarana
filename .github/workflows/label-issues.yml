@@ -54,11 +54,14 @@ jobs:
               if (/nvidia/i.test(gpu)) labels.add("NVIDIA");
               else if (/amd/i.test(gpu)) labels.add("AMD");
               else if (/intel/i.test(gpu)) labels.add("INTEL");
+              else if (/qualcomm/i.test(gpu)) labels.add("QUALCOMM");
 
               // The integrated GPUs this fork tunes for (the forms' "Graphics card" options)
               if (/intel/i.test(gpu) && /arc/i.test(gpu)) labels.add("intel-arc");
               if (/amd/i.test(gpu) && /integrated|[0-9]{3}M\b|Z[12]\b/i.test(gpu)) labels.add("amd-igpu");
               if (/handheld/i.test(gpu)) labels.add("handheld");
+              // ARM64 hosts: Snapdragon X laptops and Android devices
+              if (/qualcomm|adreno|snapdragon|android/i.test(gpu)) labels.add("arm64");
             }
 
             // Device reports
@@ -68,8 +71,10 @@ jobs:
             const os = get("Operating system");
             if (os) {
               if (/windows/i.test(os)) labels.add("windows");
+              else if (/android/i.test(os)) labels.add("android");
               else if (/linux|steamos/i.test(os)) labels.add("linux");
               else if (/macos/i.test(os)) labels.add("MacOS");
+              if (/\bon arm\b|\barm64\b|aarch64|snapdragon|android/i.test(os)) labels.add("arm64");
             }
 
             // Regression

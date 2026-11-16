@@ -7,6 +7,7 @@
 #include <array>
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <optional>
 #include <span>
@@ -240,6 +241,57 @@ inline RoleLoad PercentOfWall(std::optional<double> cpu, double wall) {
         return {};
     }
     return RoleLoad{true, std::min(100.0, *cpu / wall * 100.0)};
+}
+
+/// Below these the room left turns amber: the host starts paging, or video memory spills into RAM.
+/// Both show as stutter. Fritchii's thresholds (Frizti/Fritchii 58f55cb7d9, 8627ff4233).
+inline constexpr std::uint64_t RamLowBytes = std::uint64_t{2} << 30;
+inline constexpr std::uint64_t VramLowBytes = std::uint64_t{1} << 30;
+
+/// One memory readout in GiB: what this process uses, and the room left when it is known.
+struct MemoryFigure {
+    double used_gib = 0;
+    std::optional<double> free_gib;
+    bool low = false;
+};
+
+inline double Gib(std::uint64_t bytes) {
+    return static_cast<double>(bytes) / static_cast<double>(std::uint64_t{1} << 30);
+}
+
+/// This process's resident memory and the RAM the host can still hand out, in bytes; 0 is not
+/// reported. Nothing without the first.
+inline std::optional<MemoryFigure> RamFigure(std::uint64_t working_set, std::uint64_t available) {
+    if (working_set == 0) {
+        return std::nullopt;
+    }
+    MemoryFigure figure;
+    figure.used_gib = Gib(working_set);
+    if (available != 0) {
+        figure.free_gib = Gib(available);
+        figure.low = available < RamLowBytes;
+    }
+    return figure;
+}
+
+/// Device memory in use and the driver's budget for it (0: none reported). An integrated GPU's
+/// device memory is system RAM, so its room is also bounded by the RAM the host can hand out.
+inline MemoryFigure VramFigure(std::uint64_t used, std::uint64_t budget, bool shared,
+                               std::uint64_t ram_available) {
+    MemoryFigure figure;
+    figure.used_gib = Gib(used);
+    std::optional<std::uint64_t> room;
+    if (budget != 0) {
+        room = budget > used ? budget - used : 0;
+    }
+    if (shared && ram_available != 0) {
+        room = room ? std::min(*room, ram_available) : ram_available;
+    }
+    if (room) {
+        figure.free_gib = Gib(*room);
+        figure.low = *room < VramLowBytes;
+    }
+    return figure;
 }
 
 /// Critically damped. The first step snaps, so a readout never eases up from zero.

@@ -3,6 +3,7 @@
 
 #include <array>
 #include <cmath>
+#include <cstdint>
 #include <vector>
 
 #include <catch2/catch_approx.hpp>
@@ -122,6 +123,52 @@ TEST_CASE("Thread load is busy time over the wall", "[lichii][overlay]") {
     REQUIRE(half.known);
     REQUIRE(half.percent == Catch::Approx(50));
     REQUIRE(PercentOfWall(500, 100).percent == Catch::Approx(100));
+}
+
+TEST_CASE("RAM shows this process and the host's room", "[lichii][overlay]") {
+    constexpr std::uint64_t GiB = std::uint64_t{1} << 30;
+    REQUIRE_FALSE(RamFigure(0, 8 * GiB));
+
+    const auto roomy = RamFigure(10 * GiB, 3 * GiB);
+    REQUIRE(roomy);
+    REQUIRE(roomy->used_gib == Catch::Approx(10));
+    REQUIRE(roomy->free_gib);
+    REQUIRE(*roomy->free_gib == Catch::Approx(3));
+    REQUIRE_FALSE(roomy->low);
+
+    REQUIRE(RamFigure(17 * GiB, GiB + GiB / 2)->low);
+    REQUIRE_FALSE(RamFigure(17 * GiB, RamLowBytes)->low);
+
+    const auto unknown_room = RamFigure(4 * GiB, 0);
+    REQUIRE(unknown_room);
+    REQUIRE_FALSE(unknown_room->free_gib);
+    REQUIRE_FALSE(unknown_room->low);
+}
+
+TEST_CASE("Video memory room is the budget, and RAM too when it is shared", "[lichii][overlay]") {
+    constexpr std::uint64_t GiB = std::uint64_t{1} << 30;
+    const auto card = VramFigure(3 * GiB, 8 * GiB, false, GiB);
+    REQUIRE(card.used_gib == Catch::Approx(3));
+    REQUIRE(card.free_gib);
+    REQUIRE(*card.free_gib == Catch::Approx(5));
+    REQUIRE_FALSE(card.low);
+
+    const auto full = VramFigure(9 * GiB, 8 * GiB, false, 0);
+    REQUIRE(*full.free_gib == Catch::Approx(0));
+    REQUIRE(full.low);
+    REQUIRE(VramFigure(7 * GiB + GiB / 2, 8 * GiB, false, 0).low);
+
+    const auto no_budget = VramFigure(2 * GiB, 0, false, 6 * GiB);
+    REQUIRE_FALSE(no_budget.free_gib);
+    REQUIRE_FALSE(no_budget.low);
+
+    // An integrated GPU's budget can be most of the RAM; the RAM still free bounds it.
+    const auto shared = VramFigure(3 * GiB, 16 * GiB, true, 2 * GiB);
+    REQUIRE(*shared.free_gib == Catch::Approx(2));
+    REQUIRE_FALSE(shared.low);
+    REQUIRE(VramFigure(3 * GiB, 16 * GiB, true, GiB / 2).low);
+    REQUIRE(*VramFigure(3 * GiB, 4 * GiB, true, 8 * GiB).free_gib == Catch::Approx(1));
+    REQUIRE(*VramFigure(3 * GiB, 0, true, 5 * GiB).free_gib == Catch::Approx(5));
 }
 
 TEST_CASE("Springs snap once and do not overshoot", "[lichii][overlay]") {

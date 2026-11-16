@@ -93,24 +93,33 @@ def differences(root, expected):
 
 
 class CacheDir:
-    """One directory a run touches, its backup copy and its manifest."""
+    """One directory a run touches, its backup copy and its manifest.
 
-    def __init__(self, key, path, backup_root, allowed_roots):
+    strict=False is for a folder other programs may write while the bench runs (a GPU driver's
+    shader cache, which every program on that GPU shares): it is moved aside and put back the same
+    way, but not compared with its manifest, since those writes are not the bench's."""
+
+    def __init__(self, key, path, backup_root, allowed_roots, strict=True):
         self.key = key
         self.path = Path(path)
         self.aside = self.path.with_name(self.path.name + ASIDE_SUFFIX)
         self.backup = Path(backup_root) / key
         self.manifest_file = Path(backup_root) / f"{key}.manifest.json"
+        self.strict = strict
         guard(self.path, allowed_roots)
 
     def expected(self):
         with open(self.manifest_file, encoding="utf-8") as stream:
             return json.load(stream)["files"]
 
+    def changes(self):
+        """differences() against the manifest; none for a folder that is not strict."""
+        return differences(self.path, self.expected()) if self.strict else []
+
     def back_up(self):
         """Copies the directory once and records its manifest; a second call only checks it."""
         if self.manifest_file.exists():
-            problems = differences(self.path, self.expected())
+            problems = self.changes()
             if problems:
                 raise BenchError(f"{self.path} changed since its backup: {problems[:5]}")
             return
@@ -127,7 +136,7 @@ class CacheDir:
 
     def check(self):
         """Before a run touches anything: the original matches its backup, nothing is aside."""
-        problems = differences(self.path, self.expected())
+        problems = self.changes()
         if problems:
             raise BenchError(f"{self.path} differs from its backup before the run: {problems[:5]}")
         if self.aside.exists():
@@ -158,7 +167,7 @@ class CacheDir:
             shutil.move(str(self.path), str(destination))
         if self.aside.exists():
             os.replace(self.aside, self.path)
-        problems = differences(self.path, self.expected())
+        problems = self.changes()
         if problems:
             raise BenchError(f"{self.path} does not match its backup after the run: {problems[:5]}")
         return left

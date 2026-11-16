@@ -57,6 +57,7 @@ private:
         QRectF raster;
         QRectF spread;
         QRectF threads;
+        QRectF memory;
         QRectF footer;
     };
 
@@ -66,6 +67,7 @@ private:
     void applyLayout();
     void advanceMotion();
     void sampleLive(double window_s, bool force);
+    void sampleMemory();
     void disarmSprings();
     [[nodiscard]] QString limiterText() const;
     [[nodiscard]] QString statusText() const;
@@ -76,6 +78,7 @@ private:
     void paintRaster(QPainter& painter, const Layout& layout) const;
     void paintSpread(QPainter& painter, const Layout& layout) const;
     void paintThreads(QPainter& painter, const Layout& layout) const;
+    void paintMemory(QPainter& painter, const Layout& layout) const;
     void paintFooter(QPainter& painter, const Layout& layout) const;
 
     bool m_compact = false;
@@ -112,6 +115,10 @@ private:
     std::optional<double> m_lowFps;
     std::optional<double> m_lowMs;
     std::optional<double> m_gpuBusyMs;
+    std::optional<Guarana::Overlay::MemoryFigure> m_ram;
+    std::optional<Guarana::Overlay::MemoryFigure> m_vram;
+    bool m_vramShared = false;
+    std::optional<std::chrono::steady_clock::time_point> m_memorySampled;
     std::optional<Common::DkbCpuTrace::Snapshot> m_cpuSnapshot;
     std::deque<float> m_fpsSamples;
     std::vector<Core::FrameTimeHistory::Entry> m_frames;
