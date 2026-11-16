@@ -171,7 +171,7 @@ Each is one pull request with its switch and row; "Saves" is the expected effect
 | F1 | First-play rows: GPL on and off, async shaders, Bounded, Skip | The first-play numbers this page lacks | Settings, `EDEN_NX2_GPL=0` | Measure (M1) |
 | F2 | Library builds in parallel, waited-for builds raised, unoptimized first | Shorter stalls, not fewer | `EDEN_NX2_GPL_PARALLEL_PARTS`, `EDEN_NX2_WAIT_BOOST`, `EDEN_NX2_UNOPT_FIRST` (exist) | Measure (M1) |
 | F3 | Translation off the GPU thread, translated stages reused | Up to 3.4 s to 0.9 s of GPU-thread time on a cold Ocarina of Time boot (E#825, NVIDIA) | `EDEN_NX2_ASYNC_TRANSLATE`, `EDEN_NX2_SHADER_REUSE` (exist) | Measure (M1) |
-| F4 | Skip what may be skipped while it builds (port of Eglantine #874, then Lichii #1169) | Stalls of 50-330 ms on new pipelines (E#874, RX 6700S) | New, default off | Port |
+| F4 | Skip what may be skipped while it builds: port of Eglantine #874, a native draw into a target the game redraws every frame (then Lichii #1169) | Stalls of 50-330 ms on new pipelines (E#874, RX 6700S) | `EDEN_NX2_SKIP_REDRAWN` (#874's part) | This pull request |
 | F5 | Build ahead from the player's own records: queue the pipelines an earlier session first used right after the one just drawn ([A5](../ROADMAP.md#a5-shader-need-prediction)) | Builds a later area needs before it is reached, in session 2 on; not known | New | After M1 rows |
 | F6 | Build ahead from the game's files, as a background task the player starts (port of Lichii #1719) | Library driver time 220.4 s to 0.32 s after a 582 s warm-up (#1719, RX 6650 XT) | New, setting Ask/Never | Later |
 
