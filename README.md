@@ -20,7 +20,7 @@ A fork of [Lichii](https://github.com/zortos293/Lichii) (the yuzu, Eden, Eglanti
 
 **Measured, with the machine named.** So far on one laptop: Core Ultra 9 285H, Arc 140T, Intel driver 32.0.101.9175, 120 Hz OLED, in Ocarina of Time's Hyrule Field.
 
-- **Frames on time.** The v20.3 defaults put **599 of 600** display slots on screen on time in the best run, with **0 late flips** and **99.5%** of frames within 2 ms of the median. [Measured wins](#measured-wins)
+- **Frames on time.** On the laptop's 120 Hz screen, v20.4.0's 120 Hz set put **98 to 100%** of shown frames within 2 ms of the median and missed **0 to 4 of 1,200** display slots per 10 s, in three lab runs. The 60 Hz set, unchanged since v20.3, had **0 late flips** and up to **599 of 600** slots on time. [Measured wins](#measured-wins)
 - **One shader fix: 14.8 to 22.8 game fps**, frame generation off (`EDEN_NX2_GM=11`, on by default for Ocarina of Time only). [Measured wins](#measured-wins)
 - **Shaders before you play.** `guarana-cli --warm-pipelines` built 4,515 pipelines and programs in 155 s without booting the game. [docs/warm-up.md](docs/warm-up.md)
 - **No compiler needed to help.** CI builds every pull request and posts a Windows test build anyone with the game can run. [Contribute](#contribute-with-or-without-an-ai-agent)
@@ -56,7 +56,7 @@ Guarana is tuned for integrated GPUs: **Intel Arc first, AMD handhelds next, and
 
 | GPU | Example devices | Status |
 |---|---|---|
-| Intel Arc **140T** (Arrow Lake-H) | Core Ultra 9 285H laptops | **Tested.** 14.75 to 22.83 game fps at the Hyrule Field overlook with `EDEN_NX2_GM=11`, frame generation off; 599 of 600 slots on time with the v20.3 defaults ([Measured wins](#measured-wins)) |
+| Intel Arc **140T** (Arrow Lake-H) | Core Ultra 9 285H laptops | **Tested.** 14.75 to 22.83 game fps at the Hyrule Field overlook with `EDEN_NX2_GM=11`, frame generation off; 98 to 100% of shown frames within 2 ms of the median with v20.4.0's 120 Hz set ([Measured wins](#measured-wins)) |
 | Intel Arc 130T (Arrow Lake-H) | Laptops | Untested: [send a report](https://github.com/karimalsalah/guarana/issues/new?template=device-report.yml) |
 | Intel Arc **140V** / 130V (Lunar Lake) | MSI Claw 8 AI+, MSI Claw 7 AI+ | Community report: 22-24 fps in gameplay on a third-party build, not verified by us ([source](docs/DEVICES.md#third-party-data-points)). Untested here: [send a report](https://github.com/karimalsalah/guarana/issues/new?template=device-report.yml) |
 | Intel Arc (Meteor Lake) | MSI Claw A1M | Untested: [send a report](https://github.com/karimalsalah/guarana/issues/new?template=device-report.yml) |
@@ -130,9 +130,11 @@ Questions get answers in the [Discord](https://discord.gg/urz7vMdRM); bugs and d
   <img alt="Bar chart for Ocarina of Time, Hyrule Field, on a Core Ultra 9 285H with an Arc 140T, Intel driver 32.0.101.9175, 120 Hz OLED, on a 0 to 100% scale. Old setup: about 45-47% of frames on screen on time and about 200 frames per 10 s flipped late, because the screen copy waited behind about 24 ms of queued game GPU work. v20.3 defaults: 599 of 600 slots on time in the best run, 531-599 of 600 over two paired rounds, and 0 late flips in both. A slot is one 16.7 ms display interval; 10 s hold 600." src="assets/readme/pacing-light.svg" width="100%">
 </picture>
 
-Every number in this section comes from one laptop: **Core Ultra 9 285H, Arc 140T iGPU, Intel driver 32.0.101.9175, 120 Hz OLED**, 32 GB RAM. Game: *The Legend of Zelda: Ocarina of Time*. A slot is one 16.7 ms display interval, two refreshes at 120 Hz, so 10 s hold 600. **Game fps** counts the frames the game renders; generated frames are not included.
+Every number in this section comes from one laptop: **Core Ultra 9 285H, Arc 140T iGPU, Intel driver 32.0.101.9175, 120 Hz OLED**, 32 GB RAM. Game: *The Legend of Zelda: Ocarina of Time*. A slot is one display interval: one 8.3 ms refresh with the 120 Hz set, so 10 s hold 1,200, and 16.7 ms, two refreshes, with the 60 Hz set, so 10 s hold 600. **Game fps** counts the frames the game renders; generated frames are not included.
 
-**The v20.3 result.** In Hyrule Field the v20.3 defaults put **599 of 600** display slots on screen on time in the best run, with **0 late flips** and **99.5%** of frames within 2 ms of the median. Over two paired rounds: 531-599 of 600, 0 late flips. The old setup put only about 45-47% of frames on screen on time.
+**The v20.4.0 result, at 120 Hz.** With the defaults v20.4.0 picks for this laptop's 120 Hz screen (the locked 120 Hz set: 20 real frames a second, the in-between frames interpolated), Hyrule Field showed **98 to 100%** of shown frames within 2 ms of the median and missed **0 to 4 of 1,200** display slots per 10 s. Method: three lab runs of two local builds of the release code, one of them the tag's, windowed, with no compiler running in any 5 s sample, read from the presenter's own counters (`EDEN_NX2_SHOWN_STATS`). They are not `tools/bench` rows yet, and the CI-built release files were not in those runs. The code from just before the upstream merge did the same in that session, so no gain over it is claimed ([HANDOVER.md](HANDOVER.md#where-things-stand)).
+
+**The 60 Hz set, from v20.3.** v20.4.0 keeps it for every other refresh rate and for AMD. In Hyrule Field the v20.3 defaults put **599 of 600** display slots on screen on time in the best run, with **0 late flips** and **99.5%** of frames within 2 ms of the median. Over two paired rounds: 531-599 of 600, 0 late flips. The old setup put only about 45-47% of frames on screen on time.
 
 **What v20.3 fixed.** In the old setup the screen copy waited behind about 24 ms of queued game GPU work, so about 200 frames per 10 s were flipped late. v20.3 copies each frame to the screen on a queue of its own and stops the frame budget from raising the resolution into the freed GPU time. Real frames hold 20 a second against the game's 20 Hz logic. The switches behind it: [How the frame pacing works](#how-the-frame-pacing-works).
 
@@ -312,7 +314,7 @@ Full notes: [CHANGELOG.md](CHANGELOG.md).
 
 ## How the frame pacing works
 
-The game renders **real frames** at its own pace, and frame generation fills the display slots between them. In Ocarina of Time those frames are **predicted**: the newest real frame's pixels move along the game's motion vectors, depth decides which surface is in front, and the HUD stays in place. Extrapolation shows each real frame as soon as it is ready, where interpolation would hold it back until the next one exists. Generated frames make motion smoother, not input faster.
+The game renders **real frames** at its own pace, and frame generation fills the display slots between them. In Ocarina of Time those frames are **predicted**: the newest real frame's pixels move along the game's motion vectors, depth decides which surface is in front, and the HUD stays in place. Extrapolation shows each real frame as soon as it is ready, where interpolation would hold it back until the next one exists. That is the 60 Hz set below. On an Intel integrated GPU with the game on a 120 or 144 Hz display, the locked sets interpolate the in-between frames from the last two real frames instead, so each real frame is held back while the frames before it are shown. Generated frames make motion smoother, not input faster.
 
 ```mermaid
 flowchart LR
@@ -380,7 +382,7 @@ A real frame that lands between two refreshes cannot stay up as long as the one 
 
 - **Is this legal?** Guarana contains no keys, firmware, games or system files; you use your own dumps. [LEGAL.md](LEGAL.md), [FAQ](docs/FAQ.md#is-this-legal).
 - **Does frame generation make the game faster?** It makes motion smoother; the game still runs and reads input at its own rate. [More](docs/FAQ.md#does-frame-generation-make-the-game-faster).
-- **Does it add input lag?** Extrapolation never holds a real frame back the way interpolation does; a measured latency figure is not published yet. [More](docs/FAQ.md#does-frame-generation-add-input-lag).
+- **Does it add input lag?** Extrapolation, the 60 Hz set's, never holds a real frame back; the locked 120 Hz and 144 Hz sets interpolate, which does. A measured latency figure is not published yet. [More](docs/FAQ.md#does-frame-generation-add-input-lag).
 - **Why 20 real frames a second?** By design. Ocarina of Time's logic runs at 20 Hz, so one real frame per game tick gives predicted frames the right speed, and the presenter fills the slots between them. [How the frame pacing works](#how-the-frame-pacing-works).
 - **Why does it hitch the first time I enter an area?** The driver is compiling shaders, 0.4-1 s per pipeline on Intel; later visits use the cache. [More](docs/FAQ.md#why-does-it-hitch-the-first-time-i-enter-an-area).
 - **Will it run on my device?** Try it, then send a [device report](https://github.com/karimalsalah/guarana/issues/new?template=device-report.yml): your numbers put your device on the leaderboard. [Devices](#devices).
