@@ -11,7 +11,8 @@ what `git` and `gh` showed at that time. Anything this file could not confirm is
 
 ## Where things stand
 
-- **`main` is v20.4.0.** It holds v20.3.0 plus:
+- **`main` is v20.4.0, tagged `v20.4.0-rc1`.** The final `v20.4.0` tag waits for the pacing run
+  below. It holds v20.3.0 plus:
   - the merge of zortos293/Lichii `nx2` up to `99e89096cb` (67 commits, pull request #197; the
     resolutions are listed there);
   - six fixes ported from open upstream pull requests and Eglantine, the replay bench
@@ -36,8 +37,13 @@ what `git` and `gh` showed at that time. Anything this file could not confirm is
   - The replay bench has no real rows yet: `guarana-cli --replay` now starts on Intel's Windows
     driver, but the Hyrule Field trace recorded for it replays no frames. Whether the recording or
     the replay drops the presents is not known.
-  - The warm shown-frame pacing of v20.4.0 against v20.3.0 was not measured: another process was
-    compiling on the measurement machine. The first-run numbers are in #197.
+  - Shown-frame pacing is not settled. On warm boots in Hyrule Field, v20.3.0 showed 118 frames
+    a second with 96% within 2 ms and 12 to 27 of 1200 slots missed per 10 s; this version showed
+    102 to 110 a second, 73 to 82%, and 141 to 207 slots missed, 117 to 174 of them because the
+    present thread woke late. Another process was compiling on the machine during the later
+    runs, which is what a late wake-up looks like, but nothing separates that from a regression.
+    A quiet back-to-back decides it: the baseline twice, this version three times, with
+    `EDEN_DKB_FRAME_TRACE=1` for the GPU's busy time, which a compile disturbs far less.
 - **The work queue:** the open `agent-ready` issues
   ([the list](https://github.com/karimalsalah/guarana/issues?q=is%3Aissue%20is%3Aopen%20label%3Aagent-ready%20-label%3Aneeds-triage%20no%3Aassignee)).
 
