@@ -87,3 +87,25 @@ From then on every release and nightly is signed. A release published before the
 ## Alternative: SignPath Foundation
 
 [SignPath Foundation](https://signpath.org/) signs open-source projects for free. The certificate is the foundation's, which vouches that the files were built from the project's repository, so Windows shows SignPath Foundation as the publisher rather than the owner. A project [applies](https://signpath.org/apply) and has to meet its [terms](https://signpath.org/terms). In the workflows, the Azure step would be replaced: the Windows job uploads the unsigned programs as a workflow artifact, [`SignPath/github-action-submit-signing-request`](https://github.com/SignPath/github-action-submit-signing-request) submits it and returns the signed files, and the zip, the checksums and the provenance follow as they do now.
+
+## Android
+
+The Android APK (`guarana-<version>-android-arm64.apk`, built by `android.yml`) is always signed: Android installs nothing else. Which key signs it decides its application id.
+
+- **With the release key**, the id is `io.github.karimalsalah.guarana` (`.nightly` added for nightlies). Every later APK must be signed with the same key, or Android refuses to update the installed app: keep the keystore and its password safe, and back them up.
+- **Without it**, the APK is signed with the debug key committed in `src/android/app/debug.keystore` and gets the id `io.github.karimalsalah.guarana.preview` and the name "Guarana Preview". Anyone can sign with that key, so a preview build belongs on a device only from this repository's releases. Its own id keeps the first properly signed build from colliding with it: the two install side by side, and players move their saves across once.
+
+To turn release signing on, the owner creates the key once (with `keytool` from any JDK) and adds three repository secrets (Settings > Secrets and variables > Actions):
+
+```sh
+keytool -genkeypair -v -keystore guarana-release.jks -alias guarana -keyalg RSA -keysize 4096 -validity 10000
+base64 -w0 guarana-release.jks   # the value of ANDROID_KEYSTORE_B64
+```
+
+| Secret | Value |
+|---|---|
+| `ANDROID_KEYSTORE_B64` | The keystore file, base64-encoded |
+| `ANDROID_KEYSTORE_PASS` | The keystore's password, which `build.gradle.kts` also uses for the key |
+| `ANDROID_KEY_ALIAS` | The key's alias (`guarana` above) |
+
+`.ci/android/build.sh` (from Eden) decodes the keystore for the build and deletes it afterwards. Pull requests from forks get no secrets, so their test APKs are preview builds.

@@ -118,6 +118,7 @@ A failed scheduled run opens one issue, "upstream-sync is blocked", with the run
 
 ## Other workflows
 
+- `android.yml` builds the Android app (`src/android`) with Eden's `.ci/android/build.sh`: the arm64 APK of the mainline flavor. It runs on pull requests that change the app and uploads their APK as `guarana-pr<N>-<commit>-android-arm64` (kept 14 days); `release-binaries.yml` calls it for tags and the nightly and publishes `guarana-<version>-android-arm64.apk`. It is not a required check. Signing and the preview id: [SIGNING.md](SIGNING.md), "Android".
 - `switch-registry.yml` fails a pull request that uses an `EDEN_NX2_*` or `EDEN_DKB_*` switch with no row in [switches.md](switches.md) and not upstream's (the `upstream` branch or `tools/ci/switch-registry-upstream.txt`); see `tools/ci/switch_registry.py`.
 - `labels.yml` creates and updates the labels in `.github/labels.yml` when that file changes on `main`. It never deletes a label.
 - `pages.yml` publishes `site/` to GitHub Pages when it changes on `main`.

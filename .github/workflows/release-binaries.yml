@@ -936,11 +936,29 @@ jobs:
           compression-level: 0
           retention-days: 7
 
+  # The Android APK (android.yml: Eden's .ci/android/build.sh with the NDK). It is uploaded as
+  # guarana-android-arm64-<commit> and published with the other files; its failure does not stop
+  # the release. Caches are saved as the build job's are: by tags, the nightly and runs on main.
+  android:
+    name: android-arm64
+    needs: prepare
+    uses: ./.github/workflows/android.yml
+    # The optional release-key secrets (docs/SIGNING.md).
+    secrets: inherit
+    with:
+      sha: ${{ needs.prepare.outputs.sha }}
+      version: ${{ needs.prepare.outputs.version }}
+      build_tag: ${{ needs.prepare.outputs.build_tag }}
+      channel: ${{ needs.prepare.outputs.channel }}
+      tag: ${{ needs.prepare.outputs.tag }}
+      refspec: ${{ needs.prepare.outputs.refspec }}
+      save_caches: ${{ github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main' || contains(github.ref, '/tags/') }}
+
   # Publishes every platform's files, SHA256SUMS.txt and the notes once every platform built: a
   # tag's release (a pre-release for vX.Y.Z-<pre>), or the rolling nightly pre-release.
   publish:
     name: Publish release
-    needs: [prepare, build]
+    needs: [prepare, build, android]
     # Publishes what built: one platform failing (say a Linux toolchain break) does not hold back the
     # rest. A release without a Windows binary is refused below.
     if: ${{ !cancelled() && needs.prepare.outputs.publish == 'true' && needs.build.result != 'skipped' }}
@@ -1003,7 +1021,8 @@ jobs:
             name=$(basename "$artifact")            # guarana-<platform>-<commit>
             platform=${name#guarana-}
             platform=${platform%-"$GITHUB_SHA"}
-            if compgen -G "$artifact*.AppImage" > /dev/null || compgen -G "$artifact*.dmg" > /dev/null; then
+            if compgen -G "$artifact*.AppImage" > /dev/null || compgen -G "$artifact*.dmg" > /dev/null ||
+               compgen -G "$artifact*.apk" > /dev/null; then
               for file in "$artifact"*; do
                 base=$(basename "$file")
                 cp "$file" "dist/$APP-$VERSION-${base#guarana-"$GITHUB_SHA"-}"
@@ -1053,7 +1072,12 @@ jobs:
             echo "| Linux x86_64 | $(linux linux-x86_64) | $(linux linux-x86_64-pgo) |"
             echo "| Linux aarch64 | $(linux linux-aarch64) | $(linux linux-aarch64-pgo) |"
             echo "| macOS arm64 | $(pair zip "$(asset macos-arm64).zip" dmg "$(asset macos-arm64).dmg") | |"
+            echo "| Android arm64 (13 or newer) | $(link apk "$(asset android-arm64).apk") | |"
             echo
+            if [ -e "dist/$(asset android-arm64).apk" ]; then
+              echo "> **Android** (Snapdragon handhelds and phones, Android 13 or newer): open \`$(asset android-arm64).apk\` on the device to install it. Nobody on the project has booted it on a device yet: please tell us how it runs with a [device report](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/issues/new?template=device-report.yml)."
+              echo
+            fi
             cat <<'EOF'
           - **Windows**: extract the whole zip into a folder you can write to and run `@WIN_GUI@` (`@WIN_CLI@` from a terminal). Both are clang-cl ThinLTO builds; the PGO zip adds a profile trained on Ocarina of Time, so other games gain less.
           - **Linux**: make the AppImage executable (`chmod +x`) and run it. The tar.gz holds the same files for systems without FUSE: extract it and run `guarana/guarana`. Both need glibc 2.39 or newer. The PGO builds use clang with Eglantine's profile.
