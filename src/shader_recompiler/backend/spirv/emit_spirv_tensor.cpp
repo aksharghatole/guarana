@@ -440,12 +440,13 @@ Id EmitCooperativeTensorMulAdd8x8(EmitContext& ctx, const CooperativeHmmaTypes& 
                     std::span<const Sirit::MemoryAccessLiteral>(store_operands));
     }
     SubgroupBarrier(ctx);
-    const auto result_word = [&](Id word) {
-        const Id low = RoundToHalfGrid(
+    const auto result_float = [&](Id word) {
+        return RoundToHalfGrid(
             ctx, ctx.OpBitcast(f32ty, ctx.LoadShared(u32ty, SharedWord(ctx, add(tile_c, word)))));
-        const Id high = RoundToHalfGrid(
-            ctx, ctx.OpBitcast(f32ty, ctx.LoadShared(u32ty, SharedWord(ctx, add(add(tile_c, word),
-                                                                                    imm(1)))))));
+    };
+    const auto result_word = [&](Id word) {
+        const Id low = result_float(word);
+        const Id high = result_float(add(word, imm(1)));
         return ctx.OpPackHalf2x16(u32ty, ctx.OpCompositeConstruct(ctx.F32[2], low, high));
     };
     const Id d0 = result_word(c_lo);
