@@ -1761,6 +1761,32 @@ class SuiteTest(RunCase):
             for name in switches:
                 self.assertIn(f"`{name}`", documented)
 
+    def test_shipped_game_network_suite(self):
+        args, defaults = self.suite_args(os.path.join(HERE, "suites", "game-network.json"))
+        plans, compare_to = bench.load_suite(args.suite, args, defaults)
+        self.assertEqual(len(plans), 1)
+        plan = plans[0]
+        self.assertEqual((plan.suite, plan.scene["name"]), ("game-network", "oot-hyrule-field"))
+        base = {"EDEN_NX2_NO_PRESETS": "1", "EDEN_NX2_COST_SAMPLING": "1"}
+        env = {variant["name"]: variant.get("env") or {} for variant in plan.variants}
+        self.assertEqual(env, {
+            "software": base,
+            "software-shared": {**base, "EDEN_NX2_SW_MATRIX_SHARED": "1"},
+            "coop-8x16x16": {**base, "EDEN_NX2_INTEL_COOP_MATRIX": "1"},
+            "no-sharpening": base})
+        self.assertEqual(list(env)[0], "software")
+        # The network runs in every variant but the floor, and frame generation never does.
+        settings = {variant["name"]: variant["settings"]["Renderer"] for variant in plan.variants}
+        for name, renderer in settings.items():
+            self.assertEqual(renderer["oot_anti_aliasing"], 1 if name == "no-sharpening" else 0, name)
+            self.assertIs(renderer["frame_gen"], False, name)
+        self.assertTrue(all(compare_to[("oot-hyrule-field", name)] == "software" for name in env))
+        with open(os.path.join(HERE, "..", "..", "docs", "switches.md"), encoding="utf-8") as file:
+            documented = file.read()
+        for switches in env.values():
+            for name in switches:
+                self.assertIn(f"`{name}`", documented)
+
     def write_suite(self, **fields):
         path = os.path.join(self.folder, "suites", "mine.json")
         self.write(os.path.join(self.folder, "extra.json"), json.dumps(
