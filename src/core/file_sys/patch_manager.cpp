@@ -755,6 +755,67 @@ LICHII_NO_INLINE std::optional<u64> GetParentApplicationId(const ContentProvider
 }
 } // Anonymous namespace
 
+std::vector<BuiltinPatchRange> BuiltinPatchRanges() {
+    std::vector<BuiltinPatchRange> out;
+    for (const auto& patch : BUILTIN_PATCHES) {
+        // One render scale at a time: NVIDIA DLSS's quality or EDEN_NX2_OOT_RENDER_SCALE picks it.
+        const std::string_view alternatives =
+            patch.group.empty() && patch.dlss_quality ? "render scale" : patch.group;
+        const auto add = [&](BuiltinPatchRange::Kind kind, size_t offset, size_t size) {
+            out.push_back({.patch = std::string{patch.name},
+                           .title_id = patch.title_id,
+                           .module = std::string{patch.module},
+                           .build_id = std::string{patch.build_id},
+                           .kind = kind,
+                           .offset = offset,
+                           .size = size,
+                           .replaces = std::string{patch.replaces},
+                           .alternatives = std::string{alternatives}});
+        };
+        for (const auto& record : patch.records) {
+            // A record also relies on the original bytes it checks, which can be more than it
+            // writes.
+            add(record.executable_padding ? BuiltinPatchRange::Kind::CodeCave
+                                          : BuiltinPatchRange::Kind::Code,
+                record.module_offset, (std::max)(record.bytes.size(), record.original.size()));
+        }
+        if (patch.state_size != 0) {
+            add(BuiltinPatchRange::Kind::State, patch.state_offset, patch.state_size);
+        }
+    }
+    return out;
+}
+
+std::vector<std::string> FindBuiltinPatchOverlaps(std::span<const BuiltinPatchRange> ranges) {
+    const auto together = [](const BuiltinPatchRange& a, const BuiltinPatchRange& b) {
+        if (a.title_id != b.title_id || a.module != b.module || a.build_id != b.build_id) {
+            return false;
+        }
+        if (a.patch == b.patch) {
+            return true;
+        }
+        if (a.replaces == b.patch || b.replaces == a.patch) {
+            return false;
+        }
+        return a.alternatives.empty() || a.alternatives != b.alternatives;
+    };
+    const auto describe = [](const BuiltinPatchRange& range) {
+        return fmt::format("\"{}\" {}+{:#x}..{:#x}", range.patch, range.module, range.offset,
+                           range.offset + range.size);
+    };
+    std::vector<std::string> out;
+    for (size_t i = 0; i < ranges.size(); ++i) {
+        for (size_t j = i + 1; j < ranges.size(); ++j) {
+            const auto& a = ranges[i];
+            const auto& b = ranges[j];
+            if (a.offset < b.offset + b.size && b.offset < a.offset + a.size && together(a, b)) {
+                out.push_back(fmt::format("{} overlaps {}", describe(a), describe(b)));
+            }
+        }
+    }
+    return out;
+}
+
 PatchManager::PatchManager(u64 title_id_,
                            const Service::FileSystem::FileSystemController& fs_controller_,
                            const ContentProvider& content_provider_)
