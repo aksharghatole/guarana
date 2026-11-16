@@ -133,15 +133,11 @@ StagingBufferRef StagingBufferPool::Request(size_t size, MemoryUsage usage, bool
 }
 
 void StagingBufferPool::FreeDeferred(StagingBufferRef& ref) {
-    auto& entries = GetCache(ref.usage)[ref.log2_level].entries;
-    const auto is_this_one = [&ref](const StagingBuffer& entry) {
-        return entry.index == ref.index;
-    };
-    auto it = std::find_if(entries.begin(), entries.end(), is_this_one);
-    ASSERT(it != entries.end());
-    ASSERT(it->deferred);
-    it->tick = scheduler.CurrentTick();
-    it->deferred = false;
+    StagingBuffers& cache_level = GetCache(ref.usage)[ref.log2_level];
+    auto node = cache_level.deferred.extract(ref.index);
+    ASSERT(!node.empty());
+    node.mapped().tick = scheduler.CurrentTick();
+    cache_level.entries.push_back(std::move(node.mapped()));
 }
 
 void StagingBufferPool::RetainUntilCurrentTick(const StagingBufferRef& ref) {
@@ -157,15 +153,18 @@ void StagingBufferPool::RetainUntilCurrentTick(const StagingBufferRef& ref) {
         }
         return;
     }
-    auto& entries = GetCache(ref.usage)[ref.log2_level].entries;
+    StagingBuffers& cache_level = GetCache(ref.usage)[ref.log2_level];
+    // Deferred inputs remain pinned until their owner's FreeDeferred call; they wait in their
+    // level's deferred map, not in its entries.
+    if (cache_level.deferred.contains(ref.index)) {
+        return;
+    }
+    auto& entries = cache_level.entries;
     const auto it = std::find_if(entries.begin(), entries.end(), [&ref](const StagingBuffer& entry) {
         return entry.index == ref.index;
     });
     ASSERT(it != entries.end());
-    // Deferred inputs remain pinned until their owner's FreeDeferred call.
-    if (!it->deferred) {
-        it->tick = (std::max)(it->tick, tick);
-    }
+    it->tick = (std::max)(it->tick, tick);
 }
 
 void StagingBufferPool::TickFrame() {
@@ -235,7 +234,7 @@ std::optional<StagingBufferRef> StagingBufferPool::TryGetReservedBuffer(size_t s
     StagingBuffers& cache_level = GetCache(usage)[Common::Log2Ceil(size)];
 
     const auto is_free = [this](const StagingBuffer& entry) {
-        return !entry.deferred && scheduler.IsFree(entry.tick);
+        return scheduler.IsFree(entry.tick);
     };
     auto& entries = cache_level.entries;
     const auto hint_it = entries.begin() + cache_level.iterate_index;
@@ -246,11 +245,21 @@ std::optional<StagingBufferRef> StagingBufferPool::TryGetReservedBuffer(size_t s
             return std::nullopt;
         }
     }
-    cache_level.iterate_index = std::distance(entries.begin(), it) + 1;
-    it->tick = deferred ? (std::numeric_limits<u64>::max)() : scheduler.CurrentTick();
-    ASSERT(!it->deferred);
-    it->deferred = deferred;
-    return it->Ref();
+    const size_t position = static_cast<size_t>(std::distance(entries.begin(), it));
+    const StagingBufferRef ref = it->Ref();
+    if (!deferred) {
+        cache_level.iterate_index = position + 1;
+        it->tick = scheduler.CurrentTick();
+        return ref;
+    }
+    // The last entry takes its place, so the next lookup starts there.
+    cache_level.iterate_index = position;
+    cache_level.deferred.emplace(it->index, std::move(*it));
+    if (it != entries.end() - 1) {
+        *it = std::move(entries.back());
+    }
+    entries.pop_back();
+    return ref;
 }
 
 StagingBufferRef StagingBufferPool::CreateStagingBuffer(size_t size, MemoryUsage usage, bool deferred) {
@@ -278,32 +287,11 @@ StagingBufferRef StagingBufferPool::CreateStagingBuffer(size_t size, MemoryUsage
     vk::Buffer buffer = memory_allocator.TryCreateBuffer(buffer_ci, usage);
     if (!buffer) {
         // No memory left for it (#262: Mario Kart World on an 8 GB laptop with Intel UHD, a
-        // 128 MiB upload). Free the idle staging buffers and try again, then wait for the GPU so
-        // the ones it was still reading are idle too. Those handed out in the current tick may
-        // feed commands not recorded yet (the caller's input while it asks for its output): they
-        // move to the tick after Finish, so they are neither freed nor handed out again.
+        // 128 MiB upload). Free the idle staging buffers and try again, then wait for the GPU.
         ReleaseIdleBuffers();
         buffer = memory_allocator.TryCreateBuffer(buffer_ci, usage);
         if (!buffer) {
-            const u64 current_tick = scheduler.CurrentTick();
-            scheduler.Finish();
-            const u64 next_tick = scheduler.CurrentTick();
-            for (StagingBuffersCache* const cache :
-                 {&device_local_cache, &upload_cache, &download_cache}) {
-                for (StagingBuffers& staging : *cache) {
-                    for (StagingBuffer& entry : staging.entries) {
-                        if (!entry.deferred && entry.tick >= current_tick) {
-                            entry.tick = next_tick;
-                        }
-                    }
-                }
-            }
-            for (u64& sync_tick : sync_ticks) {
-                if (sync_tick >= current_tick) {
-                    sync_tick = next_tick;
-                }
-            }
-            ReleaseIdleBuffers();
+            ReleaseMemory();
             buffer = memory_allocator.TryCreateBuffer(buffer_ci, usage);
         }
     }
@@ -345,17 +333,23 @@ StagingBufferRef StagingBufferPool::CreateStagingBuffer(size_t size, MemoryUsage
         device.IsBufferDeviceAddressSupported()
             ? device.GetLogical().GetBufferDeviceAddress(*buffer)
             : VkDeviceAddress{};
-    StagingBuffer& entry = GetCache(usage)[log2_size].entries.emplace_back(StagingBuffer{
+    StagingBuffer entry{
         .buffer = std::move(buffer),
         .device_address = buffer_address,
         .mapped_span = mapped_span,
         .usage = usage,
         .log2_level = log2_size,
         .index = unique_ids++,
-        .tick = deferred ? (std::numeric_limits<u64>::max)() : scheduler.CurrentTick(),
-        .deferred = deferred,
-    });
-    return entry.Ref();
+        .tick = scheduler.CurrentTick(),
+    };
+    const StagingBufferRef ref = entry.Ref();
+    StagingBuffers& cache_level = GetCache(usage)[log2_size];
+    if (deferred) {
+        cache_level.deferred.emplace(entry.index, std::move(entry));
+    } else {
+        cache_level.entries.push_back(std::move(entry));
+    }
+    return ref;
 }
 
 StagingBufferPool::StagingBuffersCache& StagingBufferPool::GetCache(MemoryUsage usage) {
@@ -376,18 +370,44 @@ u64 StagingBufferPool::CachedBytes(MemoryUsage usage) {
     u64 bytes{};
     const StagingBuffersCache& cache = GetCache(usage);
     for (size_t level = 0; level < NUM_LEVELS; ++level) {
-        if (!cache[level].entries.empty()) {
-            bytes += u64{cache[level].entries.size()} << level;
+        const size_t count = cache[level].entries.size() + cache[level].deferred.size();
+        if (count != 0) {
+            bytes += u64{count} << level;
         }
     }
     return bytes;
+}
+
+void StagingBufferPool::ReleaseMemory() {
+    // Waits for the GPU so the buffers it was still reading are idle too. Those handed out in
+    // the current tick may feed commands not recorded yet (the caller's input while it asks for
+    // its output): they move to the tick after Finish, so they are neither freed nor handed out
+    // again.
+    const u64 current_tick = scheduler.CurrentTick();
+    scheduler.Finish();
+    const u64 next_tick = scheduler.CurrentTick();
+    for (StagingBuffersCache* const cache : {&device_local_cache, &upload_cache, &download_cache}) {
+        for (StagingBuffers& staging : *cache) {
+            for (StagingBuffer& entry : staging.entries) {
+                if (entry.tick >= current_tick) {
+                    entry.tick = next_tick;
+                }
+            }
+        }
+    }
+    for (u64& sync_tick : sync_ticks) {
+        if (sync_tick >= current_tick) {
+            sync_tick = next_tick;
+        }
+    }
+    ReleaseIdleBuffers();
 }
 
 void StagingBufferPool::ReleaseIdleBuffers() {
     for (StagingBuffersCache* const cache : {&device_local_cache, &upload_cache, &download_cache}) {
         for (StagingBuffers& staging : *cache) {
             std::erase_if(staging.entries, [this](const StagingBuffer& entry) {
-                return !entry.deferred && scheduler.IsFree(entry.tick);
+                return scheduler.IsFree(entry.tick);
             });
             staging.delete_index = 0;
             staging.iterate_index = 0;
@@ -426,7 +446,8 @@ void StagingBufferPool::ReleaseLevel(StagingBuffersCache& cache, size_t log2) {
     const auto is_deletable = [this](const StagingBuffer& entry) {
         return scheduler.IsFree(entry.tick);
     };
-    const size_t begin_offset = staging.delete_index;
+    // Deferred checkouts take entries out of the vector since the last sweep.
+    const size_t begin_offset = (std::min)(staging.delete_index, old_size);
     const size_t end_offset = (std::min)(begin_offset + deletions_per_tick, old_size);
     const auto begin = entries.begin() + begin_offset;
     const auto end = entries.begin() + end_offset;

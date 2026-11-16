@@ -256,7 +256,7 @@ void TextureCache<P>::RunGarbageCollector(bool out_of_memory) {
     };
     const auto Cleanup = [this, &num_iterations, &high_priority_mode, &aggressive_mode, &CanEvict,
                           out_of_memory, batch_downloads, &evictions, &eviction_bytes,
-                          &flush_evictions](ImageId image_id) {
+                          &flush_evictions, &evict_bad_overlaps](ImageId image_id) {
         if (num_iterations == 0) {
             return true;
         }
@@ -308,8 +308,11 @@ void TextureCache<P>::RunGarbageCollector(bool out_of_memory) {
             VideoCommon::Nx2CacheStats::Add(
                 VideoCommon::Nx2CacheStats::g_counters.texture_evicted_downloaded);
         }
+        trace_delete_flags = static_cast<u32>(image.flags);
+        trace_delete_downloaded = must_download;
         UnregisterImage(image_id);
-        trace_delete_reason = aggressive_mode      ? "gc-aggressive"
+        trace_delete_reason = evict_bad_overlaps   ? "gc-bad-overlap"
+                              : aggressive_mode    ? "gc-aggressive"
                               : high_priority_mode ? "gc-high-priority"
                                                    : "gc";
         DeleteImage(image_id, image.scale_tick > frame_tick + 5);
@@ -1633,7 +1636,8 @@ bool TextureCache<P>::RescaleRenderTargets() {
             }
             check_rescale(color_buffer_id, tmp_color_images[index]);
         }
-        if (flags[Dirty::ZetaBuffer] || force) {
+        // The surface clip, which a padded depth target's size depends on, has no flag of its own.
+        if (flags[Dirty::ZetaBuffer] || force || depth_target_padded) {
             flags[Dirty::ZetaBuffer] = false;
             BindRenderTarget(&render_targets.depth_buffer_id, FindDepthBuffer());
         }
@@ -2822,6 +2826,13 @@ void TextureCache<P>::RefreshContents(Image& image, ImageId image_id) {
                     runtime.InsertUploadMemoryBarrier();
                 }
                 image.flags |= ImageFlagBits::ContentsDefined;
+            }
+            if (TextureCacheTrace()) {
+                LOG_WARNING(HW_GPU,
+                            "TCTRACE stale-skip gpu={:#x} fmt={} {}x{}x{} guest={}KiB frame={}",
+                            image.gpu_addr, static_cast<u32>(image.info.format),
+                            image.info.size.width, image.info.size.height, image.info.size.depth,
+                            image.guest_size_bytes / 1024, frame_tick);
             }
             ++tc_stale_skips;
             tc_stale_skip_bytes += image.guest_size_bytes;
@@ -4352,6 +4363,7 @@ ImageViewId TextureCache<P>::FindColorBuffer(size_t index) {
 template <class P>
 ImageViewId TextureCache<P>::FindDepthBuffer() {
     const auto& regs = maxwell3d->regs;
+    depth_target_padded = false;
     if (!regs.zeta_enable) {
         return ImageViewId{};
     }
@@ -4359,7 +4371,16 @@ ImageViewId TextureCache<P>::FindDepthBuffer() {
     if (gpu_addr == 0) {
         return ImageViewId{};
     }
-    const ImageInfo info(regs.zeta, regs.zeta_size, regs.anti_alias_samples_mode);
+    ImageInfo info(regs.zeta, regs.zeta_size, regs.anti_alias_samples_mode);
+    depth_target_padded = IsPaddedSquare(info);
+    // Ocarina of Time draws its shadow maps into depth targets padded to whole GOBs (800x793) and
+    // samples them as the square texture they are (793x793). The padding is not part of the
+    // image: the surface clip bounds rendering, so a clip inside the square never reaches it.
+    // One image then serves both, instead of two with a copy for each new size.
+    const u32 clip_right = regs.surface_clip.x.Value() + regs.surface_clip.width.Value();
+    if (depth_target_padded && clip_right <= info.size.height) {
+        info.size.width = info.size.height;
+    }
     return FindRenderTargetView(info, gpu_addr);
 }
 
@@ -4831,13 +4852,16 @@ void TextureCache<P>::DeleteImage(ImageId image_id, bool immediate_delete) {
         if (TextureCacheTrace()) {
             LOG_WARNING(HW_GPU,
                         "TCTRACE delete id={} gpu={:#x} fmt={} {}x{}x{} guest={}KiB immediate={} "
-                        "reason={} frame={}",
+                        "reason={} flags={:#x} downloaded={} frame={}",
                         image_id.index, image.gpu_addr, static_cast<u32>(image.info.format),
                         image.info.size.width, image.info.size.height, image.info.size.depth,
                         image.guest_size_bytes / 1024, immediate_delete, trace_delete_reason,
-                        frame_tick);
+                        static_cast<u32>(image.flags) | trace_delete_flags,
+                        trace_delete_downloaded, frame_tick);
         }
         trace_delete_reason = "other";
+        trace_delete_flags = 0;
+        trace_delete_downloaded = false;
     }
     VideoCommon::Nx2FastDraw::Break(VideoCommon::Nx2FastDraw::Reason::Invalidation);
     // Drop every decode still queued for it, whatever IsDecoding says: an image re-decoded while

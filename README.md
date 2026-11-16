@@ -34,7 +34,7 @@ A fork of [Lichii](https://github.com/zortos293/Lichii) (the yuzu, Eden, Eglanti
 
 [Get it](#get-it) · [Devices](#devices) · [Test it](#test-it-on-your-device-10-minutes) · [Contribute](#contribute-with-or-without-an-ai-agent) · [Measured wins](#measured-wins) · [How the pacing works](#how-the-frame-pacing-works) · [Roadmap](#roadmap) · [Docs](#docs) · [FAQ](#faq) · [Website](https://karimalsalah.github.io/guarana/)
 
-<sub>**Languages:** English · [简体中文](docs/i18n/README.zh-CN.md) · [Español](docs/i18n/README.es.md) · [Português (Brasil)](docs/i18n/README.pt-BR.md) · [日本語](docs/i18n/README.ja.md) · [한국어](docs/i18n/README.ko.md) · [Français](docs/i18n/README.fr.md) · [Deutsch](docs/i18n/README.de.md) · [Русский](docs/i18n/README.ru.md) · [العربية](docs/i18n/README.ar.md)</sub>
+<sub>**Languages:** English · [简体中文](docs/i18n/README.zh-CN.md) · [Español](docs/i18n/README.es.md) · [Português (Brasil)](docs/i18n/README.pt-BR.md) · [日本語](docs/i18n/README.ja.md) · [한국어](docs/i18n/README.ko.md) · [Français](docs/i18n/README.fr.md) · [Deutsch](docs/i18n/README.de.md) · [Русский](docs/i18n/README.ru.md) · [العربية](docs/i18n/README.ar.md) · [Suomi](docs/i18n/README.fi.md)</sub>
 
 </div>
 
