@@ -8,6 +8,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -92,6 +93,37 @@ struct Patch {
 // Frontends only need to list what is unchecked.
 [[nodiscard]] std::vector<std::string> StoredDisabledAddons(u64 title_id,
                                                             std::vector<std::string> unchecked);
+
+// A run of bytes of its module that a built-in patch writes, checks or keeps its state in. For the
+// test that no two built-ins that can be applied together touch the same bytes.
+struct BuiltinPatchRange {
+    enum class Kind : u8 {
+        Code,     // Over the game's code, or checked there before the patch applies
+        CodeCave, // In the executable padding after the text
+        State,    // Zero-filled BSS that the patch's routines keep their state in
+    };
+
+    std::string patch; // The built-in's name
+    u64 title_id{};
+    std::string module;
+    std::string build_id;
+    Kind kind{Kind::Code};
+    size_t offset{}; // Module offset of the first byte
+    size_t size{};
+    // PatchNSO never applies two built-ins together when one names the other in `replaces`, or when
+    // both are of the same set of alternatives (a group, or the render scales).
+    std::string replaces;
+    std::string alternatives;
+};
+
+// Every range of every built-in patch, listed in Add-Ons or not.
+[[nodiscard]] std::vector<BuiltinPatchRange> BuiltinPatchRanges();
+
+// The overlapping pairs among `ranges` that PatchNSO can meet in one module: two ranges of one
+// patch, or of two patches for the same title, module and build id that can be applied together.
+// One line per pair, empty when there is none. A range may end where the next one begins.
+[[nodiscard]] std::vector<std::string> FindBuiltinPatchOverlaps(
+    std::span<const BuiltinPatchRange> ranges);
 
 // A centralized class to manage patches to games.
 class PatchManager {

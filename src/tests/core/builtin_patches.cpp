@@ -306,6 +306,125 @@ TEST_CASE("Built-in Max Resolution patch is listed and loaded for Ocarina's main
     REQUIRE_FALSE(builtin_enabled());
 }
 
+TEST_CASE("Built-in patches that can be applied together never touch the same bytes",
+          "[patch_manager]") {
+    using Kind = FileSys::BuiltinPatchRange::Kind;
+    const auto ranges = FileSys::BuiltinPatchRanges();
+
+    // The real table: every code cave, hook and state block of every built-in.
+    const auto overlaps = FileSys::FindBuiltinPatchOverlaps(ranges);
+    for (const auto& overlap : overlaps) {
+        FAIL_CHECK(overlap);
+    }
+    CHECK(overlaps.empty());
+
+    // The table is what the check ran on: the caves and the state this file patches are in it.
+    const auto has = [&](std::string_view patch, Kind kind, size_t offset, size_t size) {
+        return std::ranges::any_of(ranges, [&](const FileSys::BuiltinPatchRange& range) {
+            return range.patch == patch && range.kind == kind && range.offset == offset &&
+                   range.size == size && range.title_id == OcarinaTitleId &&
+                   range.module == "main" && range.build_id == OcarinaBuildIdHex;
+        });
+    };
+    CHECK(has(MaxResolution, Kind::Code, 0x805BD0, 4));
+    CHECK(has(FpsUnlock, Kind::CodeCave, 0x3C46200, UnlockRoutineSize));
+    CHECK(has(DynamicFps, Kind::CodeCave, 0x3C46200, DynamicRoutineSize));
+    CHECK(has(FpsUnlock, Kind::State, 0x4E9FE00, StepStateSize));
+    CHECK(has(DynamicFps, Kind::State, 0x4E9FE00, DynamicStateSize));
+    // The hitstop hook writes 44 bytes and the turn speed hook 8.
+    CHECK(has(FpsUnlock, Kind::Code, 0x2F53268, 44));
+    CHECK(has(FpsUnlock, Kind::Code, 0x261EB18, 8));
+    for (const auto& range : ranges) {
+        CAPTURE(range.patch, range.offset);
+        CHECK(range.size != 0);
+    }
+
+    // FPS Unlock and Dynamic FPS share caves because one replaces the other; without that
+    // relation the same ranges are an overlap.
+    auto unrelated = ranges;
+    for (auto& range : unrelated) {
+        range.replaces.clear();
+    }
+    CHECK_FALSE(FileSys::FindBuiltinPatchOverlaps(unrelated).empty());
+}
+
+TEST_CASE("The built-in overlap check tells ranges that collide from those that cannot",
+          "[patch_manager]") {
+    using Kind = FileSys::BuiltinPatchRange::Kind;
+    const auto range = [](std::string name, size_t offset, size_t size) {
+        return FileSys::BuiltinPatchRange{.patch = std::move(name),
+                                          .title_id = OcarinaTitleId,
+                                          .module = "main",
+                                          .build_id = std::string{OcarinaBuildIdHex},
+                                          .kind = Kind::CodeCave,
+                                          .offset = offset,
+                                          .size = size};
+    };
+    const auto overlaps = [](const FileSys::BuiltinPatchRange& a,
+                             const FileSys::BuiltinPatchRange& b) {
+        const std::array both{a, b};
+        return FileSys::FindBuiltinPatchOverlaps(both);
+    };
+    const auto a = range("A", 0x1000, 0x80);
+
+    SECTION("Two patches whose caves share bytes collide") {
+        const auto found = overlaps(a, range("B", 0x1040, 0x80));
+        REQUIRE(found.size() == 1);
+        CHECK(found[0] == "\"A\" main+0x1000..0x1080 overlaps \"B\" main+0x1040..0x10c0");
+        CHECK(overlaps(a, range("B", 0x107F, 1)).size() == 1);
+        CHECK(overlaps(a, range("B", 0xFF0, 0x11)).size() == 1);
+        CHECK(overlaps(a, range("B", 0x1000, 0x80)).size() == 1);
+        CHECK(overlaps(a, range("B", 0x800, 0x1000)).size() == 1);
+    }
+
+    SECTION("A cave may end where the next begins") {
+        CHECK(overlaps(a, range("B", 0x1080, 0x80)).empty());
+        CHECK(overlaps(a, range("B", 0xF80, 0x80)).empty());
+    }
+
+    SECTION("Two ranges of one patch collide") {
+        CHECK(overlaps(a, range("A", 0x1040, 4)).size() == 1);
+    }
+
+    SECTION("A patch and the one it replaces may share bytes") {
+        auto b = range("B", 0x1000, 0x78);
+        b.replaces = "A";
+        CHECK(overlaps(a, b).empty());
+        CHECK(overlaps(b, a).empty());
+        b.replaces = "C";
+        CHECK(overlaps(a, b).size() == 1);
+    }
+
+    SECTION("Alternatives of one set may share bytes") {
+        auto first = a;
+        auto second = range("B", 0x1000, 0x80);
+        first.alternatives = "Text Speed";
+        second.alternatives = "Text Speed";
+        CHECK(overlaps(first, second).empty());
+        second.alternatives = "render scale";
+        CHECK(overlaps(first, second).size() == 1);
+        second.alternatives.clear();
+        CHECK(overlaps(first, second).size() == 1);
+    }
+
+    SECTION("Another title, module or build of the game is another module") {
+        auto b = range("B", 0x1000, 0x80);
+        b.title_id = OtherTitleId;
+        CHECK(overlaps(a, b).empty());
+        b = range("B", 0x1000, 0x80);
+        b.module = "sdk";
+        CHECK(overlaps(a, b).empty());
+        b = range("B", 0x1000, 0x80);
+        b.build_id = "00";
+        CHECK(overlaps(a, b).empty());
+    }
+
+    SECTION("Every colliding pair is reported") {
+        const std::array three{a, range("B", 0x1000, 4), range("C", 0x1002, 4)};
+        CHECK(FileSys::FindBuiltinPatchOverlaps(three).size() == 3);
+    }
+}
+
 namespace {
 
 // The three "frame rate over 100" branches FPS Unlock removes, with their original words.
