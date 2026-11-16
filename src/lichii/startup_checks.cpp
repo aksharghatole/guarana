@@ -19,8 +19,15 @@
 #include <unistd.h>
 #endif
 
+#include <cstdlib>
+#include <fstream>
+#include <iterator>
+#include <string>
+
 #include <fmt/core.h>
 #include "common/boot_timing.h"
+#include "common/fs/path_util.h"
+#include "common/ini_peek.h"
 #include "video_core/vulkan_common/vulkan_instance.h"
 #include "video_core/vulkan_common/vulkan_library.h"
 #include "lichii/startup_checks.h"
@@ -47,6 +54,28 @@
 
 namespace {
 VulkanCheckOutcome vulkan_check_outcome;
+
+/// EDEN_NX2_STARTUP_CHECK_ASYNC=1: the check's child runs while the frontend starts, and
+/// FinishVulkanCheck waits for it before the first use of Vulkan
+bool CheckBesideStart() {
+    static const bool on = [] {
+        const char* value = std::getenv("EDEN_NX2_STARTUP_CHECK_ASYNC");
+        return value != nullptr && value[0] == '1';
+    }();
+    return on;
+}
+
+/// The check's child process until FinishVulkanCheck has its verdict
+struct CheckChild {
+#ifdef _WIN32
+    PROCESS_INFORMATION process{};
+    std::string marker; ///< The text vulkan_check.txt gets once the check passes
+#else
+    pid_t pid = -1;
+#endif
+    bool running = false;
+};
+CheckChild check_child;
 } // Anonymous namespace
 
 #ifdef _WIN32
@@ -543,34 +572,15 @@ bool StartupChecks(const char* arg0, bool* has_broken_vulkan, bool perform_vulka
                 vulkan_check_outcome.end = Common::BootTiming::Now();
                 return false;
             }
-
-            // Wait until the process exits and get exit code from it
-            WaitForSingleObject(process_info.hProcess, INFINITE);
-            DWORD exit_code = STILL_ACTIVE;
-            const int err = GetExitCodeProcess(process_info.hProcess, &exit_code);
-            if (err == 0) {
-                fmt::print(stderr, "GetExitCodeProcess failed with error {}\n", GetLastError());
-            }
-
-            // Vulkan is broken if the child crashed (return value is not zero)
-            *has_broken_vulkan = (exit_code != 0);
-
-            if (CloseHandle(process_info.hProcess) == 0) {
-                fmt::print(stderr, "CloseHandle failed with error {}\n", GetLastError());
-            }
-            if (CloseHandle(process_info.hThread) == 0) {
-                fmt::print(stderr, "CloseHandle failed with error {}\n", GetLastError());
-            }
-
-            if (*has_broken_vulkan) {
-                vulkan_check_outcome.reason += fmt::format(", and it failed (exit code {})",
-                                                           exit_code);
-            } else {
-                WriteVulkanCheckMarker(key.text);
-            }
+            check_child = CheckChild{.process = process_info, .marker = key.text, .running = true};
         }
-        vulkan_check_outcome.end = Common::BootTiming::Now();
-        BeginVulkanCheckSession();
+        if (check_child.running && CheckBesideStart()) {
+            // The frontend starts while the child runs; FinishVulkanCheck waits for its verdict
+            // before the first use of Vulkan (MainWindow).
+            vulkan_check_outcome.beside_start = true;
+        } else {
+            *has_broken_vulkan = FinishVulkanCheck();
+        }
     }
 
     if (!SetEnvironmentVariableA(STARTUP_CHECK_ENV_VAR, nullptr)) {
@@ -595,18 +605,14 @@ bool StartupChecks(const char* arg0, bool* has_broken_vulkan, bool perform_vulka
             vulkan_check_outcome.end = Common::BootTiming::Now();
             return false;
         }
-
-        // Get exit code from child process
-        int status;
-        const int r_val = waitpid(pid, &status, 0);
-        vulkan_check_outcome.end = Common::BootTiming::Now();
-        if (r_val == -1) {
-            const int err = errno;
-            fmt::print(stderr, "wait failed with error {}\n", err);
-            return false;
+        check_child = CheckChild{.pid = pid, .running = true};
+        if (CheckBesideStart()) {
+            // The frontend starts while the child runs; FinishVulkanCheck waits for its verdict
+            // before the first use of Vulkan (MainWindow).
+            vulkan_check_outcome.beside_start = true;
+        } else {
+            *has_broken_vulkan = FinishVulkanCheck();
         }
-        // Vulkan is broken if the child crashed (return value is not zero)
-        *has_broken_vulkan = (status != 0);
     }
 
     const int env_var_cleared = unsetenv(STARTUP_CHECK_ENV_VAR);
@@ -621,6 +627,65 @@ bool StartupChecks(const char* arg0, bool* has_broken_vulkan, bool perform_vulka
 
 const VulkanCheckOutcome& GetVulkanCheckOutcome() {
     return vulkan_check_outcome;
+}
+
+bool FinishVulkanCheck() {
+    bool broken = false;
+#ifdef _WIN32
+    if (check_child.running) {
+        check_child.running = false;
+        // Wait until the process exits and get exit code from it
+        WaitForSingleObject(check_child.process.hProcess, INFINITE);
+        DWORD exit_code = STILL_ACTIVE;
+        if (GetExitCodeProcess(check_child.process.hProcess, &exit_code) == 0) {
+            fmt::print(stderr, "GetExitCodeProcess failed with error {}\n", GetLastError());
+        }
+        // Vulkan is broken if the child crashed (return value is not zero)
+        broken = exit_code != 0;
+        if (CloseHandle(check_child.process.hProcess) == 0) {
+            fmt::print(stderr, "CloseHandle failed with error {}\n", GetLastError());
+        }
+        if (CloseHandle(check_child.process.hThread) == 0) {
+            fmt::print(stderr, "CloseHandle failed with error {}\n", GetLastError());
+        }
+        if (broken) {
+            vulkan_check_outcome.reason += fmt::format(", and it failed (exit code {})", exit_code);
+        } else {
+            WriteVulkanCheckMarker(check_child.marker);
+        }
+    }
+    if (vulkan_check_outcome.start > 0.0 && vulkan_check_outcome.end == 0.0) {
+        vulkan_check_outcome.end = Common::BootTiming::Now();
+        BeginVulkanCheckSession();
+    }
+#else
+    if (check_child.running) {
+        check_child.running = false;
+        // Get exit code from child process
+        int status = 0;
+        if (waitpid(check_child.pid, &status, 0) == -1) {
+            const int err = errno;
+            fmt::print(stderr, "wait failed with error {}\n", err);
+        } else {
+            // Vulkan is broken if the child crashed (return value is not zero)
+            broken = status != 0;
+        }
+    }
+    if (vulkan_check_outcome.start > 0.0 && vulkan_check_outcome.end == 0.0) {
+        vulkan_check_outcome.end = Common::BootTiming::Now();
+    }
+#endif
+    return broken;
+}
+
+bool PerformVulkanCheckSetting() {
+    std::ifstream file{Common::FS::GetEdenPath(Common::FS::EdenPath::ConfigDir) / "qt-config.ini",
+                      std::ios::binary};
+    if (!file) {
+        return true;
+    }
+    const std::string text{std::istreambuf_iterator<char>{file}, std::istreambuf_iterator<char>{}};
+    return Common::IniBoolSetting(text, "Debugging", "perform_vulkan_check", true);
 }
 
 void EndVulkanCheckSession() {
