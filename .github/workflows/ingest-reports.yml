@@ -36,6 +36,9 @@ on:
       - ".github/ISSUE_TEMPLATE/**"
       - ".github/labels.yml"
       - "tools/bench/bench.py"
+      # The engine's GPU families, which tools/ingest/device_classes.py copies.
+      - "src/common/device_profile.cpp"
+      - "src/common/device_profile.h"
       - "site/benchmarks.html"
       - "site/agents.json"
       - "site/data/community.json"
