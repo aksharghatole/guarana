@@ -64,7 +64,7 @@
       "applicationCategory": "GameApplication",
       "applicationSubCategory": "Game console emulator",
       "operatingSystem": "Windows, Linux, macOS",
-      "softwareVersion": "20.3.0",
+      "softwareVersion": "20.4.0",
       "downloadUrl": "https://github.com/karimalsalah/guarana/releases/latest",
       "installUrl": "https://github.com/karimalsalah/guarana/releases/latest",
       "releaseNotes": "https://github.com/karimalsalah/guarana/blob/main/CHANGELOG.md",
@@ -356,15 +356,15 @@
 
 <section class="section" aria-labelledby="next">
   <div class="wrap">
-    <h2 id="next">New in v20.3</h2>
-    <p class="section-intro">Released in v20.3.0 on 2026-11-14; see the <a href="https://github.com/karimalsalah/guarana/blob/main/CHANGELOG.md">changelog</a>.</p>
+    <h2 id="next">New in v20.4</h2>
+    <p class="section-intro">Released in v20.4.0 on 2026-11-16; see the <a href="https://github.com/karimalsalah/guarana/blob/main/CHANGELOG.md">changelog</a>.</p>
     <ul>
-      <li><strong>Frames on time in Ocarina of Time</strong> on Windows integrated GPUs, by default: the screen copy runs on a queue of its own, and the frame budget no longer raises the resolution into the GPU time the cadence frees. The numbers are at the top of this page.</li>
-      <li><strong>FLUID at 120 Hz</strong>, the default for Ocarina of Time on Windows Intel iGPUs at 120 Hz (a 144 Hz display gets a locked 144 Hz set), opt-in elsewhere: a frame every refresh of a 120 Hz display. In Hyrule Field on the Arc 140T, five swapchain images took slots on time from 790&ndash;801 to 1134&ndash;1137 of 1200.</li>
-      <li><strong>Fewer freezes:</strong> pointer-slot compute rebuilds compile on a worker, which removes 2.5&ndash;3.4 s freezes in Hyrule Field (upstream Lichii #995).</li>
-      <li><strong>A device profile in the log:</strong> GPU, CPU cores, RAM, power, display refresh and a device class, in one line you can paste into a report. No default changes with it yet.</li>
-      <li><strong>Launcher:</strong> an opt-in three-level Game Booster that undoes everything when the game exits, and Windows integration: game files open from Explorer, <code>guarana://</code> links, taskbar progress and opt-in notifications.</li>
-      <li><strong>Checkable downloads:</strong> a signed build provenance attestation on every release file.</li>
+      <li><strong>In step with upstream Lichii:</strong> 67 more commits. Loading Shaders waits only for the pipelines the last two sessions used and builds the older ones in the background. Ocarina of Time no longer locks at 11 to 17 game fps at 240 Hz with 4x frame generation, and the 16 GB memory growth in its Skulltula House is gone (upstream Lichii #1803, #1779, #1845).</li>
+      <li><strong>Fixes ported from upstream pull requests:</strong> Ocarina of Time's 3D view no longer comes out white or in false colours after a load, resolution scaling stays within the device's image limits (it lost the device on AMD at 1.5x and 2x), and an upload list no longer grows for the whole session (upstream Lichii #1835, #1890, #1908).</li>
+      <li><strong>The locked 120 Hz and 144 Hz sets out of the box</strong> for Ocarina of Time on Intel iGPUs, with interpolated in-between frames: a line in the shipped switch file no longer turns them off.</li>
+      <li><strong>A driver verdict at boot:</strong> the log says when the graphics driver is older than a version the engine knows something about, and the window names a driver the renderer has to work around.</li>
+      <li><strong>Launcher:</strong> a new interface whose Home shows your last measured session, and four Doctor rows that check Guarana's own settings and only report.</li>
+      <li><strong>Known in this version:</strong> a boot can fail to show a frame while the host microphone opens (issue #199). It happened twice in 22 boots on one laptop, once on the first start from a new folder. Close Guarana and start the game again.</li>
     </ul>
   </div>
 </section>

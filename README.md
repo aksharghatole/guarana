@@ -69,6 +69,19 @@ Guarana is tuned for integrated GPUs: **Intel Arc first, AMD handhelds next, and
 
 *Community reports* are third-party numbers from other builds and scenes. For context, a survey of other Switch 2 forks, as of 2026-11-13, found none claiming more than 26 fps in Hyrule Field on an Intel integrated GPU. Requirements, vendor notes and the device profile line: [docs/DEVICES.md](docs/DEVICES.md). Reports feed the leaderboard on the [benchmarks page](https://karimalsalah.github.io/guarana/benchmarks.html).
 
+## New in v20.4
+
+Released in [v20.4.0](https://github.com/karimalsalah/guarana/releases/tag/v20.4.0) on 2026-11-16; the details are in the [changelog](CHANGELOG.md#2040---2026-11-16).
+
+- **In step with upstream Lichii:** 67 more commits of its `nx2` branch. Loading Shaders waits only for the pipelines the last two sessions used and builds the older ones in the background (upstream [#1803](https://github.com/zortos293/Lichii/pull/1803)). Ocarina of Time no longer locks at 11 to 17 game fps at 240 Hz with 4x frame generation (upstream [#1779](https://github.com/zortos293/Lichii/pull/1779)), and the 16 GB memory growth in its Skulltula House is gone (upstream [#1845](https://github.com/zortos293/Lichii/pull/1845)).
+- **Fixes ported from upstream pull requests:** Ocarina of Time's 3D view no longer comes out white or in false colours after a load ([#1835](https://github.com/zortos293/Lichii/pull/1835)). Resolution scaling stays within the device's image limits, which lost the device on AMD at 1.5x and 2x ([#1890](https://github.com/zortos293/Lichii/pull/1890)). An upload list no longer grows for the whole session, 768 MiB after 90 minutes ([#1908](https://github.com/zortos293/Lichii/pull/1908)). Moving the window during play no longer aborts (Eglantine `c40fca7da4`).
+- **The locked 120 Hz and 144 Hz sets out of the box** for Ocarina of Time on Intel integrated GPUs, with interpolated in-between frames: a line in the shipped switch file no longer turns them off ([#119](https://github.com/karimalsalah/guarana/issues/119)).
+- **A driver verdict at boot:** the log says when the graphics driver is older than a version the engine knows something about, and the window names a driver the renderer has to work around ([docs/DEVICES.md](docs/DEVICES.md)).
+- **Launcher:** a new interface whose Home shows your last measured session, and four Doctor rows that check Guarana's own settings and only report.
+- **For contributors:** a paired A/B on a recorded GPU trace, without the game. `tools/nx2/trace_replay.py bench` says whether two builds or switch sets draw the same frames bit for bit and what a frame cost ([docs/nx2/gpu-trace.md](docs/nx2/gpu-trace.md)).
+
+Known in this version: a boot can fail to show a frame while the host microphone opens ([#199](https://github.com/karimalsalah/guarana/issues/199)). It happened twice in 22 boots on one laptop, once on the first start from a new folder. Close Guarana and start the game again.
+
 <a name="coming-in-v203"></a>
 
 ## New in v20.3
