@@ -184,6 +184,58 @@ class BenchTest(unittest.TestCase):
         self.assertEqual(report["timing"], "ms")
         self.assertEqual(report["variants"][1]["median_ms"], 14.0)
 
+    def test_variants_are_judged_against_the_baselines_own_noise(self):
+        # A driver that never replays bit for bit: every run of every variant differs a little.
+        def image(seed, spread):
+            return bytes((64 + (i * 7 + seed) % spread) % 256 if i % 4 != 3 else 255
+                         for i in range(8 * 8 * 4))
+
+        runs = {}
+
+        def run(cli, trace, out, extra, switches):
+            name = Path(out).parent.name
+            count = runs[name] = runs.get(name, 0) + 1
+            Path(out).mkdir(parents=True, exist_ok=True)
+            spread = 64 if switches.get("EDEN_NX2_BROKEN") else 3
+            for index in range(3):
+                shift = 1 if name == "same" else 0
+                write_png(Path(out) / f"frame-{index:04}.png", 8, 8,
+                          image(index + count + shift, spread), [0])
+            result = frames([f"{name}-{count}-{index}" for index in range(3)], [9.0] * 3)
+            for frame in result["frames"]:
+                frame["file"] = f"frame-{frame['index']:04}.png"
+            return result
+
+        variants = [{"name": "base", "cli": "cli", "switches": {}},
+                    {"name": "same", "cli": "cli", "switches": {"EDEN_NX2_GM": "11"}},
+                    {"name": "broken", "cli": "cli", "switches": {"EDEN_NX2_BROKEN": "1"}}]
+        with tempfile.TemporaryDirectory() as directory:
+            report = trace_replay.bench(variants, "scene.lxtrace", directory, repeat=2, skip=0,
+                                        run=run, noise_stride=1)
+        base, same, broken = report["variants"]
+        self.assertIsNotNone(report["noise_floor_db"])
+        self.assertFalse(base["repeats_itself"])
+        self.assertTrue(same["within_noise"])
+        self.assertFalse(broken["within_noise"])
+        self.assertLess(broken["worst_psnr_db"], report["noise_floor_db"] - 1.0)
+        table = trace_replay.bench_table(report)
+        self.assertIn("noise floor", table[0])
+        self.assertIn("baseline", table[2])
+        self.assertIn("within noise", table[3])
+        self.assertIn("3 frames differ", table[4])
+
+    def test_a_baseline_that_repeats_itself_leaves_no_noise_room(self):
+        def run(cli, trace, out, extra, switches):
+            return frames(["a", "x" if switches else "b"], [9.0, 9.0])
+
+        with tempfile.TemporaryDirectory() as directory:
+            report = trace_replay.bench([{"name": "base", "cli": "cli", "switches": {}},
+                                         {"name": "head", "cli": "cli", "switches": {"A": "1"}}],
+                                        "scene.lxtrace", directory, repeat=2, skip=0, run=run)
+        self.assertIsNone(report["noise_floor_db"])
+        self.assertTrue(report["variants"][0]["within_noise"])
+        self.assertFalse(report["variants"][1]["within_noise"])
+
     def test_frames_without_images_compare_by_hash(self):
         base = {"frames": [{"index": 0, "hash": "a"}]}
         head = {"frames": [{"index": 0, "hash": "b"}]}
