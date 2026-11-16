@@ -20,8 +20,8 @@ yuzu's NCE, which Eden and Lichii kept: [`src/core/arm/nce/`](../src/core/arm/nc
 |---|---|---|---|
 | Windows and Linux, x86-64 | `windows-x86_64`, `linux-x86_64` | dynarmic, x64 backend | The fork's target; measured |
 | Linux ARM64 | `linux-aarch64` AppImage and tar.gz | NCE by default for a 64-bit title with a 39-bit address space, else dynarmic's ARM64 backend | Never booted by the project |
-| Android | `android-arm64` APK (new) | Same as Linux ARM64 | Never booted by the project |
-| Windows on ARM (Snapdragon X) | `windows-arm64` zip (new) | dynarmic, ARM64 backend; fastmem through the Windows exception handler | Never booted by the project. The x64 build also runs there under Prism, which emulates AVX2 since the October 2025 update of Windows 11 24H2 ([Windows Latest](https://www.windowslatest.com/2025/10/21/windows-11-on-arm-is-finally-ready-for-gaming-with-avx-avx2-support-now-rolling-out)), at the cost of translating dynarmic's x64 output once more |
+| Android | `android-arm64` APK, once `android.yml` lands (#227) | Same as Linux ARM64 | Never booted by the project |
+| Windows on ARM (Snapdragon X) | `windows-arm64` zip, once its release row lands (#228) | dynarmic, ARM64 backend; fastmem through the Windows exception handler | Never booted by the project. The x64 build should also run there under Prism, which emulates AVX2 since the October 2025 update of Windows 11 24H2 ([Windows Latest](https://www.windowslatest.com/2025/10/21/windows-11-on-arm-is-finally-ready-for-gaming-with-avx-avx2-support-now-rolling-out)), at the cost of translating dynarmic's x64 output once more |
 | macOS, Apple Silicon | `macos-arm64` | dynarmic, ARM64 backend | Upstream's build, not tested here |
 
 ## Expected gain
