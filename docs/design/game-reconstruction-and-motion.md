@@ -265,8 +265,9 @@ time and the vblank wait only, the game's own queue the same in both):
 
 So the target is reachable only within about 4 ms by position in the pipeline, with extrapolation
 or with interpolation's onset; meeting it outright needs a shorter queue than the 60 frame baseline
-(the cadence's phase lock, which keeps real frames done about 3 ms before their slot, or
-`EDEN_NX2_QUEUE_LIMIT`). What is measured today is the presenter's part, `real frame age at
+(the cadence's phase lock, which keeps real frames done about 3 ms before their slot; a cap on
+the GPU queue, `EDEN_NX2_QUEUE_LIMIT`, showed no gain and was removed). What is measured today
+is the presenter's part, `real frame age at
 display` in the `Fluid presenter` line. An onset probe does not exist: B3 adds one to the debug
 server (a right-stick step through `input`, then the time to the first shown frame whose picture
 moved, from `shown_frames`), so both arms of the target can be measured on the owner's machine.
