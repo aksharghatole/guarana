@@ -96,6 +96,15 @@ on:
       - "launcher/src-tauri/src/credits.rs"
       - "launcher/src-tauri/src/main.rs"
       - "launcher/ui/src/screens/about.ts"
+      # The app identity and news source that tools/ci/tests/test_app_identity.py checks.
+      - "dist/io.github.karimalsalah.guarana.*"
+      - "CMakeLists.txt"
+      - "CMakeModules/GenerateSCMRev.cmake"
+      - "src/common/scm_rev.cpp.in"
+      - "src/common/net/net.cpp"
+      - "src/core/hle/service/bcat/news/builtin_news.cpp"
+      - "src/lichii/main.cpp"
+      - "src/lichii/Info.plist"
 
 permissions: {}
 
