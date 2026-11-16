@@ -69,6 +69,9 @@ frame rate. [How it works](../README.md#how-the-frame-pacing-works).
 Interpolation, the method most frame generators use, has to hold each real frame back until the next
 one exists. The extrapolation Guarana uses in Ocarina of Time (`EDEN_NX2_EXTRAPOLATE=1`) predicts
 forward from the newest real frame instead, so it shows each real frame as soon as it is ready.
+That is the 60 Hz set. On an Intel integrated GPU with the game on a 120 or 144 Hz display, the
+locked 120 Hz and 144 Hz sets interpolate the in-between frames (`EDEN_NX2_FLUID_INTERP=1`), so
+there each real frame is held back while the frames before it are shown.
 Neither method makes the game react faster. No latency measurement has been published yet.
 
 ### Why does it hitch the first time I enter an area?

@@ -978,7 +978,8 @@
       kin(c, '16.7 ms.', AX, y1, hs, t, tC, { fill: 'ember', weight: 900, sweepAt: tC + 0.1, grp: 'lh' });
       kin(c, 'Locked.', AX, y2, ls, t, tC + 0.1, { fill: PAPER, weight: 900, sweepAt: tC + 0.35, grp: 'ls' });
       const chipA = popA(dt - 0.35, 0.2);
-      const chips = ['p50 16.7 ms', 'title screen: 100% of frames within 2 ms'];
+      // The 60 Hz set's Hyrule Field result: two paired rounds on the Arc 140T (docs/switches.md, EDEN_NX2_FLUID_QUEUE).
+      const chips = ['Hyrule Field: 0 late flips', '90-99.5% of frames within 2 ms'];
       let cy = LAND ? R0 + 150 * u : y2 + ls * 0.46 + 60 * u;
       let cxL = LAND ? vis.x0 : AX;
       const cs = Math.min(31 * u, ((LAND ? safe.x1 - vis.x0 : safe.w) - 50 * u) / tw(chips[1], 1, 600, MONO));
