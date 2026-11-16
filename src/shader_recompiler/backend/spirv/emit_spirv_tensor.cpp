@@ -730,7 +730,7 @@ Id EmitTensorMulAdd(EmitContext& ctx, IR::Inst* inst, Id a, Id b, Id c) {
         // EDEN_NX2_HMMA_ZERO_C: the zero matrix is made once, by the first HMMA that needs it, so
         // a program without one keeps its SPIR-V.
         const bool zero_c{ctx.profile.cooperative_hmma_zero_c && IsZeroAccumulator(inst->Arg(2))};
-        if (zero_c && !ctx.cooperative_hmma->zero_accumulator) {
+        if (zero_c && !Sirit::ValidId(ctx.cooperative_hmma->zero_accumulator)) {
             ctx.cooperative_hmma->zero_accumulator = ctx.ConstantComposite(
                 ctx.cooperative_hmma->matrix_c, ctx.ConstantNull(ctx.cooperative_hmma->float16));
         }
