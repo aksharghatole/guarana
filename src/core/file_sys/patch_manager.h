@@ -40,6 +40,28 @@ enum class PatchSource {
     Packed,
 };
 
+// The version label of every built-in patch in a patch list.
+inline constexpr std::string_view BUILTIN_PATCH_LABEL = "Built-in";
+
+// How Add-Ons marks a built-in patch.
+enum class BuiltinPatchLevel : u8 {
+    Standard,     // No mark: a choice between two ways to play
+    Recommended,  // Leave it on: the game misbehaves without it
+    Experimental, // New or little tested: it may cause problems
+};
+
+// What PatchNSO did with a built-in patch when the game's module was last loaded in this session.
+enum class BuiltinPatchResult : u8 {
+    NotLoaded,      // The game has not started since the emulator did
+    Applied,
+    Disabled,       // Unchecked in Add-Ons
+    Replaced,       // An applied built-in contains it
+    GroupTaken,     // Another built-in of its group was applied first
+    WrongBuild,     // The game's build id is not the one the patch was made for
+    UnexpectedCode, // The module is not laid out or filled as the patch expects
+    ModConflict,    // A user mod already changed bytes the patch writes
+};
+
 struct Patch {
     bool enabled;
     std::string name;
@@ -52,6 +74,14 @@ struct Patch {
     u32 numeric_version{0};
     // Off until the user turns it on: disabled_addons then holds EnabledAddonKey(name).
     bool off_by_default{false};
+    // The rest is set for built-in patches only. `name` stays the key disabled_addons stores.
+    bool builtin{false};
+    // What the patch does, for a player.
+    std::string description;
+    BuiltinPatchLevel level{BuiltinPatchLevel::Standard};
+    // An enabled built-in that contains this one: while that one applies, this one is not used.
+    std::string replaced_by;
+    BuiltinPatchResult last_result{BuiltinPatchResult::NotLoaded};
 };
 
 // The disabled_addons entry that turns on an add-on that is off by default.
