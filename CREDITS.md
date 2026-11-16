@@ -60,6 +60,14 @@ Pull requests to zortos293/Lichii that were not merged upstream when we took the
 
 When one of these is merged upstream, the next upstream sync brings the upstream version, and this table says so.
 
+## Other Lichii forks
+
+Work taken from other forks of Lichii. Their authors as recorded in git; each fork is GPL-3.0.
+
+| Fork | Commits | Author | Change |
+|---|---|---|---|
+| [Fritchii](https://github.com/Frizti/Fritchii) (v5.8.4) | [58f55cb7d9](https://github.com/Frizti/Fritchii/commit/58f55cb7d9ee912931ce060ea8683694796e6ac3), [8627ff4233](https://github.com/Frizti/Fritchii/commit/8627ff4233323977fd5ead274867e4dd2ce66d5c) | [Frizti](https://github.com/Frizti) | The performance overlay's RAM and VRAM readouts: what the emulator holds and the room left, amber under 2 GB of RAM or 1 GB of video memory (hand port onto our overlay; the room of an integrated GPU's shared memory is also bounded by the free RAM) |
+
 ## Artwork
 
 The Lichii logo, icon and library artwork that the packages still use are by YOB (yobslab), from upstream Lichii (`dist/branding`).
