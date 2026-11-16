@@ -399,7 +399,7 @@ private:
     std::atomic<const char*> oot_upscaler_name{};
     std::atomic<const char*> oot_idle_reason{};
     mutable std::atomic<bool> oot_upscaler_off{};
-    std::atomic<bool> oot_upscaler_failed{};
+    mutable std::atomic<bool> oot_upscaler_failed{};
     std::optional<u64> oot_dlss_frame;
     std::array<f32, 2> oot_jitter_applied{}; ///< in the viewport state now (render pixels)
     std::array<f32, 2> oot_jitter_offset{};  ///< what oot_jitter_frame's scene draws used
