@@ -35,7 +35,9 @@ android {
     namespace = "io.github.zortos293.lichii"
 
     compileSdkVersion = "android-36"
-    ndkVersion = "28.2.13676358"
+    // r29: its libc++ has std::atomic_ref, which dynarmic's ARM64 exclusive monitor and
+    // video_core/nx2.h use; r28's does not.
+    ndkVersion = "29.0.14206865"
 
     val isNightly =
         providers.gradleProperty("nightly").orNull?.toBooleanStrictOrNull() ?: false

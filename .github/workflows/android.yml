@@ -115,7 +115,7 @@ jobs:
           set -euo pipefail
           sdkmanager="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
           yes | "$sdkmanager" --licenses > /dev/null || true
-          "$sdkmanager" --install "ndk;28.2.13676358" "cmake;3.31.5" > /dev/null
+          "$sdkmanager" --install "ndk;29.0.14206865" "cmake;3.31.5" > /dev/null
 
       - name: Restore compiler objects
         id: ccache
