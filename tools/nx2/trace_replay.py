@@ -251,7 +251,9 @@ def bench(variants, trace, out, repeat=3, skip=10, extra=(), run=replay):
         row["repeats_itself"] = all(not differing_frames(runs[0], other) for other in runs[1:])
         differing = differing_frames(reference, runs[0])
         row["differing_frames"] = differing
-        row["identical_to_baseline"] = not differing and row["repeats_itself"]
+        # A replay without frames compared nothing: it is not identical to anything.
+        row["identical_to_baseline"] = (bool(reference["frames"]) and not differing and
+                                        row["repeats_itself"])
         if differing:
             index = differing[0]
             frames = [{frame["index"]: frame for frame in result["frames"]}.get(index)
@@ -284,7 +286,9 @@ def bench_table(report):
         runs = row["runs"]
         p95 = percentile([run["p95_ms"] for run in runs if run["p95_ms"] is not None], 0.5)
         change = f"{row['change_percent']:+.1f}%" if "change_percent" in row else ""
-        if not row["repeats_itself"]:
+        if not runs or not runs[0]["frames"]:
+            image = "no frames"
+        elif not row["repeats_itself"]:
             image = "its own runs differ"
         elif row is report["variants"][0]:
             image = "baseline"
@@ -420,6 +424,9 @@ def main():
         (Path(args.out) / "bench.json").write_text(json.dumps(report, indent=2) + "\n")
         print("\n".join(bench_table(report)))
         baseline = report["variants"][0]
+        if not baseline["runs"] or baseline["runs"][0]["frames"] == 0:
+            print("The baseline replayed no frames: nothing was compared.")
+            return 1
         if not baseline["repeats_itself"]:
             print("The baseline's own runs differ: the comparison proves nothing.")
             return 1
