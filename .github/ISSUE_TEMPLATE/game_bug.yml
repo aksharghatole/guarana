@@ -70,6 +70,11 @@ body:
         - AMD Ryzen Z1 / Z2 (handheld)
         - Steam Deck (AMD, handheld)
         - Other AMD integrated
+        - Qualcomm Adreno X1 / X2 (Snapdragon X laptops)
+        - Qualcomm Adreno 8xx (Snapdragon 8 Elite and newer)
+        - Qualcomm Adreno 7xx (Snapdragon 8 Gen 1 to 8 Gen 3)
+        - Qualcomm Adreno 6xx or older (Snapdragon 865, 888, 8cx)
+        - Other Android GPU (Mali, Xclipse, PowerVR)
         - Intel Arc discrete (A or B series)
         - NVIDIA RTX 50 series
         - NVIDIA RTX 40 series
@@ -85,8 +90,8 @@ body:
     id: driver
     attributes:
       label: GPU driver
-      description: "The full version. Intel on Windows: Intel Graphics Software, or Device Manager > Display adapters > the GPU > Driver tab. AMD on Windows: AMD Software: Adrenalin Edition > System > Software & Driver. Linux: the driverInfo line of vulkaninfo --summary."
-      placeholder: "e.g. Intel 32.0.101.xxxx, AMD Adrenalin 25.x.x, Mesa 25.x"
+      description: "The full version. Intel on Windows: Intel Graphics Software, or Device Manager > Display adapters > the GPU > Driver tab. AMD on Windows: AMD Software: Adrenalin Edition > System > Software & Driver. Linux: the driverInfo line of vulkaninfo --summary. Snapdragon X on Windows: Device Manager > Display adapters > Qualcomm Adreno > Driver tab. Android: the GPU driver in use (the system's own, or a custom one such as Turnip) and its version."
+      placeholder: "e.g. Intel 32.0.101.xxxx, AMD Adrenalin 25.x.x, Mesa 25.x, Adreno driver or Turnip 25.x"
     validations:
       required: true
 
@@ -96,9 +101,11 @@ body:
       label: Operating system
       options:
         - Windows 11
+        - Windows 11 on ARM (Snapdragon)
         - Windows 10
         - Linux
         - macOS
+        - Android
         - Other
     validations:
       required: true

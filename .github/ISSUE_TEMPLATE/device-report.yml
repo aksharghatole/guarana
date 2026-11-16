@@ -25,7 +25,7 @@ body:
     attributes:
       label: Device
       description: Maker and model
-      placeholder: "e.g. ASUS Zenbook S 14 (UX5406), ASUS ROG Ally X, a desktop"
+      placeholder: "e.g. ASUS Zenbook S 14 (UX5406), ASUS ROG Ally X, Surface Laptop 7 (Snapdragon X), AYN Odin 2, a desktop"
     validations:
       required: true
 
@@ -38,6 +38,7 @@ body:
         - Handheld
         - Mini PC
         - Desktop
+        - Phone or tablet
     validations:
       required: true
 
@@ -45,7 +46,7 @@ body:
     id: cpu
     attributes:
       label: CPU
-      placeholder: "e.g. Intel Core Ultra 9 285H, AMD Ryzen Z2 Extreme"
+      placeholder: "e.g. Intel Core Ultra 9 285H, AMD Ryzen Z2 Extreme, Snapdragon X Elite X1E-80-100, Snapdragon 8 Gen 2"
     validations:
       required: true
 
@@ -66,6 +67,11 @@ body:
         - AMD Ryzen Z1 / Z2 (handheld)
         - Steam Deck (AMD, handheld)
         - Other AMD integrated
+        - Qualcomm Adreno X1 / X2 (Snapdragon X laptops)
+        - Qualcomm Adreno 8xx (Snapdragon 8 Elite and newer)
+        - Qualcomm Adreno 7xx (Snapdragon 8 Gen 1 to 8 Gen 3)
+        - Qualcomm Adreno 6xx or older (Snapdragon 865, 888, 8cx)
+        - Other Android GPU (Mali, Xclipse, PowerVR)
         - Intel Arc discrete (A or B series)
         - NVIDIA RTX 50 series
         - NVIDIA RTX 40 series
@@ -81,8 +87,8 @@ body:
     id: driver
     attributes:
       label: GPU driver
-      description: The full version. Windows, Device Manager > Display adapters > Driver; Linux, the Mesa version.
-      placeholder: "e.g. Intel 32.0.101.xxxx, AMD Adrenalin 25.x.x, Mesa 25.x"
+      description: The full version. Windows, Device Manager > Display adapters > Driver; Linux, the Mesa version; Android, the GPU driver in use (the system's own, or a custom one such as Turnip) and its version.
+      placeholder: "e.g. Intel 32.0.101.xxxx, AMD Adrenalin 25.x.x, Mesa 25.x, Adreno driver or Turnip 25.x"
     validations:
       required: true
 
@@ -99,7 +105,7 @@ body:
     id: os
     attributes:
       label: Operating system
-      placeholder: "e.g. Windows 11 24H2 (26100.xxxx), SteamOS 3.x, Fedora 43"
+      placeholder: "e.g. Windows 11 24H2 (26100.xxxx), Windows 11 24H2 on ARM, SteamOS 3.x, Fedora 43, Android 15"
     validations:
       required: true
 

@@ -60,6 +60,11 @@ body:
         - AMD Ryzen Z1 / Z2 (handheld)
         - Steam Deck (AMD, handheld)
         - Other AMD integrated
+        - Qualcomm Adreno X1 / X2 (Snapdragon X laptops)
+        - Qualcomm Adreno 8xx (Snapdragon 8 Elite and newer)
+        - Qualcomm Adreno 7xx (Snapdragon 8 Gen 1 to 8 Gen 3)
+        - Qualcomm Adreno 6xx or older (Snapdragon 865, 888, 8cx)
+        - Other Android GPU (Mali, Xclipse, PowerVR)
         - Intel Arc discrete (A or B series)
         - NVIDIA
         - AMD discrete
