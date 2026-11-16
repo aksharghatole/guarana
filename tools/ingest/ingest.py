@@ -30,6 +30,8 @@ HERE = Path(__file__).resolve().parent
 if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))  # -I leaves the script's directory off sys.path.
 
+import device_classes  # noqa: E402
+import evidence  # noqa: E402
 import github_api  # noqa: E402
 from issue_forms import (GPU_OPTIONS, fenced_blocks, md_escape, normalize_newlines, normalize_text,  # noqa: E402
                          one_line, parse_checkboxes, parse_form, scrub)
@@ -89,7 +91,16 @@ FIELD_DOCS = {
     "source": "tools/bench or manual.",
     "gpu_vendor, gpu_type": "intel, amd, nvidia, qualcomm or other; integrated, discrete or unknown, from the "
                             "form's Graphics card answer.",
-    "runs": "Every valid tools/bench row of the report (variant, scene, fps, p50_ms, p99_ms, switches).",
+    "device_class": "The engine's GPU family for the reporter's GPU (src/common/device_profile.cpp; "
+                    "tools/ingest/device_classes.py): family, status (family, none when the GPU is in no family, "
+                    "unresolved when only the Graphics card answer names it), the candidates when unresolved, and "
+                    "the GPU name and where it was read. Only an exact GPU name or PCI ID gives a family.",
+    "title_id": "The game's program id: the tools/bench row's, else the listed game's (AGENTS.md); null when "
+                "not known.",
+    "runs": "Every valid tools/bench row of the report: variant, scene, fps, p50_ms, p99_ms, the switches and "
+            "settings it set, measured (UTC), machine_id, build (the emulator's own), power (ac or battery), "
+            "quiet (tools/bench measured the other programs' CPU use, under its limit), within_2ms_pct and "
+            "shown_fps where measured, and its warnings.",
     "notes": "Caveats a reader should see next to the numbers.",
     "credit": "The reporter's GitHub handle when they filled in \"Credit me as\" with the account that opened the "
               "report; null otherwise. It is the only personal detail a record carries, and only by consent.",
@@ -447,11 +458,46 @@ def row_name(row, logins):
     return scrub(str(row.get("variant", "?")), logins)[:40]
 
 
+def row_settings(row, logins):
+    """The row's variant settings, {section: {key: value}}, as {"section/key": "value"}."""
+    found = {}
+    settings = row.get("variant_settings") if isinstance(row.get("variant_settings"), dict) else {}
+    for section, values in settings.items():
+        items = values.items() if isinstance(values, dict) else [(None, values)]
+        for key, value in items:
+            name = str(section) if key is None else f"{section}/{key}"
+            found[scrub(name, logins)[:60]] = "default" if value is None else scrub(str(value), logins)[:80]
+            if len(found) == 12:
+                return found
+    return found
+
+
+_POWER = {"AC": "ac", "battery": "battery"}
+_WARNING = re.compile(r"[a-z0-9_]{1,40}")
+
+
 def summarize_row(row, logins):
+    hardware = row.get("hardware") if isinstance(row.get("hardware"), dict) else {}
+    system = row.get("system") if isinstance(row.get("system"), dict) else {}
+    emulator = row.get("emulator") if isinstance(row.get("emulator"), dict) else {}
+    pacing = row.get("pacing") if isinstance(row.get("pacing"), dict) else {}
+    warnings = [str(item) for item in row.get("warnings") or [] if _WARNING.fullmatch(str(item))]
+    measured = str(row.get("timestamp_utc", ""))
+    peak, limit = system.get("other_cpu_max_pct"), system.get("other_cpu_limit_pct")
     return {"variant": row_name(row, logins),
             "scene": scrub(str(row.get("scene", "")), logins)[:60],
             "fps": rounded(row.get("fps"), 2), "p50_ms": rounded(row.get("p50_ms"), 1),
-            "p99_ms": rounded(row.get("p99_ms"), 1), "switches": row_switches(row, logins)}
+            "p99_ms": rounded(row.get("p99_ms"), 1), "switches": row_switches(row, logins),
+            "settings": row_settings(row, logins),
+            "measured": measured if re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ", measured) else None,
+            "machine_id": str(row.get("machine_id", ""))[:10] or None,
+            "build": normalize_build(emulator["build"], logins) if isinstance(emulator.get("build"), str) else None,
+            "power": _POWER.get(hardware.get("power_source")),
+            "quiet": (is_number(peak) and is_number(limit) and peak <= limit
+                      and "background_cpu_not_measured" not in warnings),
+            "within_2ms_pct": rounded(pacing.get("within_2ms_pct"), 1) if is_number(pacing.get("within_2ms_pct")) else None,
+            "shown_fps": rounded(pacing.get("shown_fps"), 1) if is_number(pacing.get("shown_fps")) else None,
+            "warnings": warnings[:8]}
 
 
 def select_rows(rows, validate, logins=()):
@@ -554,6 +600,7 @@ def parse_report(body, number, created=None, logins=(), titles=None, validate=No
         "gpu_option": gpu_short,
         "gpu_vendor": vendor,
         "gpu_type": kind,
+        "device_class": None,
         "driver": normalize_driver(sections["GPU driver"], logins) if sections.get("GPU driver") else None,
         "ram": text("RAM", 60) or None,
         "os": text("Operating system", 60) or None,
@@ -562,6 +609,7 @@ def parse_report(body, number, created=None, logins=(), titles=None, validate=No
         "build": normalize_build(sections["Emulator build"], logins) if sections.get("Emulator build") else None,
         "game": title or "Other",
         "game_id": game_id,
+        "title_id": None,
         "scene": text("Scene", 160),
         "bench_scene": None,
         "settings": text("Settings and switches", 240) or None,
@@ -585,6 +633,7 @@ def parse_report(body, number, created=None, logins=(), titles=None, validate=No
     credit = credit_handle(sections.get(CREDIT_LABEL), logins, warnings)
     record["credit"] = credit
 
+    bench_gpus = []
     if rows:
         usable, left_out = select_rows(rows, validate, logins)
         if not usable:
@@ -612,6 +661,7 @@ def parse_report(body, number, created=None, logins=(), titles=None, validate=No
                 warnings.append("The tools/bench rows come from more than one machine; the row lists the first.")
             hardware = best.get("hardware") if isinstance(best.get("hardware"), dict) else {}
             gpus = [gpu for gpu in hardware.get("gpus") or [] if isinstance(gpu, dict) and isinstance(gpu.get("name"), str)]
+            bench_gpus = [scrub(gpu["name"], logins)[:100] for gpu in gpus[:4]]
             same_vendor = [gpu for gpu in gpus if vendor in gpu["name"].lower()] or gpus
             if same_vendor:
                 record["gpu"] = scrub(clean_gpu_name(same_vendor[0]["name"]), logins)[:60] or gpu_short
@@ -624,6 +674,8 @@ def parse_report(body, number, created=None, logins=(), titles=None, validate=No
             if hardware.get("power_source") == "battery" or "on_battery" in (best.get("warnings") or []):
                 notes.append("Measured on battery.")
             title_id = str(best.get("title_id", "")).upper()
+            if re.fullmatch(r"[0-9A-F]{16}", title_id):
+                record["title_id"] = title_id
             if title_id in titles:
                 bench_title = titles[title_id]
                 if title is None:
@@ -649,6 +701,15 @@ def parse_report(body, number, created=None, logins=(), titles=None, validate=No
                 notes.append("Frame generation was on: game fps counts only the frames the game renders.")
         if not record["screenshot"]:
             problems.append('Add a screenshot of the scene under "Screenshot", so the row can be checked.')
+
+    if record["title_id"] is None:
+        record["title_id"] = next((program for program, name in sorted(titles.items())
+                                   if name.casefold() == record["game"].casefold()), None)
+    stated = device_classes.report_gpu_line(sections.get("Anything else", ""))
+    found = device_classes.classify(gpu_short, vendor, kind, bench_gpus, *(stated or (None, None)))
+    if found["name"]:
+        found["name"] = scrub(found["name"], logins)[:60]
+    record["device_class"] = found
 
     if record["fps_approximate"]:
         notes.append("Approximate figure.")
@@ -822,13 +883,17 @@ class Git:
         return [line.split()[1] for line in raw.split("\n\n", 1)[0].splitlines() if line.startswith("parent ")]
 
     def commit_file(self, parent, path, content, message):
-        """A commit whose tree is parent's with path set to content (LF, UTF-8); nothing checked out
-        is touched."""
-        blob = self.out("hash-object", "-w", "--stdin", data=content.encode("utf-8"))
+        return self.commit_files(parent, {path: content}, message)
+
+    def commit_files(self, parent, files, message):
+        """A commit whose tree is parent's with each path of files set to its content (LF, UTF-8);
+        nothing checked out is touched."""
         with tempfile.TemporaryDirectory() as temp:
             index = {"GIT_INDEX_FILE": os.path.join(temp, "index")}
             self.run("read-tree", parent, env=index)
-            self.run("update-index", "--add", "--cacheinfo", f"100644,{blob},{path}", env=index)
+            for path, content in files.items():
+                blob = self.out("hash-object", "-w", "--stdin", data=content.encode("utf-8"))
+                self.run("update-index", "--add", "--cacheinfo", f"100644,{blob},{path}", env=index)
             tree = self.out("write-tree", env=index)
         name, email = BOT_IDENTITY
         identity = {"GIT_AUTHOR_NAME": name, "GIT_AUTHOR_EMAIL": email,
@@ -889,6 +954,18 @@ def fps_text(record):
     return f"{baseline['fps']:g} → {value}" if baseline.get("fps") is not None else value
 
 
+def family_text(found):
+    """The comment's line for a record's device_class."""
+    found = found or {}
+    if found.get("status") == "family":
+        return f"{device_classes.label(found['family'])}, read from the {found.get('from') or 'report'}"
+    if found.get("status") == "none":
+        return "none: the game presets know no family for this GPU"
+    candidates = " or ".join(device_classes.label(family) for family in found.get("candidates") or [])
+    return ("not known yet" + (f" ({candidates})" if candidates else "") + '. Add a line "GPU: <the name '
+            'Device Manager shows under Display adapters>" under "Anything else" to count for it')
+
+
 def scene_check_text(record):
     if record.get("scene_ok") is True:
         return "verified scene (tools/bench)"
@@ -912,6 +989,9 @@ def pull_body(changes, reports, repo):
         f"Updates `{DATA_PATH}`, the data of the [community leaderboard]({site}/benchmarks.html#community), from "
         "the issues labelled `device-report`. `ingest-reports.yml` (`tools/ingest/ingest.py`) rewrites this pull "
         "request whenever a report is opened or edited.",
+        "",
+        f"`{evidence.DATA_PATH}` comes with it: per GPU family, game and build, the reports and devices and the "
+        "effects of paired `tools/bench` rows (`tools/ingest/evidence.py`). Nothing reads it to change a default.",
         "",
         "| Report | Change | Device | GPU | Game | Game fps | Scene check |",
         "|---|---|---|---|---|---:|---|",
@@ -971,6 +1051,7 @@ def comment_body(report, main_doc, pull, repo):
             ("GPU and driver", f"{record['gpu']}, {record['driver'] or 'n/a'}"),
             ("Build", record["build"] or "n/a"),
             ("Game and scene", f"{record['game']}: {record['scene']}"),
+            ("GPU family", family_text(record.get("device_class"))),
             ("Settings", record["settings"] or "n/a"),
             ("Game fps", fps_text(record)),
             ("Frame time p50 / p99", timing),
@@ -1038,11 +1119,15 @@ def publish(github, git, repo, base, branch=BRANCH, dry_run=False, titles=None, 
                 git.delete(branch, bot_sha)
             return summary
         content = dump_document(doc)
-        current = bot_sha and bot_text == content and git.parents(bot_sha) == [main_sha]
+        evidence_content = evidence.dump(evidence.build(doc))
+        current = (bot_sha and bot_text == content and git.show(bot_sha, evidence.DATA_PATH) == evidence_content
+                   and git.parents(bot_sha) == [main_sha])
         if not current:
-            commit = git.commit_file(main_sha, DATA_PATH, content, commit_message(changes))
+            commit = git.commit_files(main_sha, {DATA_PATH: content, evidence.DATA_PATH: evidence_content},
+                                      commit_message(changes))
             if dry_run:
-                log(f"[dry run] would push {commit[:10]} to {branch} with {len(changes)} change(s):\n{content}")
+                log(f"[dry run] would push {commit[:10]} to {branch} with {len(changes)} change(s):\n{content}\n"
+                    f"{evidence.DATA_PATH}:\n{evidence_content}")
             elif not git.push(commit, branch, bot_sha):
                 log(f"{branch} moved while this run worked; starting over")
                 continue

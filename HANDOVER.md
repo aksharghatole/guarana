@@ -5,7 +5,8 @@ where things stand, how to pick up each lane, and how a change is measured. The 
 [AGENTS.md](AGENTS.md), and how an agent finds and claims work is in
 [docs/agents/README.md](docs/agents/README.md).
 
-**Last checked: 2026-11-16, 08:43 UTC**, from branch `docs/handover-v20.4.0-final`. "Observed" below means
+**Last checked: 2026-11-16, 16:30 UTC**, from branch `merge/upstream-20261116b` (the upstream
+merge to `7c7f723b68`; the measurements below are older and say when they were taken). "Observed" below means
 what `git` and `gh` showed at that time. Anything this file could not confirm is marked
 **(unsure)**. If you change the state of a lane, update its row in the same pull request.
 
@@ -20,26 +21,61 @@ what `git` and `gh` showed at that time. Anything this file could not confirm is
     (`tools/nx2/trace_replay.py bench`) and the driver verdict at boot (pull request #198).
 
   The details are in [CHANGELOG.md](CHANGELOG.md).
-- **`main` is ahead of the release** by the Ocarina of Time text speed add-ons with the
-  off-by-default built-in patches (pull request #202, Lichii #1422), by what the add-ons page
-  says about a built-in patch (#204), by a test that fails when two built-in patches applied
-  together touch the same bytes (#205), by the safer mod import, which asks before a mod is
-  replaced, writes a `mod.json`, has an Open Mods Folder button and warns when two ticked mods
-  replace the same game file (#206), and by a game's own frame-rate options being listed in that
-  game's properties only (#203, a part of Eglantine #837). They go out with the next version.
-  None of the five has been tried in the game yet: CI built them and ran their tests.
-- **The `upstream` mirror is at `99e89096cb`.** It was pushed by hand, because an upstream commit
-  changes a workflow file ([docs/LANES.md](docs/LANES.md), "When the sync stops"). The scheduled
-  sync continues from there and will need the same push the next time upstream touches a workflow,
-  unless `UPSTREAM_SYNC_TOKEN` is set.
-- **What the merge changed for our own code**, for whoever merges upstream next:
-  - Upstream routes each global memory access among its own candidate buffers. `EDEN_NX2_GM` bits
-    2 and 4 sit on top: a load takes its narrowed list when it has one, its route otherwise.
-  - Upstream's pass trace took the names of our per-pass GPU cost timing, which is now
-    `cost_pass_*`, `CostPass` and `ReportCostPassTimes` in `vk_scheduler`.
-  - A lookup drops a prebuilt pipeline that is still queued and the draw builds it; the async
-    boot counts such a build as ended.
-- **Open pull requests:** #195 (the Hall of fame, from the `legacy` workflow).
+- **v20.5.0-rc1 is tagged** on `7b713872dd` (pull request #211), a pre-release: the Ocarina of
+  Time text speed add-ons with the off-by-default built-in patches (#202, Lichii #1422), what the
+  add-ons page says about a built-in patch (#204), the test for two built-ins that touch the same
+  bytes (#205), the safer mod import (#206), a game's own frame-rate options on its own page (#203,
+  a part of Eglantine #837), the overlay's live trace (#209) and the replay's refusal of a trace
+  without presents (#207). None of them has been tried in the game yet. The upstream merge below
+  came after the tag and goes into the next candidate.
+- **`main` holds zortos293/Lichii `nx2` up to `7c7f723b68`** (50 commits after `99e89096cb`); the
+  resolutions are listed in the merge's pull request. The `upstream` mirror is at `7c7f723b68`
+  too. GitHub deletes a pull request's head branch when it merges it, so merging the sync's own
+  pull request (head `upstream`) deletes the mirror and the next sync fails (#201, closed by the
+  run of 16 November 13:55 UTC after the branch was pushed again by hand). Leave the sync's pull
+  request alone: merge upstream on a `merge/upstream-<date>` branch, and the sync's pull request is
+  marked merged once `main` has its commits ([docs/LANES.md](docs/LANES.md), "Upstream").
+- **What the merges changed for our own code**, for whoever merges upstream next:
+  - To `99e89096cb`: upstream routes each global memory access among its own candidate buffers,
+    and `EDEN_NX2_GM` bits 2 and 4 sit on top (a load takes its narrowed list when it has one, its
+    route otherwise). Upstream's pass trace took the names of our per-pass GPU cost timing, which
+    is now `cost_pass_*`, `CostPass` and `ReportCostPassTimes` in `vk_scheduler`. A lookup drops a
+    prebuilt pipeline that is still queued and the draw builds it; the async boot counts such a
+    build as ended.
+  - To `7c7f723b68`, Ocarina of Time's No sharpening: upstream copies the image the output pass
+    samples (cb0+0xc0) instead of the tonemap draw it tracked, brings the network back after a
+    skip that no replacement followed (`output_pending`, `after_network`; Lichii #1875) and skips
+    the unused heavy dispatch in that window (Lichii #1941). `KeplerCompute::BypassOotNetwork`
+    does exactly that without our switches, and keeps our logs and the `OotNetworkBypassed` call
+    the extrapolation guide needs. `EDEN_NX2_OOT_BYPASS_ANY` and the switches read with it still
+    copy the tonemap the rasterizer tracks (`TrackOotTonemappedImage`, `IsTonemapShader`,
+    `DrawArea`, which upstream deleted and we keep), so with them a tonemap drawn by a fourth
+    shader is still copied stale (Lichii #1688). Moving the switch path to the sampled image is
+    open.
+  - To `7c7f723b68`, elsewhere: `Device::ReportLoss()` is `[[noreturn]]` and ends the process,
+    so no `[[fallthrough]]` follows it. A buffer is made through `CreateAfterRecovery`, which
+    frees staging memory and retries; the `EDEN_NX2_UMA` host-mapped choice sits inside it. The
+    general channel's event and a failed load's process are closed before the kernel shuts down
+    by upstream's code (Lichii #1932), which replaced ours from carried #408. Nextendo online play
+    is a setting, not a build option (`OnlinePlayAvailable` is gone). Upstream's
+    `nsight_aftermath` input of `release-binaries.yml` is refused only for a build that would
+    publish. New user-visible "Lichii" strings were renamed Guarana; the User-Agent sent to
+    nextendo.network stays "Lichii", as it was.
+- **Upstream's signed NPLN patches (Lichii #1358) and our built-in patches** do not go through the
+  same code. Ours live in `PatchManager` (all ten are Ocarina of Time's), show in Add-Ons, are
+  turned off as `+<name>` in `[DisabledAddOns]` and apply in `PatchNSO`. An NPLN patch is a
+  certificate fix that nextendo.network signs for one exact build: only while online play is on
+  (Configure > Network, off by default), `PrepareForGame` reads the main build id before the boot
+  (`AppLoader::ReadMainBuildIdHex`, from the Qt `BootGame` and `guarana-cli`) and fetches or
+  re-checks the build's patch, and the NSO loader applies it after the mods and our built-ins,
+  keyed on title id, build id and module, only when its guards (the original bytes) still match.
+  A built-in or a mod that changed those bytes makes the loader refuse it ("original instructions
+  do not match"), and the game cannot reach Nextendo. Add-Ons does not list it, `[DisabledAddOns]`
+  cannot turn it off, and the #205 overlap test does not see it. No built-in patches an NPLN title
+  today, so nothing collides yet; patch packs that patch online games should check the NPLN
+  guards first.
+- **Open pull requests:** #210, the sync's own (head `upstream`): it is marked merged once `main`
+  has its commits; never merge it.
 - **Shown-frame pacing was settled on 16 November: the upstream merge cost none.** In Hyrule
   Field, counting only runs with no compiler running in any 5 s sample. The baseline is `main`
   just before the merge (`7ba919b7a8`, 417 commits after v20.3.0), so the runs say what the
@@ -61,15 +97,16 @@ what `git` and `gh` showed at that time. Anything this file could not confirm is
   pacing run, look for `cargo`, `rustc`, `ninja` and `clang-cl` from every session on the
   machine, not only your own.
 - **Known problems:**
-  - #199: a boot that never shows a frame, 2 of 22 boots of this version on the measurement
-    machine. In the first the host microphone open never returned. The second was the first
-    start ever from a new folder, and its log was not kept. The open's result follows the
-    folder the program runs from, not the build: a folder's first boot waits long for it (6 and
-    40 s where it then opened), and the two folders whose first boot was ended meanwhile are
-    refused at once ever since (`Error initializing cubeb stream, error: -1`, then silence).
-    Something decides per program path whether the microphone may be opened; a Windows
-    permission prompt would fit, but nobody saw one. The table is in the issue. CPU load alone
-    does not reproduce it: eight boots in a row beside sixteen busy threads all started.
+  - #199, fixed after v20.4.0: a boot that never showed a frame (2 of 22 boots of this version
+    on the measurement machine). Windows asks "Allow Guarana to access your microphone?" the
+    first time a program at a new path opens the microphone, and cubeb's open waits for the
+    answer. The prompt does not take the foreground, so it is easy to miss. Ocarina of Time
+    opens two capture streams while it boots, though it never captures, so its first frame
+    waited on the prompt. The answer is kept per path, and the launcher installs each version
+    in a folder of its own, so every update asked again. The prompt was seen on screen in the
+    lab on 16 November; the evidence is in the issue. Since the fix a sysmix capture stream
+    opens the host microphone only when the game starts capturing, on a helper thread, and the
+    game hears silence until the open returns.
   - The replay bench has no real rows yet. `guarana-cli --replay` starts on Intel's Windows
     driver, but the Hyrule Field trace recorded for it holds no presents: the lab script judged
     the recording finished by the file's size and closed the game during the 3 GB snapshot. Since
@@ -86,7 +123,7 @@ it becomes a default.
 
 | Candidate | What it is | State |
 |---|---|---|
-| `EDEN_NX2_OOT_BYPASS_SKIP=d9ee412f00ce399a` | Also skip the network's heavy dispatch while the output pass is bypassed (raphaeltorquat0/Lichii `c91d646a52`) | The switch exists: an A/B needs no code |
+| `EDEN_NX2_OOT_BYPASS_SKIP=d9ee412f00ce399a` | Also skip the network's heavy dispatch while the output pass is bypassed (raphaeltorquat0/Lichii `c91d646a52`) | Superseded: upstream does it by default since Lichii #1941 (merged to `7c7f723b68`), between a skipped prepass and the output copy. Not measured on an integrated GPU |
 | zortos293/Lichii#1903 | Host-visible buffer cache on integrated GPUs (15 to 25 fps on Adreno 830) | Read only; touches the buffer cache |
 | zortos293/Lichii#1897, #1810, #1797, #1816 | Collector waits once per pass; semaphore acquires without a drain; ASTC decode image reuse | Behind a switch, then A/B |
 | zortos293/Lichii#1832 | Marks routed stores' buffers written | Wait: it runs after `EDEN_NX2_GM` has built its narrowed lists from the read-only buffers |
@@ -158,5 +195,6 @@ The full rules are in [docs/BENCHMARKING.md](docs/BENCHMARKING.md) and
 
 ## Not confirmed when this was written
 
-- What stopped the second boot without frames (#199): the lab scripts on the measurement
-  machine now keep the log of a failed boot.
+- That a build with the #199 fix starts from a new folder without the prompt: the unit tests
+  cover the open waiting for capture and an open that blocks, but no first start from a fresh
+  folder has been watched on such a build yet.
