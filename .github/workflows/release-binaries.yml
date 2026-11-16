@@ -981,6 +981,8 @@ jobs:
       tag: ${{ needs.prepare.outputs.tag }}
       refspec: ${{ needs.prepare.outputs.refspec }}
       save_caches: ${{ github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main' || contains(github.ref, '/tags/') }}
+      # The release key signs what main or a tag holds, never a run dispatched on another branch.
+      sign: ${{ github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main' || contains(github.ref, '/tags/') }}
 
   # Publishes every platform's files, SHA256SUMS.txt and the notes once every platform built: a
   # tag's release (a pre-release for vX.Y.Z-<pre>), or the rolling nightly pre-release.
