@@ -16,6 +16,7 @@ add_executable(tests
     video_core/nx2_shown_frames.cpp
     video_core/nx2_stutter_trace.cpp
     video_core/game_motion_warp.cpp
+    video_core/dlss_skip_passes.cpp
     video_core/nx2_frame_predictor.cpp
     video_core/back_idle_trace.cpp
     video_core/list_macro_trace.cpp
@@ -35,6 +36,7 @@ add_executable(tests
     core/nx2_present_pacer.cpp
     core/nx2_fence_action.cpp
     core/nx2_frame_interval.cpp
+    core/nce_readiness.cpp
     core/ldn_lan_protocol.cpp
     core/perf_stats.cpp
     lichii/performance_overlay_model.cpp

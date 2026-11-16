@@ -23,6 +23,7 @@
 #include "shader_recompiler/frontend/ampere/program_override.h"
 #include "core/core.h"
 #include "video_core/gpu_split.h"
+#include "video_core/dlss_skip_passes.h"
 #include "video_core/fire_emblem_upscale.h"
 #include "video_core/front_qmd.h"
 #include "video_core/nx2_profile.h"
@@ -903,8 +904,16 @@ bool KeplerCompute::ProcessGameDlss(u64 program_id, u64 native_key) {
     if (dlss_chain.output_pass) {
         return replacement && !recheck_after_dispatch && FinishDlssEvaluation();
     }
-    return DlssNetworkDroppedForGood() && !passes->IsPrepass(native_key) &&
-           dlss_chain.programs.contains(native_key);
+    // EDEN_NX2_DLSS_SKIP_PASSES (Lichii #864 and #1985): also skip the passes while the
+    // replacement draws over their output, or while the network cannot be shown. An
+    // output-mismatch recheck validates this frame's network output: its passes all run.
+    const bool replacement_will_draw = replacement && !recheck_after_dispatch &&
+                                       dlss_chain.replacement_drew && fe_upscale_jitter.Has();
+    return VideoCommon::DlssSkipPasses::Skip(VideoCommon::DlssSkipPasses::Rules(),
+                                             DlssNetworkDroppedForGood(),
+                                             blocker != VideoCore::GameDlssReason::None,
+                                             replacement_will_draw) &&
+           !passes->IsPrepass(native_key) && dlss_chain.programs.contains(native_key);
 }
 
 // The game's own DLSS network (its translated programs) is shown once every pass of an
@@ -1159,9 +1168,11 @@ bool KeplerCompute::FinishDlssEvaluation() {
         dlss_motion_vectors.reset();
         dlss_depth.reset();
         (void)fe_upscale_jitter.Take();
+        dlss_chain.replacement_drew = false;
         return false;
     }
-    return TryFireEmblemUpscale();
+    dlss_chain.replacement_drew = TryFireEmblemUpscale();
+    return dlss_chain.replacement_drew;
 }
 
 // Logs the images a rejected program's handles (constant bank 0, bytes 0x80-0x11c) point to, so a

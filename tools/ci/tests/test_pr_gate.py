@@ -24,6 +24,7 @@ import yaml_subset  # noqa: E402
 
 LINUX, WINDOWS = pr_gate.BUILD_JOBS
 CHANGES = pr_gate.CHANGES_JOB
+CHANGELOG = pr_gate.CHANGELOG_JOB
 REGISTRY = "Check the switch registry"
 HEAD = "a" * 40
 MAIN_TIP = "b" * 40
@@ -37,19 +38,29 @@ def run(name, conclusion="success", status="completed", ident=1):
 
 
 def green():
-    return [run(CHANGES), run(LINUX, ident=2), run(WINDOWS, ident=3)]
+    return [run(CHANGES), run(LINUX, ident=2), run(WINDOWS, ident=3), run(CHANGELOG, ident=4)]
 
 
 def red():
-    return [run(CHANGES), run(LINUX, "failure", ident=2), run(WINDOWS, ident=3)]
+    return [run(CHANGES), run(LINUX, "failure", ident=2), run(WINDOWS, ident=3), run(CHANGELOG, ident=4)]
 
 
 def docs_only():
-    return [run(CHANGES), run(LINUX, "skipped", ident=2), run(WINDOWS, "skipped", ident=3)]
+    return [run(CHANGES), run(LINUX, "skipped", ident=2), run(WINDOWS, "skipped", ident=3), run(CHANGELOG, ident=4)]
 
 
 def building():
-    return [run(CHANGES), run(LINUX, None, "in_progress", ident=2), run(WINDOWS, None, "queued", ident=3)]
+    return [run(CHANGES), run(LINUX, None, "in_progress", ident=2), run(WINDOWS, None, "queued", ident=3),
+            run(CHANGELOG, ident=4)]
+
+
+def main_commit():
+    """A push to main: build-check runs the builds, and skips the changelog check (pull requests only)."""
+    return [run(CHANGES), run(LINUX, ident=2), run(WINDOWS, ident=3), run(CHANGELOG, "skipped", ident=4)]
+
+
+def without(runs, name):
+    return [entry for entry in runs if entry["name"] != name]
 
 
 def pull_request(**fields):
@@ -138,7 +149,7 @@ class ChecksTests(unittest.TestCase):
 
     def test_running_and_unreported_checks_are_pending(self):
         self.assertEqual(pr_gate.judge_checks(building())["state"], "pending")
-        verdict = pr_gate.judge_checks([run(CHANGES), run(LINUX, ident=2)])
+        verdict = pr_gate.judge_checks([run(CHANGES), run(LINUX, ident=2), run(CHANGELOG, ident=4)])
         self.assertEqual(verdict["state"], "pending")
         self.assertEqual(verdict["missing"], [WINDOWS])
         self.assertEqual(pr_gate.judge_checks([])["missing"], list(pr_gate.REQUIRED_CHECKS))
@@ -153,9 +164,11 @@ class ChecksTests(unittest.TestCase):
         self.assertEqual(verdict["failing"], [CHANGES + " (failure)"])
 
     def test_the_newest_run_of_a_name_counts(self):
-        runs = [run(CHANGES), run(LINUX, "failure", ident=2), run(LINUX, "success", ident=9), run(WINDOWS, ident=3)]
+        runs = [run(CHANGES), run(LINUX, "failure", ident=2), run(LINUX, "success", ident=9), run(WINDOWS, ident=3),
+                run(CHANGELOG, ident=4)]
         self.assertEqual(pr_gate.judge_checks(runs)["state"], "green")
-        runs = [run(CHANGES), run(LINUX, "success", ident=2), run(LINUX, "failure", ident=9), run(WINDOWS, ident=3)]
+        runs = [run(CHANGES), run(LINUX, "success", ident=2), run(LINUX, "failure", ident=9), run(WINDOWS, ident=3),
+                run(CHANGELOG, ident=4)]
         self.assertEqual(pr_gate.judge_checks(runs)["state"], "failing")
 
     def test_the_switch_registry_counts_only_when_it_ran(self):
@@ -357,10 +370,53 @@ class GateTests(unittest.TestCase):
         self.assertEqual((status, text), (0, "ready\n"))
 
     def test_a_job_named_twice_is_judged_once(self):
-        checks = {HEAD: [run(CHANGES), run(LINUX, ident=2), run(WINDOWS, ident=3), run(REGISTRY, "failure", ident=4)]}
+        checks = {HEAD: [run(CHANGES), run(LINUX, ident=2), run(WINDOWS, ident=3), run(REGISTRY, "failure", ident=4),
+                         run(CHANGELOG, ident=5)]}
         status, text = ask(Fake(checks=checks), "--require", REGISTRY)
         self.assertEqual((status, codes(text)), (1, ["checks-failing"]))
         self.assertEqual(text.count(REGISTRY), 1)
+
+    def test_a_failing_changelog_check_blocks(self):
+        runs = without(green(), CHANGELOG) + [run(CHANGELOG, "failure", ident=4)]
+        status, text = ask(Fake(checks={HEAD: runs}))
+        self.assertEqual((status, codes(text)), (1, ["checks-failing"]))
+        self.assertIn(CHANGELOG + " (failure)", text)
+
+    def test_a_changelog_check_that_has_not_reported_is_pending(self):
+        status, text = ask(Fake(checks={HEAD: without(green(), CHANGELOG)}))
+        self.assertEqual((status, codes(text)), (1, ["checks-pending"]))
+        self.assertIn("not reported", text)
+        self.assertIn(CHANGELOG, text)
+
+    def test_a_skipped_changelog_check_passes(self):
+        # build-check skips it for the bots' branches (bot/*, upstream, merge/upstream*).
+        runs = without(green(), CHANGELOG) + [run(CHANGELOG, "skipped", ident=4)]
+        self.assertEqual(ask(Fake(checks={HEAD: runs})), (0, "ready\n"))
+
+    def test_documentation_only_still_counts_as_skipped_builds(self):
+        self.assertEqual(pr_gate.judge_checks(docs_only())["state"], "skipped")
+        runs = without(docs_only(), CHANGELOG) + [run(CHANGELOG, "failure", ident=4)]
+        self.assertEqual(pr_gate.judge_checks(runs)["state"], "failing")
+
+    def test_the_changelog_check_is_not_asked_of_main(self):
+        # Pushes to main skip it, or older commits never ran it: main is judged by BASE_CHECKS.
+        for main_runs in (main_commit(), without(main_commit(), CHANGELOG)):
+            status, text = ask(Fake(main=[(MAIN_TIP, main_runs)]))
+            self.assertEqual((status, text), (0, "ready\n"))
+        status, text = ask(Fake(main=[(MAIN_TIP, without(red(), CHANGELOG))]))
+        self.assertEqual((status, codes(text)), (1, ["base-red"]))
+
+    def test_a_resolve_commit_takes_the_changelog_check_of_the_head(self):
+        resolve = without(green(), CHANGELOG)
+        status, text = ask(Fake(checks={HEAD: green(), RESOLVE: resolve}), "--sha", RESOLVE)
+        self.assertEqual((status, text), (0, "ready\n"))
+        failed = without(green(), CHANGELOG) + [run(CHANGELOG, "failure", ident=4)]
+        status, text = ask(Fake(checks={HEAD: failed, RESOLVE: resolve}), "--sha", RESOLVE)
+        self.assertEqual((status, codes(text)), (1, ["checks-failing"]))
+        # A changelog run on the resolve commit itself is the one that counts.
+        fake = Fake(checks={HEAD: failed, RESOLVE: green()})
+        self.assertEqual(ask(fake, "--sha", RESOLVE), (0, "ready\n"))
+        self.assertNotIn(["gh", "api", "repos/o/r/commits/%s/check-runs?per_page=100" % HEAD], fake.calls)
 
     def test_gh_failures_are_not_ready_and_say_why(self):
         status, text = ask(Fake(pr=None))
@@ -440,6 +496,14 @@ class WiringTests(unittest.TestCase):
         workflow = self.read(".github", "workflows", "build-check.yml")
         for name in pr_gate.REQUIRED_CHECKS:
             self.assertRegex(workflow, r"(?m)^    name: %s\s*$" % re.escape(name))
+
+    def test_the_changelog_check_runs_on_pull_requests_only(self):
+        # Why BASE_CHECKS leaves it out: commits pushed to main never run it.
+        workflow = self.read(".github", "workflows", "build-check.yml").replace("\r\n", "\n")
+        job = workflow.split("\n    name: %s\n" % pr_gate.CHANGELOG_JOB)[1].split("\n  # ")[0]
+        self.assertIn("github.event_name == 'pull_request'", job.split("\n")[0])
+        self.assertNotIn(pr_gate.CHANGELOG_JOB, pr_gate.BASE_CHECKS)
+        self.assertEqual(set(pr_gate.REQUIRED_CHECKS) - set(pr_gate.BASE_CHECKS), {pr_gate.CHANGELOG_JOB})
 
     def test_the_conditional_checks_are_jobs_of_switch_registry(self):
         workflow = self.read(".github", "workflows", "switch-registry.yml")
