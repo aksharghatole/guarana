@@ -246,7 +246,12 @@ below still follow the original worker process; a crash does not automatically r
   **1** once its error dialog is closed. A crash ends the process with the crash code, as before. A
   restart or a game that starts its own sub-program boots again and does not end the session;
 - shows its dialogs (load errors, confirmations, applets such as the software keyboard) as before,
-  above the fullscreen window or, before the window appears, on their own.
+  above the fullscreen window or, before the window appears, on their own;
+- on Windows, takes the launcher's AppUserModelID, `io.github.karimalsalah.guarana` (the bundle
+  identifier the installer puts on the Start menu shortcut), before any window exists
+  (`src/lichii/main.cpp`). The launcher sets the same one for itself at start (`main.rs`), also when
+  it starts from a game file or a link. Windows then treats the two as one app: their windows share
+  one taskbar button, and pinning the game's button pins the launcher.
 
 ### Pads and the log while a game runs
 
