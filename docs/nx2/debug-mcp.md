@@ -168,7 +168,10 @@ one; `name` and `value` for a switch; `name` and `disabled` for an add-on), the 
 what the player chose (settings: `apply`, `already_set`, `user_per_game`, `user_global`; switches:
 `set`, `replace_shipped`, `keep_players`, with the player's value in `player_value` and the shipped
 file's in `shipped`), its `reason`, and its `evidence`: `measured` and `where`, which names the
-`docs/switches.md` row that holds the numbers or says that nothing was measured. `inputs` holds what
+`docs/switches.md` row that holds the numbers or says that nothing was measured. A setting and a
+switch also have `community`: the community's paired `tools/bench` measurement of that value on the
+GPU family and game, as in the log line (`site/data/community-evidence.json`, the copy the build
+carries; `Core::CommunityEvidence`), or an empty string; it changes no value. `inputs` holds what
 the resolver was given: `vendor`, `integrated`, `software_tensor_math`, `device_class`,
 `gpu_family`, `refresh_hz`, `display`, and the output size against the GPU's size: `output_width`
 and `output_height` (the pixels of the display the window is on), `gpu_cores` and `gpu_cores_unit`

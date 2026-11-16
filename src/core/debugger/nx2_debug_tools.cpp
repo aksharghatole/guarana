@@ -284,6 +284,7 @@ json ResolutionState() {
         item["current"] = entry.current;
         item["reason"] = std::string{entry.reason};
         item["evidence"] = evidence(entry.evidence);
+        item["community"] = entry.community;
         settings.push_back(std::move(item));
     }
     json addons = json::array();
@@ -305,6 +306,7 @@ json ResolutionState() {
         item["shipped"] = entry.shipped ? json(*entry.shipped) : json(nullptr);
         item["reason"] = std::string{entry.reason};
         item["evidence"] = evidence(entry.evidence);
+        item["community"] = entry.community;
         switches.push_back(std::move(item));
     }
     result["title_id"] = fmt::format("{:016X}", last->title_id);

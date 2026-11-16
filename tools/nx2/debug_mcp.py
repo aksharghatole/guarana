@@ -37,7 +37,8 @@ TOOLS = [
                        "count and fps (measured over fps_window_ms), dump directory, live log "
                        "filter, the shader hashes rejected at runtime and the resolution: what "
                        "the game's settings, add-ons and switches were resolved to at boot, each "
-                       "with its value, decision, reason and evidence, and the inputs (GPU, "
+                       "with its value, decision, reason, evidence and the community's paired "
+                       "measurement where there is one, and the inputs (GPU, "
                        "display rate, output size, GPU cores).",
         "inputSchema": {
             "type": "object",
