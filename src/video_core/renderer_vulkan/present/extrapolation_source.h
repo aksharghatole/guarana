@@ -13,6 +13,10 @@ namespace Vulkan {
 struct ExtrapolationSource {
     /// Half-size RGBA16F: xy is the motion to the previous frame in UV, z is 1 - depth.
     VkImageView guide{};
+    /// The guide's image and size, for a copy that outlives the next frame
+    /// (EDEN_NX2_FG_GAME_MOTION); its usage has the transfer source bit only then.
+    VkImage guide_image{};
+    VkExtent2D guide_extent{};
     /// The scene before and after the game drew its HUD, when both exist; null otherwise.
     VkImageView hud_reference{};
     VkImageView hud_composite{};
@@ -31,6 +35,21 @@ struct ExtrapolationSource {
         return value && *value != '\0' && *value != '0';
     }();
     return requested;
+}
+
+/// EDEN_NX2_FG_GAME_MOTION=1: interpolated frames are warped from the game's motion (the guide)
+/// instead of optical flow (present/game_motion_interpolation.h).
+[[nodiscard]] inline bool GameMotionRequested() {
+    static const bool requested = [] {
+        const char* value = std::getenv("EDEN_NX2_FG_GAME_MOTION");
+        return value && std::strtoul(value, nullptr, 10) != 0;
+    }();
+    return requested;
+}
+
+/// The guide is made: for extrapolated frames or for game-motion interpolation.
+[[nodiscard]] inline bool MotionGuideRequested() {
+    return ExtrapolationRequested() || GameMotionRequested();
 }
 
 } // namespace Vulkan

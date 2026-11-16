@@ -172,6 +172,9 @@ struct CooperativeHmmaTypes {
     Id matrix_a{};
     Id matrix_b{};
     Id matrix_c{};
+    /// A zero accumulator matrix, made by the first HMMA that starts from zero
+    /// (Profile::cooperative_hmma_zero_c)
+    Id zero_accumulator{};
     u32 rows{16}; ///< Rows of A and of the accumulator
 };
 

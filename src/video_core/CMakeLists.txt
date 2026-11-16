@@ -456,6 +456,9 @@ if (ENABLE_LSFG)
         frame_gen/lsfg_translate.h
         renderer_vulkan/present/frame_extrapolation.cpp
         renderer_vulkan/present/frame_extrapolation.h
+        renderer_vulkan/present/game_motion_interpolation.cpp
+        renderer_vulkan/present/game_motion_interpolation.h
+        renderer_vulkan/present/game_motion_warp.h
         renderer_vulkan/present/frame_gen.cpp
         renderer_vulkan/present/frame_gen.h
         renderer_vulkan/present/fsr3_frame_gen.cpp
