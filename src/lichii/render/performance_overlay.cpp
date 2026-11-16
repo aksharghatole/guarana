@@ -17,6 +17,7 @@
 #include <QPen>
 #include <QStringList>
 #include <QTimer>
+#include <QWindow>
 
 #include "common/settings.h"
 #include "core/core.h"
@@ -228,8 +229,9 @@ QString PerformanceOverlay::limiterText() const {
     case Limiter::Steady:
         return tr("steady");
     case Limiter::Unknown:
-        return {};
+        break;
     }
+    return {};
 }
 
 QString PerformanceOverlay::statusText() const {
@@ -511,29 +513,29 @@ void PerformanceOverlay::paintHeader(QPainter& painter, const Layout& layout) co
     const bool shown_hot = m_generatedFps >= 0.5;
     const bool low_sag = m_fps && m_lowFps && m_lowSpring.y < m_fpsSpring.y * 0.8;
     const QFont hero = MonoFont(layout.detailed ? 40 : 32, QFont::DemiBold);
-    const QFont small = MonoFont(layout.detailed ? 13 : 12);
-    const QFont small_bold = MonoFont(layout.detailed ? 13 : 12, QFont::DemiBold);
+    const QFont small_font = MonoFont(layout.detailed ? 13 : 12);
+    const QFont small_bold_font = MonoFont(layout.detailed ? 13 : 12, QFont::DemiBold);
     const qreal hero_box = layout.detailed ? 44 : area.height();
     const qreal hero_base = Baseline(hero, area.top(), hero_box);
     const QString fps = m_fps ? Rounded(std::round(m_fpsSpring.y), 0) : Dash();
     const std::vector<Run> fps_runs{{fps, hero, fps_color}};
     DrawRuns(painter, area.left(), hero_base, fps_runs);
     DrawRuns(painter, area.left() + Width(fps_runs) + 6, hero_base,
-             {{QStringLiteral("fps"), small, muted}});
+             {{QStringLiteral("fps"), small_font, muted}});
 
     if (layout.detailed && m_frameMs) {
-        DrawRuns(painter, area.left(), Baseline(small, area.top() + 44, 16),
-                 {{QStringLiteral("%1 ms").arg(m_msSpring.y, 0, 'f', 1), small, text}});
+        DrawRuns(painter, area.left(), Baseline(small_font, area.top() + 44, 16),
+                 {{QStringLiteral("%1 ms").arg(m_msSpring.y, 0, 'f', 1), small_font, text}});
     } else if (layout.detailed) {
-        DrawRuns(painter, area.left(), Baseline(small, area.top() + 44, 16),
-                 {{Dash(), small, muted}});
+        DrawRuns(painter, area.left(), Baseline(small_font, area.top() + 44, 16),
+                 {{Dash(), small_font, muted}});
     }
 
     const qreal right = area.right() - 2;
     const QString shown = m_fps ? Rounded(std::round(m_shownSpring.y), 0) : Dash();
     const std::vector<Run> shown_runs{
-        {shown, small_bold, shown_hot ? amber : text},
-        {QStringLiteral(" shown"), small, muted},
+        {shown, small_bold_font, shown_hot ? amber : text},
+        {QStringLiteral(" shown"), small_font, muted},
     };
     if (!layout.detailed) {
         DrawRuns(painter, right - Width(shown_runs), hero_base, shown_runs);
@@ -542,8 +544,8 @@ void PerformanceOverlay::paintHeader(QPainter& painter, const Layout& layout) co
 
     const QString low = m_lowFps ? Rounded(std::round(m_lowSpring.y), 0) : Dash();
     const std::vector<Run> low_runs{
-        {QStringLiteral("1% "), small, muted},
-        {low, small_bold, low_sag ? amber : text},
+        {QStringLiteral("1% "), small_font, muted},
+        {low, small_bold_font, low_sag ? amber : text},
     };
     const QString speed = m_speed > 0 ? QStringLiteral("%1×").arg(m_speed, 0, 'f', 2) : Dash();
     QColor speed_color = muted;
@@ -560,16 +562,16 @@ void PerformanceOverlay::paintHeader(QPainter& painter, const Layout& layout) co
         limit_color = amber;
     }
     const QString limit = limiterText();
-    std::vector<Run> pace_runs{{speed, small, speed_color}};
+    std::vector<Run> pace_runs{{speed, small_font, speed_color}};
     if (!limit.isEmpty()) {
-        pace_runs.push_back({QStringLiteral("  "), small, muted});
-        pace_runs.push_back({limit, small, limit_color});
+        pace_runs.push_back({QStringLiteral("  "), small_font, muted});
+        pace_runs.push_back({limit, small_font, limit_color});
     }
     const qreal line = 18;
-    DrawRuns(painter, right - Width(shown_runs), Baseline(small, area.top() + 2, line), shown_runs);
-    DrawRuns(painter, right - Width(low_runs), Baseline(small, area.top() + 2 + line, line),
+    DrawRuns(painter, right - Width(shown_runs), Baseline(small_font, area.top() + 2, line), shown_runs);
+    DrawRuns(painter, right - Width(low_runs), Baseline(small_font, area.top() + 2 + line, line),
              low_runs);
-    DrawRuns(painter, right - Width(pace_runs), Baseline(small, area.top() + 2 + line * 2, line),
+    DrawRuns(painter, right - Width(pace_runs), Baseline(small_font, area.top() + 2 + line * 2, line),
              pace_runs);
 }
 
@@ -775,7 +777,7 @@ void PerformanceOverlay::paintSpread(QPainter& painter, const Layout& layout) co
 void PerformanceOverlay::paintThreads(QPainter& painter, const Layout& layout) const {
     const QRectF area = layout.threads;
     const QFont font = MonoFont(11);
-    const QFont small = MonoFont(10);
+    const QFont small_font = MonoFont(10);
     const QColor muted{143, 153, 173};
     const QColor dim{107, 117, 137};
     const QColor text{238, 241, 246};
@@ -836,8 +838,8 @@ void PerformanceOverlay::paintThreads(QPainter& painter, const Layout& layout) c
     painter.setPen(Qt::NoPen);
     painter.setBrush(QColor{255, 255, 255, 12});
     painter.drawRoundedRect(card, 6, 6);
-    DrawRuns(painter, card.left() + 8, Baseline(small, card.top() + 6, 12),
-             {{QStringLiteral("GPU"), small, muted}});
+    DrawRuns(painter, card.left() + 8, Baseline(small_font, card.top() + 6, 12),
+             {{QStringLiteral("GPU"), small_font, muted}});
     const QFont gpu_font = MonoFont(18, QFont::DemiBold);
     DrawRuns(painter, card.left() + 8, Baseline(gpu_font, card.top() + 20, 24),
              {{gpu, gpu_font, text}});
