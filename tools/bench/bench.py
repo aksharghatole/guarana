@@ -1133,7 +1133,8 @@ WINDOWS_HW_SCRIPT = r"""
 $ErrorActionPreference = 'SilentlyContinue'
 $cpu = Get-CimInstance Win32_Processor | Select-Object -First 1
 $gpus = @(Get-CimInstance Win32_VideoController | ForEach-Object { @{ name = $_.Name; driver_version = $_.DriverVersion;
-    width = $_.CurrentHorizontalResolution; height = $_.CurrentVerticalResolution; refresh_hz = $_.CurrentRefreshRate } })
+    pnp = $_.PNPDeviceID; width = $_.CurrentHorizontalResolution; height = $_.CurrentVerticalResolution;
+    refresh_hz = $_.CurrentRefreshRate } })
 $cs = Get-CimInstance Win32_ComputerSystem
 $os = Get-CimInstance Win32_OperatingSystem
 $battery = Get-CimInstance Win32_Battery | Select-Object -First 1
@@ -1144,6 +1145,38 @@ $status = Get-CimInstance -Namespace root\wmi -ClassName BatteryStatus | Select-
    power_online = $(if ($status) { [bool]$status.PowerOnline } else { $null });
    power_plan = ((powercfg /getactivescheme) -join ' ') } | ConvertTo-Json -Depth 4 -Compress
 """
+
+
+PCI_ID = re.compile(r"^[0-9A-F]{4}:[0-9A-F]{4}$")
+
+
+def gpu_entry(name, driver_version, pci=None):
+    """One hardware.gpus item: the name, the driver version and, when known, the PCI vendor and device
+    ID as "8086:7D51" (the GPU family the engine's presets match on needs it, src/common/device_profile.cpp)."""
+    entry = {"name": name, "driver_version": driver_version}
+    if pci:
+        entry["pci"] = pci
+    return entry
+
+
+def pci_of_pnp(pnp):
+    """"8086:7D51" from a Windows PNP device ID (PCI\\VEN_8086&DEV_7D51&SUBSYS_...), or None."""
+    match = re.search(r"(?i)\bVEN_([0-9a-f]{4})&DEV_([0-9a-f]{4})", str(pnp or ""))
+    return f"{match.group(1)}:{match.group(2)}".upper() if match else None
+
+
+def lspci_gpus(text):
+    """hardware.gpus from `lspci -nn`, with the names plain `lspci` prints (machine_id hashes them)."""
+    gpus = []
+    for line in text.splitlines():
+        if not re.search(r"VGA compatible|3D controller|Display controller", line) or ": " not in line:
+            continue
+        name = line.split(": ", 1)[1]
+        ids = re.search(r"\s*\[([0-9a-fA-F]{4}):([0-9a-fA-F]{4})\](?=\s*(?:\(rev [0-9a-fA-F]+\))?\s*$)", name)
+        if ids:
+            name = name[:ids.start()] + name[ids.end():]
+        gpus.append(gpu_entry(name.strip(), None, f"{ids.group(1)}:{ids.group(2)}".upper() if ids else None))
+    return gpus
 
 
 def parse_windows_hardware(raw):
@@ -1164,7 +1197,7 @@ def parse_windows_hardware(raw):
         "cpu": " ".join((raw.get("cpu") or "unknown").split()),
         "cpu_cores": raw.get("cores"),
         "cpu_threads": raw.get("threads"),
-        "gpus": [{"name": gpu.get("name") or "unknown", "driver_version": gpu.get("driver_version")}
+        "gpus": [gpu_entry(gpu.get("name") or "unknown", gpu.get("driver_version"), pci_of_pnp(gpu.get("pnp")))
                  for gpu in gpus],
         "ram_gb": round(raw["ram_bytes"] / 2**30, 1) if raw.get("ram_bytes") else None,
         "os": " ".join(filter(None, [raw.get("os"), raw.get("os_version")])) or "Windows",
@@ -1196,9 +1229,7 @@ def generic_hardware():
     cpu = re.search(r"model name\s*:\s*(.+)", _read_text("/proc/cpuinfo"))
     cpu = cpu.group(1) if cpu else _tool_output(["sysctl", "-n", "machdep.cpu.brand_string"]).strip()
     memory = re.search(r"MemTotal:\s*(\d+)", _read_text("/proc/meminfo"))
-    gpus = [{"name": line.split(": ", 1)[1].strip(), "driver_version": None}
-            for line in _tool_output(["lspci"]).splitlines()
-            if re.search(r"VGA compatible|3D controller|Display controller", line) and ": " in line]
+    gpus = lspci_gpus(_tool_output(["lspci", "-nn"]))
     power = "unknown"
     for supply in glob.glob("/sys/class/power_supply/*"):
         if _read_text(os.path.join(supply, "type")).strip() == "Mains":
@@ -1462,6 +1493,8 @@ def validate_row(row):
         for gpu in row["hardware"]["gpus"]:
             if not isinstance(gpu, dict) or not isinstance(gpu.get("name"), str):
                 errors.append("hardware: every gpu needs a name")
+            elif "pci" in gpu and not (isinstance(gpu["pci"], str) and PCI_ID.match(gpu["pci"])):
+                errors.append("hardware: a gpu's pci is VVVV:DDDD in hex")
         if not errors and machine_id(row["hardware"]) != row["machine_id"]:
             errors.append("machine_id does not match the CPU and GPU names")
     if row["sustained"] is not None:

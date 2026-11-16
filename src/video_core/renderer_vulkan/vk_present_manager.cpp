@@ -19,6 +19,7 @@
 
 #include <fmt/format.h>
 
+#include "common/device_profile.h"
 #include "common/display_hdr.h"
 #include "common/dkb_frame_trace.h"
 #include "common/logging.h"
@@ -38,10 +39,12 @@
 #include "video_core/renderer_vulkan/fluid_compose_math.h"
 #include "video_core/renderer_vulkan/present/fluid_compose.h"
 #include "video_core/renderer_vulkan/fluid_slot_math.h"
+#include "video_core/renderer_vulkan/present_telemetry.h"
 #include "video_core/renderer_vulkan/vk_present_manager.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
 #include "video_core/renderer_vulkan/vk_swapchain.h"
 #include "video_core/shown_governor.h"
+#include "video_core/vulkan_common/vk_enum_string_helper.h"
 #include "video_core/vulkan_common/vulkan_device.h"
 #include "video_core/vulkan_common/vulkan_surface.h"
 #include "video_core/vulkan_common/vulkan_wrapper.h"
@@ -128,21 +131,8 @@ void SleepUntil(std::chrono::steady_clock::time_point deadline) {
 }
 
 /// EDEN_NX2_FLUID: a slot's frame is presented this long after the vblank before the slot, so a
-/// present a few ms early or late still lands on the slot's vblank. EDEN_NX2_FLUID_OFFSET_US=<us>
-/// (500 to 8000) moves it: with the DXGI vblank wait the wake already follows the vblank, so about
-/// 1000 gives the screen copy 7.3 ms before its flip at 120 Hz instead of 4.8.
-[[nodiscard]] std::chrono::nanoseconds FluidPresentOffsetFor() {
-    static const std::chrono::nanoseconds offset = [] {
-        const char* value = std::getenv("EDEN_NX2_FLUID_OFFSET_US");
-        if (value == nullptr) {
-            return std::chrono::nanoseconds{3'500'000};
-        }
-        const long us = std::clamp(std::strtol(value, nullptr, 10), 500L, 8000L);
-        LOG_INFO(Render_Vulkan, "EDEN_NX2_FLUID_OFFSET_US={}: slot frames go out {} us after the vblank before them", us, us);
-        return std::chrono::nanoseconds{static_cast<s64>(us) * 1000};
-    }();
-    return offset;
-}
+/// present a few ms early or late still lands on the slot's vblank.
+constexpr std::chrono::nanoseconds FluidPresentOffset{3'500'000};
 
 /// EDEN_NX2_FLUID_QUEUE_HOST_WAIT=1: with the screen copy on its own queue (EDEN_NX2_FLUID_QUEUE
 /// 3 or 5), the present thread waits on the copy's fence before presenting on the graphics queue,
@@ -167,21 +157,11 @@ void SleepUntil(std::chrono::steady_clock::time_point deadline) {
     return on;
 }
 
-/// EDEN_NX2_FLUID_HOST_WAIT_US=<us> (500 to 16000): how long that wait lasts at most, by default
-/// 12000 at 60 shown frames a second and 4000 above 75 (at 120 a slot is 8.3 ms: a longer wait makes
-/// the present thread sleep through the next slot). FluidSlots::CopyWaitNs cuts it to end before
-/// the next slot's wake at other refresh rates too.
+/// EDEN_NX2_FLUID_QUEUE_HOST_WAIT: the longest the present thread waits for the screen copy, 12 ms
+/// at 60 shown frames a second and 4 ms above 75 (at 120 a slot is 8.3 ms: a longer wait makes the
+/// present thread sleep through the next slot). FluidSlots::CopyWaitNs cuts it to end before the
+/// next slot's wake at other refresh rates too.
 [[nodiscard]] u64 FluidHostWaitNs(f64 shown_rate) {
-    static const u64 limit = [] {
-        const char* value = std::getenv("EDEN_NX2_FLUID_HOST_WAIT_US");
-        return value == nullptr
-                   ? u64{0}
-                   : static_cast<u64>(std::clamp(std::strtol(value, nullptr, 10), 500L, 16000L)) *
-                         1000;
-    }();
-    if (limit != 0) {
-        return limit;
-    }
     return shown_rate > 75.0 ? 4'000'000 : 12'000'000;
 }
 /// Real frames whose GPU work is watched at once.
@@ -391,6 +371,7 @@ PresentManager::PresentManager(const vk::Instance& instance_,
         dispatch_trace = std::make_unique<PresentDispatchTrace>();
     }
     SetImageCount();
+    LogPresentSetup("start");
 
     auto& dld = device.GetLogical();
     cmdpool = dld.CreateCommandPool({
@@ -736,15 +717,47 @@ void PresentManager::NoteShownFrame() {
     const auto even = std::count_if(sorted.begin(), sorted.end(), [median](f32 interval) {
         return std::abs(interval - median) <= 2.0f;
     });
+    // The intervals in refreshes of the display: the FLUID presenter's vblank clock when it
+    // runs, else the rate read at the last swapchain (re)creation.
+    f64 shown_hz = display_refresh_hz.load(std::memory_order_relaxed);
+    if (const FluidClock clock = GetFluidClock(); clock.Valid()) {
+        shown_hz = 1.0e9 / static_cast<f64>(clock.refresh.count());
+    }
+    std::string in_refreshes = "refresh rate unknown";
+    if (shown_hz > 0.0) {
+        const ShownRefreshes refreshes = CountRefreshes(sorted, shown_hz);
+        in_refreshes = fmt::format(
+            "at {:.1f} Hz {} under one refresh, {} of one, {} of two, {} of three or more, {} "
+            "refreshes missed against the median of {}",
+            shown_hz, refreshes.count[0], refreshes.count[1], refreshes.count[2],
+            refreshes.count[3], refreshes.missed, refreshes.median_refreshes);
+    }
     LOG_INFO(Render_Vulkan,
              "Shown frames: {:.1f} per second, interval p5 {:.1f} p50 {:.1f} p95 {:.1f} p99 {:.1f} "
-             "max {:.1f} ms, {:.0f}% within 2 ms of the median",
+             "max {:.1f} ms, {:.0f}% within 2 ms of the median; {} (CPU clock: when presents were "
+             "handed to the swapchain, not when the display showed them)",
              static_cast<f64>(sorted.size()) /
                  std::chrono::duration<f64>(now - shown_window).count(),
              at(5), median, at(95), at(99), sorted.back(),
-             100.0 * static_cast<f64>(even) / static_cast<f64>(sorted.size()));
+             100.0 * static_cast<f64>(even) / static_cast<f64>(sorted.size()), in_refreshes);
     shown_intervals.clear();
     shown_window = now;
+}
+
+void PresentManager::LogPresentSetup(const char* when) {
+    const Common::VblankClock window_display{render_window.GetWindowInfo().render_surface};
+    const s64 period_ns = window_display.ReportedPeriod().count();
+    const f64 display_hz = period_ns > 0 ? 1.0e9 / static_cast<f64>(period_ns) : 0.0;
+    display_refresh_hz.store(display_hz, std::memory_order_relaxed);
+    const std::string display_name = window_display.DisplayName();
+    LOG_INFO(Render_Vulkan,
+             "Present setup ({}): the window's display {} at {}, present mode {} with {} images, "
+             "EDEN_NX2_FLUID {}, hardware-accelerated GPU scheduling {}",
+             when, display_name.empty() ? std::string{"(no name)"} : display_name,
+             display_hz > 0.0 ? fmt::format("{:.2f} Hz", display_hz)
+                              : std::string{"an unknown refresh rate"},
+             string_VkPresentModeKHR(swapchain.GetPresentMode()), swapchain.GetImageCount(),
+             FluidMode(), Common::HardwareGpuScheduling());
 }
 
 void PresentManager::NoteShownCapture(const Frame* frame, u64 slot, std::string_view presenter) {
@@ -1079,7 +1092,7 @@ bool PresentManager::FluidPresentThread(std::stop_token token) {
         if (VideoCore::ShownGovernor::Enabled()) {
             FluidGovern(wake, period);
         }
-        const auto offset = (std::min)(FluidPresentOffsetFor(), period * 42 / 100);
+        const auto offset = (std::min)(FluidPresentOffset, period * 42 / 100);
         // A screen copy wait from this wake ends in time for the next slot's wake.
         fluid.copy_wait_due = wake + FluidSlots::CopyWaitDue(period, fluid.vblank, fluid.divisor);
         {
@@ -1851,6 +1864,7 @@ bool PresentManager::RecreateSwapchain(Frame* frame, const char* reason) {
         if (swapchain.Create(*surface, FrameTargetWidth(frame), FrameTargetHeight(frame),
                              frame->format, frame->color_space)) {
             SetImageCount();
+            LogPresentSetup(reason);
             if (frame->color_space == VK_COLOR_SPACE_HDR10_ST2084_EXT) {
                 UpdateHdrMetadata();
             }

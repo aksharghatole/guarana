@@ -120,4 +120,46 @@ template <typename Guide>
     return {previous_behind, previous_behind, 0.0f};
 }
 
+/// What GuardHud did to a pick.
+enum class HudGuard {
+    None,          ///< no source the pick uses lies on the HUD
+    OtherFrame,    ///< the frame whose source lies on the HUD gave way to the other one
+    SceneUnderHud, ///< every source it uses does: the scene under the HUD at the source
+    Unmoved,       ///< the same without `fill`: the newest frame at the pixel itself
+};
+
+/// Scene pixels must not drag the HUD along (frame_extrapolation.comp's rule): an in-between pixel
+/// outside the HUD whose source in a real frame lies on the HUD would copy the HUD into the scene
+/// beside it, as far as the motion. `is_hud` is the newest frame's HUD test in scene UV, standing
+/// for both frames: the HUD stays put between them. A source on the HUD gives way to the other
+/// frame's when the pick uses that one too and it is clear; otherwise, with `fill`
+/// (EDEN_NX2_EXTRAPOLATE_HUD_FILL), the newest frame's scene under the HUD at the source the pick
+/// used (the previous frame's position read in the newest frame when it used only that one), and
+/// without it the newest frame at `target`, unmoved.
+template <typename IsHud>
+[[nodiscard]] HudGuard GuardHud(const IsHud& is_hud, Pick& pick, Vec2 target, bool fill) {
+    const bool newest_used = pick.newest_weight > 0.0f;
+    const bool previous_used = pick.newest_weight < 1.0f;
+    const bool newest_on = newest_used && is_hud(pick.newest);
+    const bool previous_on = previous_used && is_hud(pick.previous);
+    if (!newest_on && !previous_on) {
+        return HudGuard::None;
+    }
+    if (newest_on && previous_used && !previous_on) {
+        pick = {pick.previous, pick.previous, 0.0f};
+        return HudGuard::OtherFrame;
+    }
+    if (previous_on && newest_used && !newest_on) {
+        pick = {pick.newest, pick.newest, 1.0f};
+        return HudGuard::OtherFrame;
+    }
+    if (fill) {
+        const Vec2 source = newest_used ? pick.newest : pick.previous;
+        pick = {source, source, 1.0f};
+        return HudGuard::SceneUnderHud;
+    }
+    pick = {target, target, 1.0f};
+    return HudGuard::Unmoved;
+}
+
 } // namespace Vulkan::GameMotionWarp
