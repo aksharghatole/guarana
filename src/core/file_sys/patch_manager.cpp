@@ -596,6 +596,13 @@ std::vector<std::string> StoredDisabledAddons(u64 title_id, std::vector<std::str
     return unchecked;
 }
 
+bool HasListedBuiltinPatches(u64 title_id) {
+    // As GetPatches lists them: the DLSS render scales follow a setting and are not listed.
+    return std::ranges::any_of(BUILTIN_PATCHES, [title_id](const BuiltinPatch& patch) {
+        return patch.title_id == title_id && !patch.dlss_quality;
+    });
+}
+
 namespace {
 
 using BuiltinResultList = std::vector<std::pair<std::string_view, BuiltinPatchResult>>;
@@ -636,6 +643,13 @@ BuiltinPatchResult LastBuiltinResult(u64 title_id, const BuiltinPatch& patch) {
         }
     }
     return BuiltinPatchResult::NotLoaded;
+}
+
+// A module's build id as BuiltinPatch::build_id names it, the form PatchNSO compares: upper-case
+// hex without its trailing zeros.
+std::string BuiltinBuildIdKey(const PatchManager::BuildID& build_id) {
+    const auto hex = Common::HexToString(build_id);
+    return hex.substr(0, hex.find_last_not_of('0') + 1);
 }
 
 enum class TitleVersionFormat : u8 {
@@ -1614,7 +1628,8 @@ VirtualFile PatchManager::PatchRomFS(const NCA* base_nca, VirtualFile base_romfs
     return romfs;
 }
 
-std::vector<Patch> PatchManager::GetPatches(VirtualFile update_raw) const {
+std::vector<Patch> PatchManager::GetPatches(VirtualFile update_raw,
+                                            const std::optional<BuildID>& main_build_id) const {
     if (title_id == 0) {
         return {};
     }
@@ -1890,9 +1905,15 @@ std::vector<Patch> PatchManager::GetPatches(VirtualFile update_raw) const {
         }
     }
 
+    const auto main_build = main_build_id ? BuiltinBuildIdKey(*main_build_id) : std::string{};
     for (const auto& patch : BUILTIN_PATCHES) {
         if (patch.title_id != title_id || patch.dlss_quality) {
             continue;
+        }
+        auto build = BuiltinPatchBuild::Unknown;
+        if (main_build_id && patch.module == "main") {
+            build = patch.build_id == main_build ? BuiltinPatchBuild::Matches
+                                                 : BuiltinPatchBuild::Other;
         }
         const auto is_disabled = [&](std::string_view name) {
             return std::find(disabled.begin(), disabled.end(), name) != disabled.end();
@@ -1919,7 +1940,8 @@ std::vector<Patch> PatchManager::GetPatches(VirtualFile update_raw) const {
                        .replaced_by = replacing != BUILTIN_PATCHES.end()
                                           ? std::string{replacing->name}
                                           : std::string{},
-                       .last_result = LastBuiltinResult(title_id, patch)});
+                       .last_result = LastBuiltinResult(title_id, patch),
+                       .build = build});
     }
 
     // DLC
