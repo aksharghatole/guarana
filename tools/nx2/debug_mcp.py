@@ -340,6 +340,27 @@ TOOLS = [
         },
     },
     {
+        "name": "input_latency",
+        "description": "Times input to picture: holds a right-stick step (default [1, 0], full right) "
+                       "from the next present on while capturing the next 'count' shown frames "
+                       "(default 32) with small pictures, then releases it. Returns each frame's "
+                       "kind, time since the game first read the step and its picture's mean "
+                       "absolute difference from the first picture (0 to 255), the first frame "
+                       "over 'threshold' (default 2) as onset_ms with its kind, and the first real "
+                       "frame over it as real_onset_ms. Stand where the camera can turn.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "right_stick": STICK,
+                "frames": {"type": "integer", "minimum": 1, "maximum": 600},
+                "count": {"type": "integer", "minimum": 4, "maximum": 32},
+                "height": {"type": "integer", "minimum": 144, "maximum": 540},
+                "threshold": {"type": "number", "minimum": 0.1, "maximum": 128},
+                "timeout_s": {"type": "integer", "minimum": 1, "maximum": 60},
+            },
+        },
+    },
+    {
         "name": "host_timing",
         "description": "Turns the per-second 'HostTiming wait' log line (EDEN_NX2_HOSTTIMING_STATS) "
                        "on or off; read it with log_tail. Returns the previous and current state.",
@@ -625,6 +646,8 @@ def default_timeout(name, params):
         return math.ceil(params.get("window_ms", 1000) / 1000) + 5
     if name == "sample":
         return int(params.get("seconds", 10)) + 90
+    if name == "input_latency":
+        return int(params.get("timeout_s", 15)) + 5
     if name in ("input", "input_sequence"):
         steps = params.get("steps", []) if name == "input_sequence" else [params]
         return sum(int(step.get("frames", 0)) for step in steps) // 20 + 10

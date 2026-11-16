@@ -277,7 +277,7 @@ moved, from `shown_frames`), so both arms of the target can be measured on the o
 |---|---|---|
 | B1 | `EDEN_NX2_FG_GAME_MOTION=1` | With `EDEN_NX2_FLUID_INTERP`: in-between frames from the guide and the depth fill (3.2) instead of the optical-flow chain; the guide is made without `EDEN_NX2_EXTRAPOLATE`; each real frame's guide is copied. As built, the optical flow still runs as the fallback for frames without two guides; skipping it when a batch needs none is the next step |
 | B2 | `EDEN_NX2_FG_GAME_MOTION=2` | B1, and extrapolated frames (`EDEN_NX2_FLUID` without interpolation) take the parallax fill |
-| B3 | debug server `input_latency` | the onset probe of 3.5 |
+| B3 | debug server `input_latency` | the onset probe of 3.5: built (a right-stick step, then the first shown frame whose picture moved, timed from when the game read the step) |
 | B4 | `EDEN_NX2_FG_GAME_MOTION` with a DLSS-contract game | the second provider (3.1); measured once such a game has a bench scene |
 | B5 | ports | the HUD depth and motion passes of CheezerWheezer/Lichii `amd-superior` (a mask that holds when the scene is smaller than the output), Lichii #1493 (generated frames in HDR) and #1945 (one set of intermediates, about 70 MiB less at 1440p) |
 
