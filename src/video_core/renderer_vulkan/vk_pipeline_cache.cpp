@@ -503,6 +503,19 @@ bool HmmaFullSubgroupsEnabled() {
     return enabled;
 }
 
+/// A switch that is on with any number but 0 (unset, empty, 0 and false are off).
+bool NumberSwitchOn(const char* name) {
+    const char* const value = std::getenv(name);
+    return value != nullptr && std::strtoul(value, nullptr, 10) != 0;
+}
+
+/// EDEN_NX2_TENSOR_LOG=1, read once: one line per compute program with guest tensor operations,
+/// saying how they run (Shader::Backend::SPIRV::DescribeTensorProgram).
+bool TensorLogEnabled() {
+    static const bool enabled = NumberSwitchOn("EDEN_NX2_TENSOR_LOG");
+    return enabled;
+}
+
 /// The precache marker's variant: the build's SPIR-V emission stamp and the settings that change
 /// what the driver gets for a precache build. Resolution scaling bakes the scale into the
 /// rescaling code of the shaders; the loop safety checks and the bloom fix change the SPIR-V; the
@@ -555,6 +568,15 @@ VideoCommon::ShaderWarm::DriverStamp PrecachedListStamp(const Device& device,
     if (profile.support_cooperative_hmma_8x16x16) {
         variant = Common::CityHash64WithSeed(reinterpret_cast<const char*>(&variant),
                                              sizeof(variant), 0x8816ULL);
+    }
+    // EDEN_NX2_HMMA_ZERO_C and EDEN_NX2_HMMA_K16_ONCE, the same way.
+    if (profile.cooperative_hmma_zero_c) {
+        variant = Common::CityHash64WithSeed(reinterpret_cast<const char*>(&variant),
+                                             sizeof(variant), 0x2e40cULL);
+    }
+    if (profile.cooperative_hmma_k16_once) {
+        variant = Common::CityHash64WithSeed(reinterpret_cast<const char*>(&variant),
+                                             sizeof(variant), 0x16011ceULL);
     }
     return {
         .driver = device.GetDriverVersion(),
@@ -1085,6 +1107,26 @@ PipelineCache::PipelineCache(Tegra::MaxwellDeviceMemoryManager& device_memory_,
         LOG_INFO(Render_Vulkan, "Guest tensor operations run on 16x16x16 cooperative matrices");
     } else if (profile.support_cooperative_hmma_8x16x16) {
         LOG_INFO(Render_Vulkan, "Guest tensor operations run on 8x16x16 cooperative matrices");
+    }
+    // EDEN_NX2_HMMA_ZERO_C=1 and EDEN_NX2_HMMA_K16_ONCE=1 (experiments): less shared memory
+    // traffic around each guest tensor operation on the paths that go through shared memory.
+    const bool shared_memory_matrices = profile.support_cooperative_hmma_16x16x16 ||
+                                        profile.support_cooperative_hmma_8x16x16;
+    if (NumberSwitchOn("EDEN_NX2_HMMA_ZERO_C")) {
+        profile.cooperative_hmma_zero_c = shared_memory_matrices;
+        LOG_INFO(Render_Vulkan, "EDEN_NX2_HMMA_ZERO_C: {}",
+                 shared_memory_matrices
+                     ? "a guest tensor operation that starts from zero skips its accumulator tile"
+                     : "no effect: guest tensor operations do not run on 16x16x16 or 8x16x16 "
+                       "matrices here");
+    }
+    if (NumberSwitchOn("EDEN_NX2_HMMA_K16_ONCE")) {
+        profile.cooperative_hmma_k16_once = profile.support_cooperative_hmma_8x16x16;
+        LOG_INFO(Render_Vulkan, "EDEN_NX2_HMMA_K16_ONCE: {}",
+                 profile.support_cooperative_hmma_8x16x16
+                     ? "a K=16 guest tensor operation is one 8x16x16 product per row half, "
+                       "rounding once"
+                     : "no effect: guest tensor operations do not run on 8x16x16 matrices here");
     }
     // EDEN_NX2_SW_MATRIX_SHARED=1 (experiment): without tensor cores, guest tensor operations
     // gather their operands from shared memory instead of shuffling them between lanes.
@@ -5169,6 +5211,15 @@ ComputePipelineCacheEntry PipelineCache::CreateComputePipeline(
     if (HmmaFullSubgroupsEnabled()) {
         program.info.uses_cooperative_matrix =
             Shader::Backend::SPIRV::UsesCooperativeMatrix(profile, program);
+    }
+    // EDEN_NX2_TENSOR_LOG: what the program's tensor operations are and how they will run, before
+    // the emission grows the shared memory.
+    if (TensorLogEnabled()) {
+        const std::string tensor{Shader::Backend::SPIRV::DescribeTensorProgram(profile, program)};
+        if (!tensor.empty()) {
+            LOG_INFO(Render_Vulkan, "EDEN_NX2_TENSOR_LOG: compute shader {:016x}: {}",
+                     key.unique_hash, tensor);
+        }
     }
     std::unique_ptr<ComputePipeline> pipeline;
     const u64 ir_bytes = emit_pools ? IrBytes(std::span(&program, 1)) : 0;

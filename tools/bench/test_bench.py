@@ -1754,6 +1754,32 @@ class SuiteTest(RunCase):
             for name in switches:
                 self.assertIn(f"`{name}`", documented)
 
+    def test_shipped_game_network_a1_suite(self):
+        args, defaults = self.suite_args(os.path.join(HERE, "suites", "game-network-a1.json"))
+        plans, compare_to = bench.load_suite(args.suite, args, defaults)
+        self.assertEqual(len(plans), 1)
+        plan = plans[0]
+        self.assertEqual((plan.suite, plan.scene["name"]), ("game-network-a1", "oot-hyrule-field"))
+        base = {"EDEN_NX2_NO_PRESETS": "1", "EDEN_NX2_COST_SAMPLING": "1", "EDEN_NX2_TENSOR_LOG": "1",
+                "EDEN_NX2_INTEL_COOP_MATRIX": "1"}
+        zero_c, k16_once = {"EDEN_NX2_HMMA_ZERO_C": "1"}, {"EDEN_NX2_HMMA_K16_ONCE": "1"}
+        env = {variant["name"]: variant.get("env") or {} for variant in plan.variants}
+        self.assertEqual(env, {
+            "coop": base,
+            "coop-zero-c": {**base, **zero_c},
+            "coop-k16-once": {**base, **k16_once},
+            "coop-both": {**base, **zero_c, **k16_once}})
+        self.assertEqual(list(env)[0], "coop")
+        # The game's network runs in every variant, with frame generation off.
+        for variant in plan.variants:
+            self.assertEqual(variant["settings"]["Renderer"], {"oot_anti_aliasing": 0, "frame_gen": False})
+        self.assertTrue(all(compare_to[("oot-hyrule-field", name)] == "coop" for name in env))
+        with open(os.path.join(HERE, "..", "..", "docs", "switches.md"), encoding="utf-8") as file:
+            documented = file.read()
+        for switches in env.values():
+            for name in switches:
+                self.assertIn(f"`{name}`", documented)
+
     def test_shipped_slot_compositor_suite(self):
         args, defaults = self.suite_args(os.path.join(HERE, "suites", "slot-compositor.json"))
         plans, compare_to = bench.load_suite(args.suite, args, defaults)
