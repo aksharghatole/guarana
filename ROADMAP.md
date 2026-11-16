@@ -121,6 +121,8 @@ version.
 **Done when.** With a fresh cache on the same route, `EDEN_NX2_STUTTER_TRACE=1` logs fewer and
 shorter hitches whose top cause is a pipeline built on the GPU thread, and the image is unchanged.
 
+Plan and status: [docs/console-boot.md](docs/console-boot.md), step F3.
+
 ### X2. Persisted SPIR-V
 
 `area: boot` · `area: shaders` · upstream: [Lichii #1366](https://github.com/zortos293/Lichii/issues/1366)
@@ -134,6 +136,8 @@ rebuilt, and load it instead of translating again.
 **Done when.** The boot phases in `Nx2Boot` lines (`EDEN_NX2_STUTTER_TRACE=1`) show less time
 loading shaders on a warm cache, on the same machine, with identical pipelines.
 
+Plan and status: [docs/console-boot.md](docs/console-boot.md), step B7.
+
 ### X3. Non-blocking boot and memory-mapped caches
 
 `area: boot`
@@ -146,6 +150,8 @@ instead of reading and copying them.
 
 **Done when.** Time from launch to the first game frame drops on a warm cache, measured with
 `Nx2Boot` lines on the same machine, with no new hitches after boot.
+
+Plan and status: [docs/console-boot.md](docs/console-boot.md), steps B1 to B6.
 
 ### X4. Cheaper Intel pipeline compiles
 
@@ -161,6 +167,8 @@ where its output stays the same.
 **Done when.** The median build time per pipeline on Arc drops for the same shader set, with
 unchanged screenshots and frame captures.
 
+Plan and status: [docs/console-boot.md](docs/console-boot.md), step F2.
+
 ### X5. Graphics pipeline library fast-link
 
 `area: shaders` · upstream: [Lichii #1173](https://github.com/zortos293/Lichii/issues/1173),
@@ -174,6 +182,8 @@ quickly for the first draw and switch to the fully optimised pipeline once it is
 **Done when.** First-visit hitch time drops on a supporting driver, the image is unchanged, and
 drivers without the extension keep today's path.
 
+Plan and status: [docs/console-boot.md](docs/console-boot.md), steps F1 and F2.
+
 ### X6. Shader warm-up
 
 `area: shaders` · upstream: [Lichii #1183](https://github.com/zortos293/Lichii/issues/1183)
@@ -185,6 +195,8 @@ them, building on upstream's `shader_warm` precaching.
 
 **Done when.** A scripted route on a fresh cache shows fewer first-visit hitches in the stutter
 trace, without a longer boot.
+
+Plan and status: [docs/console-boot.md](docs/console-boot.md), steps F4 to F6.
 
 ### X7. AMD Radeon iGPU path
 
