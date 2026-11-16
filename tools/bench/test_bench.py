@@ -1729,6 +1729,31 @@ class SuiteTest(RunCase):
         self.assertIn("variant vrs-2x2-trace:", output.getvalue())
         self.assertEqual((self.launches, self.host.commands), ([], []))
 
+    def test_shipped_game_motion_fg_suite(self):
+        args, defaults = self.suite_args(os.path.join(HERE, "suites", "game-motion-fg.json"))
+        plans, compare_to = bench.load_suite(args.suite, args, defaults)
+        self.assertEqual(len(plans), 1)
+        plan = plans[0]
+        self.assertEqual((plan.suite, plan.scene["name"]), ("game-motion-fg", "oot-hyrule-field"))
+        pinned = {"EDEN_NX2_COST_SAMPLING": "1", "EDEN_NX2_FLUID": "2", "EDEN_NX2_CADENCE": "3",
+                  "EDEN_NX2_FLUID_RT": "1", "EDEN_NX2_SHOWN_RATE": "120", "EDEN_NX2_BUDGET_CEILING": "1"}
+        interp = {**pinned, "EDEN_NX2_FLUID_INTERP": "1", "EDEN_NX2_EXTRAPOLATE": "0"}
+        env = {variant["name"]: variant.get("env") or {} for variant in plan.variants}
+        self.assertEqual(env, {
+            "interp-flow": interp,
+            "interp-game-motion": {**interp, "EDEN_NX2_FG_GAME_MOTION": "1"},
+            "extrapolate": {**pinned, "EDEN_NX2_FLUID_INTERP": "0", "EDEN_NX2_EXTRAPOLATE": "1"}})
+        self.assertEqual(list(env)[0], "interp-flow")
+        for variant in plan.variants:
+            self.assertTrue(variant["fullscreen"] and variant["pacing"])
+            self.assertEqual(variant["settings"]["Renderer"], {"frame_gen": True, "frame_gen_type": 1})
+        self.assertTrue(all(compare_to[("oot-hyrule-field", name)] == "interp-flow" for name in env))
+        with open(os.path.join(HERE, "..", "..", "docs", "switches.md"), encoding="utf-8") as file:
+            documented = file.read()
+        for switches in env.values():
+            for name in switches:
+                self.assertIn(f"`{name}`", documented)
+
     def test_shipped_presenter_and_locks_suite(self):
         args, defaults = self.suite_args(os.path.join(HERE, "suites", "presenter-and-locks.json"))
         plans, compare_to = bench.load_suite(args.suite, args, defaults)

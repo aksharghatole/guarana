@@ -11,6 +11,7 @@
 #include "common/settings_enums.h"
 #include "video_core/renderer_base.h"
 #include "video_core/renderer_vulkan/present/frame_extrapolation.h"
+#include "video_core/renderer_vulkan/present/game_motion_interpolation.h"
 #include "video_core/renderer_vulkan/present/frame_gen_pacer.h"
 #include "video_core/renderer_vulkan/present/lsfg_chain.h"
 #include "video_core/renderer_vulkan/present/lsfg_shaders.h"
@@ -109,6 +110,9 @@ private:
     /// Logs every 10 s how many frames were generated, when that changes.
     void LogActivity();
     void DumpDebugImages(u64 count);
+    /// EDEN_NX2_FG_GAME_MOTION: records the in-between frame `t` from the game's motion; false
+    /// when the guides or the chain's frames are missing, and the optical flow draws it instead.
+    bool GenerateFromGameMotion(const Device& device, Frame* destination, f32 t);
 
     MemoryAllocator& memory_allocator;
     Scheduler& scheduler;
@@ -117,6 +121,12 @@ private:
     std::optional<LsfgChain> chain;
     std::optional<Fsr3FrameGen> fsr3_chain;
     std::optional<FrameExtrapolation> extrapolation;
+    /// EDEN_NX2_FG_GAME_MOTION: the guides of the last two real frames and the warp between them.
+    std::optional<GameMotionInterpolation> game_motion;
+    std::optional<ExtrapolationSource> game_motion_source; ///< for the frame Process is given next
+    bool game_motion_source_set{};
+    u64 game_motion_made{};      ///< in-between frames from the game's motion this period
+    u64 game_motion_fallbacks{}; ///< and from the optical flow for want of guides
     std::optional<ExtrapolationSource> extrapolation_source;
     VkRect2D extrapolation_screen{};
     Frame* extrapolation_frame{}; ///< the real frame of this composite
