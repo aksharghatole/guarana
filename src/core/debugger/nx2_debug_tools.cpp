@@ -913,7 +913,8 @@ json TraceStatus(ToolState&, const json&) {
     return {{"requested", status.requested},       {"recording", status.recording},
             {"presents", status.presents},         {"presents_wanted", status.presents_wanted},
             {"bytes_uncompressed", status.bytes},  {"path", status.path},
-            {"last_trace", status.last_trace},     {"last_error", status.last_error}};
+            {"last_trace", status.last_trace},     {"last_error", status.last_error},
+            {"last_presents", status.last_presents}};
 }
 
 json TraceRecord(ToolState& state, const json& params) {

@@ -314,7 +314,7 @@ def sha256(path):
     return digest.hexdigest()
 
 
-def check(cli, corpus_path, traces_dir, out, require):
+def check(cli, corpus_path, traces_dir, out, require, run=replay, generate=subprocess.run):
     corpus = json.loads(Path(corpus_path).read_text())
     failures = 0
     for entry in corpus["traces"]:
@@ -323,7 +323,8 @@ def check(cli, corpus_path, traces_dir, out, require):
         work.mkdir(parents=True, exist_ok=True)
         if entry.get("source") == "generated":
             trace = work / "trace.lxtrace"
-            subprocess.run([str(cli), "--gpu-trace-sample", str(trace)], check=True)
+            generate([str(cli), "--gpu-trace-sample", str(trace), *entry.get("generate", [])],
+                     check=True)
         else:
             trace = Path(traces_dir or ".") / entry["file"]
             if not trace.exists():
@@ -334,13 +335,29 @@ def check(cli, corpus_path, traces_dir, out, require):
                 print(f"{trace_id}: FAIL, {trace} does not match the corpus sha256")
                 failures += 1
                 continue
+        refused = entry.get("expect_failure")
+        if refused is not None:
+            # A trace the replay must refuse, with this text in what it says.
+            try:
+                run(cli, trace, work / "frames")
+            except RuntimeError as error:
+                if refused in str(error):
+                    print(f"{trace_id}: refused as expected ({refused})")
+                else:
+                    print(f"{trace_id}: FAIL, refused for another reason than "
+                          f"'{refused}':\n{error}")
+                    failures += 1
+            else:
+                print(f"{trace_id}: FAIL, replayed although it must be refused ({refused})")
+                failures += 1
+            continue
         start = entry.get("roundtrip_from")
         extra = [] if start is None else ["--record", str(work / "recorded.lxtrace"),
                                           "--record-from", str(start)]
-        result = replay(cli, trace, work / "frames", extra)
+        result = run(cli, trace, work / "frames", extra)
         device = device_class(result.get("renderer", ""))
         if start is not None:
-            again = replay(cli, work / "recorded.lxtrace", work / "recorded")
+            again = run(cli, work / "recorded.lxtrace", work / "recorded")
             tail = [frame["hash"] for frame in result["frames"]][start:]
             if [frame["hash"] for frame in again["frames"]] != tail:
                 print(f"{trace_id}: FAIL, the trace recorded from present {start} replays to "

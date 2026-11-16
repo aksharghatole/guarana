@@ -135,11 +135,16 @@ Commands BindTarget() {
 }
 } // Anonymous namespace
 
-bool WriteSampleTrace(const std::filesystem::path& path) {
+bool WriteSampleTrace(const std::filesystem::path& path, bool presents) {
     Writer writer{path};
     if (!writer.IsOpen()) {
         return false;
     }
+    const auto present = [&writer, presents](u64 offset, u64 time_ns) {
+        if (presents) {
+            Present(writer, offset, time_ns);
+        }
+    };
     const nlohmann::json config{
         {"program_id", "0400000000000001"}, {"switch2", true},  {"synthetic", true},
         {"memory_layout", 0},               {"width", Width},   {"height", Height},
@@ -156,17 +161,17 @@ bool WriteSampleTrace(const std::filesystem::path& path) {
 
     constexpr u64 Frame = 16'666'667;
     writer.WriteMemory(PhysicalBase + ImageOffset, AsBytes(Image(0)));
-    Present(writer, ImageOffset, Frame);
+    present(ImageOffset, Frame);
 
     Commands first = BindTarget();
     const Rect square{64, 36, 192, 108};
     first.Clear({1.0f, 0.0f, 0.0f, 1.0f}, nullptr);
     first.Clear({0.0f, 1.0f, 0.0f, 1.0f}, &square);
     Submit(writer, PushOffset, first);
-    Present(writer, TargetOffset, Frame * 2);
+    present(TargetOffset, Frame * 2);
 
     writer.WriteMemory(PhysicalBase + ImageOffset, AsBytes(Image(1)));
-    Present(writer, ImageOffset, Frame * 3);
+    present(ImageOffset, Frame * 3);
 
     Commands second;
     const Rect left{16, 16, 96, 128};
@@ -175,7 +180,7 @@ bool WriteSampleTrace(const std::filesystem::path& path) {
     second.Clear({1.0f, 1.0f, 0.0f, 1.0f}, &left);
     second.Clear({1.0f, 0.0f, 1.0f, 1.0f}, &right);
     Submit(writer, PushOffset + 0x8000, second);
-    Present(writer, TargetOffset, Frame * 4);
+    present(TargetOffset, Frame * 4);
     return writer.Finish();
 }
 

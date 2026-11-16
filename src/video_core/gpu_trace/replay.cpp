@@ -239,6 +239,12 @@ bool Replayer::Run(std::string& error) {
     if (!ReadSnapshot(error) || !BringUp(error) || !Stream(error)) {
         return false;
     }
+    if (presents == 0) {
+        // A recording ended before its first present (the game closed during the snapshot)
+        // is a well-formed file with nothing to show or compare.
+        error = "the trace has no frame to replay: its recording ended before the first present";
+        return false;
+    }
     nlohmann::json summary;
     summary["trace"] = options.trace.filename().string();
     summary["program_id"] = fmt::format("{:016X}", program_id);
