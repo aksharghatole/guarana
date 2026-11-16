@@ -1,6 +1,6 @@
 # Guarana on ARM64: Snapdragon X laptops and Android handhelds
 
-Guarana is for integrated GPUs, and many of them sit next to ARM64 CPUs: the Adreno in Snapdragon X laptops, and the Adreno in Android handhelds and phones (the AYN Odin 2 family has a Snapdragon 8 Gen 2, the Retroid Pocket 5 and Mini a Snapdragon 865, the AYANEO Pocket S a Snapdragon G3x Gen 2). The Switch 2's CPU is ARM64 too, so these devices can also run game code without a translator in between ([NCE.md](NCE.md)).
+Guarana is for integrated GPUs, and many of them sit next to ARM64 CPUs: the Adreno in Snapdragon X laptops, and the Adreno in Android handhelds and phones (the AYN Odin 2 has a Snapdragon 8 Gen 2 and the Retroid Pocket 5 a Snapdragon 865, [Notebookcheck](https://www.notebookcheck.net/Retroid-Pocket-5-Specs-release-date-and-launch-pricing-confirmed-for-new-retro-gaming-handheld.885414.0.html), [Handheld Index](https://handheldindex.pages.dev/comparisons/ayn-odin-2-vs-retroid-pocket-5/)). The Switch 2's CPU is ARM64 too, so these devices can also run game code without a translator in between ([NCE.md](NCE.md)).
 
 This page is the design note: what runs where, how CI builds it, what the GPU drivers have to provide, and what testers should report. Nobody on the project owns one of these devices. Everything here was built by CI and read in the code, not booted: device reports are the next step ([call for testers](#call-for-testers)).
 
@@ -8,9 +8,9 @@ This page is the design note: what runs where, how CI builds it, what the GPU dr
 
 | Device | Download | CPU emulation | Status |
 |---|---|---|---|
-| Snapdragon X laptop (Windows 11 on ARM) | `guarana-<version>-windows-arm64.zip` (new) | dynarmic's ARM64 JIT, fastmem | Never booted by the project |
-| | `guarana-<version>-windows-x86_64.zip` | dynarmic's x64 JIT, run by Windows' Prism emulator | Runs since Prism emulates AVX2 (Windows 11 24H2, October 2025 update), which the x64 builds need; slower, two translators in a row |
-| Android 13 or newer, arm64 | `guarana-<version>-android-arm64.apk` (new) | Native code execution (NCE) for titles with a 39-bit address space, else dynarmic's ARM64 JIT | Never booted by the project |
+| Snapdragon X laptop (Windows 11 on ARM) | `guarana-<version>-windows-arm64.zip` (from #228) | dynarmic's ARM64 JIT, fastmem | Never booted by the project |
+| | `guarana-<version>-windows-x86_64.zip` | dynarmic's x64 JIT, run by Windows' Prism emulator | Should run since Prism emulates AVX2 (Windows 11 24H2, October 2025 update), which the x64 builds need; slower, two translators in a row. Never booted by the project |
+| Android 13 or newer, arm64 | `guarana-<version>-android-arm64.apk` (from #227) | Native code execution (NCE) for titles with a 39-bit address space, else dynarmic's ARM64 JIT | Never booted by the project |
 | Linux on ARM64 | `guarana-<version>-linux-aarch64.AppImage` / `.tar.gz` | Same as Android | Published with the releases, never booted by the project |
 | Apple Silicon Mac | `guarana-<version>-macos-arm64.zip` | dynarmic's ARM64 JIT, MoltenVK | Upstream's build |
 
@@ -61,12 +61,12 @@ None of the iGPU defaults engage on Adreno: the game presets and Ocarina of Time
 
 ## Call for testers
 
-Wanted: Snapdragon X laptops (X Elite, X Plus, X2), and Android devices with a Snapdragon 8 Gen 2 or newer, a G3x Gen 2, or older chips for a baseline. That covers the AYN Odin 2 family, AYN Odin 3, AYANEO Pocket S, Retroid Pocket 5 and Mini, and Snapdragon phones.
+Wanted: Snapdragon X laptops (X Elite, X Plus, X2), and Android devices with a Snapdragon 8 Gen 2 or newer, a G3x Gen 2, or older chips for a baseline. Handhelds such as the AYN Odin 2 family and Odin 3, the AYANEO Pocket S and the Retroid Pocket 5 and Mini, and Snapdragon phones: name your chip in the report.
 
 1. Download from the [nightly pre-release](https://github.com/karimalsalah/guarana/releases/tag/nightly), or from a release once one carries them:
    - Windows on ARM: `windows-arm64.zip`, plus `windows-x86_64.zip` to compare.
    - Android: open `android-arm64.apk` on the device to install it.
-2. Boot a game you dumped from your own console. The emulator needs your own keys and firmware; none are provided.
+2. Boot a game you dumped from your own console. The emulator needs your own keys and firmware; none are provided. On Android, if a game crashes at boot or right after, set the CPU backend to Dynarmic (Settings > CPU) and try again: NCE, the default, has never run Switch 2 code. Report both results.
 3. Open a [device report](https://github.com/karimalsalah/guarana/issues/new?template=device-report.yml). Pick your Adreno in "Graphics card"; on Android pick "Phone or tablet" or "Handheld". Include:
    - the GPU driver: the vendor's, or Turnip and its version;
    - fps, p99 frame time and the scene;
