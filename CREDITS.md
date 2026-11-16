@@ -55,6 +55,7 @@ Pull requests to zortos293/Lichii that were not merged upstream when we took the
 | [#1799](https://github.com/zortos293/Lichii/pull/1799) | [Reiixan](https://github.com/Reiixan) | A compute pipeline dropped before its build ran counts as done, so "Building: N shader(s)" returns to zero |
 | [#1908](https://github.com/zortos293/Lichii/pull/1908) | [lethevimlet](https://github.com/lethevimlet) | Native compute launches clear the pending upload list, which grew for the whole session in Ocarina of Time (768 MiB after 90 minutes) |
 | [Eglantine c40fca7da4](https://github.com/Eglantine-Community/Eglantine/commit/c40fca7da4) | kraibse | Swapchain image, surface format and present mode queries are repeated on VK_INCOMPLETE instead of aborting (moving the window during play) |
+| [#1422](https://github.com/zortos293/Lichii/pull/1422) | [BrunoSilvestre00](https://github.com/BrunoSilvestre00) | Ocarina of Time: the "Text Speed 2x", "4x" and "Instant" add-ons (its author ported them from NotRexed/Hookshot#402); built-in add-ons that are off until checked, stored as `+<name>` in `[DisabledAddOns]`; groups of built-ins that patch the same place, where the first one applied wins |
 
 When one of these is merged upstream, the next upstream sync brings the upstream version, and this table says so.
 
