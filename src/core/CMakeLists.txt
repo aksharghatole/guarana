@@ -1309,6 +1309,25 @@ add_custom_target(patch_packs
     VERBATIM)
 add_dependencies(core patch_packs)
 
+# The packs are compiled into core as well (FileSys::EmbeddedPatchPacks), so a program without the
+# folder beside it keeps them: Android, or guarana-cli inside a macOS bundle. A file in the folder
+# replaces the compiled-in copy of the same name (FileSys::LoadPatchPacks). The list file changes
+# only when a pack is added or removed; either, or an edited pack, writes the source again.
+file(GLOB patch_pack_files CONFIGURE_DEPENDS "${PROJECT_SOURCE_DIR}/dist/patch-packs/*.json")
+set(patch_pack_list "${CMAKE_CURRENT_BINARY_DIR}/patch_packs.cmake")
+file(CONFIGURE OUTPUT "${patch_pack_list}"
+    CONTENT "set(patch_pack_files [==[@patch_pack_files@]==])\n" @ONLY)
+set(embedded_patch_packs "${CMAKE_CURRENT_BINARY_DIR}/patch_packs_embedded.cpp")
+add_custom_command(
+    OUTPUT "${embedded_patch_packs}"
+    COMMAND ${CMAKE_COMMAND} -P "${PROJECT_SOURCE_DIR}/CMakeModules/EmbedPatchPacks.cmake"
+        "${patch_pack_list}" "${embedded_patch_packs}"
+    DEPENDS ${patch_pack_files} "${patch_pack_list}"
+        "${PROJECT_SOURCE_DIR}/CMakeModules/EmbedPatchPacks.cmake"
+    COMMENT "Compiling the patch packs into core"
+    VERBATIM)
+target_sources(core PRIVATE "${embedded_patch_packs}")
+
 if (ENABLE_WEB_SERVICE)
     target_compile_definitions(core PUBLIC ENABLE_WEB_SERVICE)
     target_link_libraries(core PUBLIC web_service)

@@ -1552,6 +1552,37 @@ FileSys::PatchPack ParseTestPack(const nlohmann::json& json) {
     return std::move(*pack);
 }
 
+std::span<const u8> TextBytes(std::string_view text) {
+    return {reinterpret_cast<const u8*>(text.data()), text.size()};
+}
+
+// A folder of packs for one test, removed when it ends.
+class TestPackFolder {
+public:
+    TestPackFolder() {
+        std::filesystem::create_directories(root);
+    }
+
+    ~TestPackFolder() {
+        std::error_code error;
+        std::filesystem::remove_all(root, error);
+    }
+
+    TestPackFolder(const TestPackFolder&) = delete;
+    TestPackFolder& operator=(const TestPackFolder&) = delete;
+
+    void Write(std::string_view file_name, std::string_view contents) const {
+        std::ofstream file{root / std::filesystem::path{file_name}, std::ios::binary};
+        file.write(contents.data(), static_cast<std::streamsize>(contents.size()));
+        REQUIRE(file.good());
+    }
+
+    const std::filesystem::path root =
+        std::filesystem::temp_directory_path() /
+        ("patch-pack-test-" +
+         std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+};
+
 } // Anonymous namespace
 
 TEST_CASE("Shipped patch packs pass the pack checks", "[patch_manager]") {
@@ -1592,6 +1623,105 @@ TEST_CASE("Shipped patch packs pass the pack checks", "[patch_manager]") {
     }
     CHECK(names == std::vector<std::string>{"Text Speed Instant (built-in)",
                                             "Text Speed 4x (built-in)", "Text Speed 2x (built-in)"});
+}
+
+TEST_CASE("The shipped patch packs are compiled in as well", "[patch_manager]") {
+    // The folder CMake copied next to this program, and the same files compiled into it.
+    const auto directory = FileSys::ShippedPatchPackDirectory();
+    const auto folder = FileSys::LoadPatchPacks(directory);
+    for (const auto& error : folder.errors) {
+        FAIL_CHECK(error);
+    }
+    REQUIRE_FALSE(folder.packs.empty());
+    CHECK(FileSys::EmbeddedPatchPacks().size() == folder.packs.size());
+
+    // A program with no folder beside it (Android, guarana-cli inside a macOS bundle), or one
+    // that cannot find its own path, reads the compiled-in copies: the same packs, so every case
+    // here that uses the shipped packs holds for them as well.
+    const auto missing = directory / "not-here";
+    REQUIRE_FALSE(std::filesystem::exists(missing));
+    for (const auto& no_folder : {missing, std::filesystem::path{}}) {
+        INFO("folder: " << Common::FS::PathToUTF8String(no_folder));
+        const auto load = FileSys::LoadPatchPacks(no_folder, FileSys::EmbeddedPatchPacks());
+        for (const auto& error : load.errors) {
+            FAIL_CHECK(error);
+        }
+        REQUIRE(load.packs.size() == folder.packs.size());
+        for (size_t i = 0; i < load.packs.size(); ++i) {
+            const auto& compiled = load.packs[i];
+            const auto& shipped = folder.packs[i];
+            CAPTURE(shipped.source);
+            CHECK(compiled.compiled_in);
+            CHECK_FALSE(shipped.compiled_in);
+            CHECK(compiled.source == shipped.source);
+            CHECK(compiled.title_id == shipped.title_id);
+            CHECK(compiled.module == shipped.module);
+            CHECK(compiled.build_id == shipped.build_id);
+            CHECK(compiled.patches == shipped.patches);
+        }
+    }
+
+    // With the folder there, its files are the ones read, and no pack comes twice.
+    const auto both = FileSys::LoadPatchPacks(directory, FileSys::EmbeddedPatchPacks());
+    CHECK(both.errors.empty());
+    REQUIRE(both.packs.size() == folder.packs.size());
+    for (const auto& pack : both.packs) {
+        CHECK_FALSE(pack.compiled_in);
+    }
+}
+
+TEST_CASE("A pack in the folder replaces the compiled-in copy of its name", "[patch_manager]") {
+    const auto compiled_text = TestPackJson().dump();
+    const std::array compiled_in{
+        FileSys::EmbeddedPatchPack{"0100000000010000-test.json", TextBytes(compiled_text)}};
+    const TestPackFolder folder;
+
+    SECTION("An empty folder leaves the compiled-in copy") {
+        const auto load = FileSys::LoadPatchPacks(folder.root, compiled_in);
+        CHECK(load.errors.empty());
+        REQUIRE(load.packs.size() == 1);
+        CHECK(load.packs[0].compiled_in);
+        CHECK(load.packs[0].source == "0100000000010000-test.json");
+        CHECK(load.packs[0].patches.size() == 3);
+    }
+    SECTION("A copy edited in the folder is the one used") {
+        auto edited = TestPackJson();
+        const std::string description =
+            "The copy in the folder, edited after the build, is the one used.";
+        edited["patches"][0]["description"] = description;
+        folder.Write("0100000000010000-test.json", edited.dump());
+        const auto load = FileSys::LoadPatchPacks(folder.root, compiled_in);
+        CHECK(load.errors.empty());
+        REQUIRE(load.packs.size() == 1);
+        CHECK_FALSE(load.packs[0].compiled_in);
+        CHECK(load.packs[0].patches[0].description == description);
+    }
+    SECTION("A copy in the folder that cannot be used gives way to the compiled-in one") {
+        folder.Write("0100000000010000-test.json", "{");
+        const auto load = FileSys::LoadPatchPacks(folder.root, compiled_in);
+        REQUIRE(load.packs.size() == 1);
+        CHECK(load.packs[0].compiled_in);
+        CHECK(load.errors ==
+              std::vector<std::string>{
+                  "0100000000010000-test.json: is not valid JSON",
+                  "0100000000010000-test.json: the copy compiled into the program is used instead"});
+    }
+    SECTION("Packs of other names join the compiled-in ones in file name order") {
+        folder.Write("0100000000010000-a.json", compiled_text);
+        folder.Write("0100000000010000-z.json", compiled_text);
+        folder.Write("notes.txt", "Not a pack.");
+        const auto load = FileSys::LoadPatchPacks(folder.root, compiled_in);
+        CHECK(load.errors.empty());
+        std::vector<std::pair<std::string, bool>> order;
+        for (const auto& pack : load.packs) {
+            order.emplace_back(pack.source, pack.compiled_in);
+        }
+        CHECK(order == std::vector<std::pair<std::string, bool>>{
+                           {"0100000000010000-a.json", false},
+                           {"0100000000010000-test.json", true},
+                           {"0100000000010000-z.json", false},
+                       });
+    }
 }
 
 TEST_CASE("Patch packs are read field by field", "[patch_manager]") {

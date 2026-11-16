@@ -628,16 +628,23 @@ std::shared_ptr<const BuiltinPatchSet> CurrentBuiltinPatches() {
     auto& slot = CurrentSlot();
     std::scoped_lock lock{slot.mutex};
     if (!slot.current) {
+        // The folder next to the program, over the copies compiled in: a program without the
+        // folder (Android) keeps the packs, and a file edited there is the one used.
         const auto directory = ShippedPatchPackDirectory();
-        auto load = LoadPatchPacks(directory);
+        auto load = LoadPatchPacks(directory, EmbeddedPatchPacks());
+        const auto compiled_count = static_cast<size_t>(std::ranges::count_if(
+            load.packs, [](const PatchPack& pack) { return pack.compiled_in; }));
+        const auto folder_count = load.packs.size() - compiled_count;
         std::shared_ptr<const BuiltinPatchSet> made =
             std::make_shared<BuiltinPatchSet>(std::move(load.packs), std::move(load.errors));
         for (const auto& problem : made->errors) {
             LOG_ERROR(Loader, "Patch packs: {}", problem);
         }
-        LOG_INFO(Loader, "Patch packs: {} built-in patches from {}",
-                 made->patches.size() - BUILTIN_PATCHES.size(),
-                 Common::FS::PathToUTF8String(directory));
+        LOG_INFO(Loader, "Patch packs: {} built-in patches; {} packs from {}, {} compiled in",
+                 made->patches.size() - BUILTIN_PATCHES.size(), folder_count,
+                 directory.empty() ? std::string{"(no folder)"}
+                                   : Common::FS::PathToUTF8String(directory),
+                 compiled_count);
         slot.current = std::move(made);
     }
     return slot.current;

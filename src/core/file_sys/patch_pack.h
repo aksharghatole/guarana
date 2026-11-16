@@ -27,6 +27,8 @@ struct PatchPackRecord {
     bool cave{};
     std::array<u8, 32> original_sha256{};
     size_t original_size{};
+
+    bool operator==(const PatchPackRecord&) const = default;
 };
 
 struct PatchPackPatch {
@@ -39,10 +41,15 @@ struct PatchPackPatch {
     size_t state_offset{};
     size_t state_size{};
     std::vector<PatchPackRecord> records;
+
+    bool operator==(const PatchPackPatch&) const = default;
 };
 
 struct PatchPack {
-    std::string source; // The file name, for messages
+    // The file name: the pack's id, and how its messages start. A file in the folder replaces the
+    // compiled-in copy of the same name.
+    std::string source;
+    bool compiled_in{}; // Read from the copy compiled into the program, not from the folder
     u64 title_id{};
     std::string module;
     std::string build_id; // Upper case without trailing zeros, as PatchNSO compares it
@@ -60,11 +67,27 @@ struct PatchPackLoad {
     std::vector<std::string> errors;
 };
 
-// Every *.json file in `directory`, in file name order. A pack with any problem is left out whole.
-[[nodiscard]] PatchPackLoad LoadPatchPacks(const std::filesystem::path& directory);
+// A pack compiled into the program: a file of dist/patch-packs as it was when the program was
+// built (CMakeModules/EmbedPatchPacks.cmake writes the list).
+struct EmbeddedPatchPack {
+    std::string_view file_name;
+    std::span<const u8> text;
+};
 
-// Where the packs shipped with the program are: patch-packs next to the executable, or in
-// Contents/Resources of a macOS bundle. Empty where the executable cannot be found.
+// The packs compiled into the program, in file name order. A program with no folder of packs
+// beside it (Android, guarana-cli inside a macOS bundle) still has these.
+[[nodiscard]] std::span<const EmbeddedPatchPack> EmbeddedPatchPacks();
+
+// The *.json packs in `directory`, and each of `compiled_in` whose file name no file there has:
+// a file in the folder replaces the compiled-in copy of its name. When the folder's copy cannot be
+// used, its problems are reported and the compiled-in copy is used instead. The packs come in file
+// name order, whichever copy each is read from. A pack with any problem is left out whole. A
+// folder that is not there holds no packs, which is not a problem.
+[[nodiscard]] PatchPackLoad LoadPatchPacks(const std::filesystem::path& directory,
+                                           std::span<const EmbeddedPatchPack> compiled_in = {});
+
+// Where the folder of packs shipped with the program is: patch-packs next to the executable, or
+// in Contents/Resources of a macOS bundle. Empty where the executable cannot be found.
 [[nodiscard]] std::filesystem::path ShippedPatchPackDirectory();
 
 [[nodiscard]] bool PatchPackSha256(std::span<const u8> data, std::array<u8, 32>& digest);

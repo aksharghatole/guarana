@@ -15,12 +15,20 @@ a pull request with no C++. Ocarina of Time's three Text Speed add-ons are the f
 - The release workflow ships the folder. The Windows zip is the `bin` folder, which holds it. The
   AppImage and the Linux tarball copy it to `usr/bin/patch-packs`, and the macOS bundle carries it.
   The Windows release and test builds fail when it holds no pack.
+- The build also compiles every pack into `core` (`FileSys::EmbeddedPatchPacks`, written by
+  `CMakeModules/EmbedPatchPacks.cmake`). A program with no folder beside it keeps the packs:
+  Android, `guarana-cli` inside a macOS bundle, or a program moved without its folder.
 - `FileSys::ShippedPatchPackDirectory` finds the folder: next to the executable on Windows and
-  Linux (`/proc/self/exe`), and in the bundle on macOS.
-- `LoadPatchPacks` reads every `*.json` file there once, on first use, in file name order.
-- The log says how many built-in patches came from packs (`Patch packs: N built-in patches from
-  <folder>`). It names every pack that was left out and why: a missing folder, a problem in the
-  file, or a name that was already taken.
+  Linux (`/proc/self/exe`). On macOS it looks in the bundle's `Contents/Resources`, then in
+  `../Resources` and next to the executable (`_NSGetExecutablePath`), for `guarana-cli` in
+  `Contents/MacOS`.
+- `LoadPatchPacks` reads every `*.json` file there once, on first use. A file there replaces the
+  compiled-in copy of the same file name, so the shipped packs stay editable. When that file
+  cannot be used, the log says why and the compiled-in copy is used instead. The packs come in
+  file name order, whichever copy each is read from. A missing folder is not a problem.
+- The log says how many built-in patches came from packs and where they were read
+  (`Patch packs: N built-in patches; P packs from <folder>, C compiled in`). It names every pack
+  that was left out and why: a problem in the file, or a name that was already taken.
 
 The built-ins compiled in come first, then the packs' patches, each pack in its own order. Order
 matters in two places:
@@ -142,6 +150,11 @@ CI runs the same checks on the shipped packs in the unit tests (`src/tests/core/
 - **Built-in patches that can be applied together never touch the same bytes:**
   `FindBuiltinPatchOverlaps` runs on the compiled-in built-ins and the packs together, through
   `BuiltinPatchRanges`. A guarded record's range is the larger of what it writes and what it checks.
+- **The shipped patch packs are compiled in as well:** with no folder, or no path to look in, the
+  compiled-in copies read without an error and equal the folder's packs, record for record.
+- **A pack in the folder replaces the compiled-in copy of its name:** an edited copy wins, a copy
+  that does not read gives way to the compiled-in one and says why, and packs of other names join
+  in file name order.
 - **Patch packs are read strictly** has one case per rule above.
 - **A patch pack gives a game built-ins without any C++** runs a made-up game's pack through
   `HasNSOPatch`, `GetPatches`, `PatchNSO` and `StoredDisabledAddons`.
@@ -201,12 +214,12 @@ Not taken:
 
 ## What this does not cover
 
-- **Android** has no folder next to the program, and no workflow here builds it. An Android build
-  would load no pack, so it would lose the Text Speed add-ons until it ships the packs as assets.
+- **Android** has no folder next to the program. It uses the compiled-in copies, so its packs
+  change only with a new build. No pull request check builds Android.
 - **macOS and the release packaging** are not built by a pull request's CI:
   - build-check compiles Linux GCC and Windows clang-cl only;
-  - the macOS lookup (`GetBundleDirectory`) and the bundle copy were written to match the code
-    around them;
+  - the macOS lookups (`GetBundleDirectory`, `_NSGetExecutablePath`) and the bundle copy were
+    written to match the code around them. If they miss the folder, the compiled-in copies load;
   - the AppImage and Windows zip steps run in `release-binaries.yml`;
   - a run of that workflow on a branch builds every platform without publishing.
 - **Compiled-in built-ins stay where they are.** The DLSS render scales follow a setting, and Max

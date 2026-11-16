@@ -4,12 +4,19 @@
 #include <algorithm>
 #include <array>
 #include <cstddef>
+#include <map>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <system_error>
 #include <utility>
 #include <vector>
+
+#ifdef __APPLE__
+#include <cstdint>
+
+#include <mach-o/dyld.h>
+#endif
 
 #include <fmt/format.h>
 #include <nlohmann/json.hpp>
@@ -409,6 +416,41 @@ void CheckPatchRelations(const Problems& problems, const std::vector<PatchPackPa
     }
 }
 
+// The text of a pack file in the folder, or nothing, with the reason in `errors`.
+std::optional<std::string> ReadPackFile(const std::filesystem::path& path,
+                                        std::string_view file_name,
+                                        std::vector<std::string>& errors) {
+    std::error_code size_error;
+    const auto file_bytes = std::filesystem::file_size(path, size_error);
+    if (size_error || file_bytes > MaxPackBytes) {
+        errors.push_back(
+            fmt::format("{}: cannot be read, or is over {} bytes", file_name, MaxPackBytes));
+        return std::nullopt;
+    }
+    auto text = Common::FS::ReadStringFromFile(path, Common::FS::FileType::BinaryFile);
+    if (text.size() != file_bytes) {
+        errors.push_back(fmt::format("{}: could not be read", file_name));
+        return std::nullopt;
+    }
+    return text;
+}
+
+#ifdef __APPLE__
+// The running program's file, links resolved. Empty when it cannot be found.
+std::filesystem::path ExecutablePath() {
+    std::uint32_t size = 0;
+    _NSGetExecutablePath(nullptr, &size);
+    std::string buffer(size, '\0');
+    if (size == 0 || _NSGetExecutablePath(buffer.data(), &size) != 0) {
+        return {};
+    }
+    buffer.resize(std::char_traits<char>::length(buffer.c_str()));
+    std::error_code error;
+    auto resolved = std::filesystem::canonical(buffer, error);
+    return error ? std::filesystem::path{buffer} : resolved;
+}
+#endif
+
 } // Anonymous namespace
 
 std::optional<PatchPack> ParsePatchPack(std::string_view text, std::string_view source,
@@ -533,44 +575,56 @@ std::optional<PatchPack> ParsePatchPack(std::string_view text, std::string_view 
     return pack;
 }
 
-PatchPackLoad LoadPatchPacks(const std::filesystem::path& directory) {
+PatchPackLoad LoadPatchPacks(const std::filesystem::path& directory,
+                             std::span<const EmbeddedPatchPack> compiled_in) {
     PatchPackLoad load;
-    const auto where = Common::FS::PathToUTF8String(directory);
+    // Every pack by file name, in the order they are used: its file in the folder and its
+    // compiled-in copy, either of which may be missing.
+    struct Copies {
+        std::filesystem::path file;
+        const EmbeddedPatchPack* compiled{};
+    };
+    std::map<std::string, Copies> copies_by_name;
+    for (const auto& embedded : compiled_in) {
+        copies_by_name[std::string{embedded.file_name}].compiled = &embedded;
+    }
     std::error_code error;
-    if (directory.empty() || !std::filesystem::is_directory(directory, error)) {
-        load.errors.push_back(fmt::format("{}: no patch pack folder there",
-                                          where.empty() ? "(the program's folder)" : where));
-        return load;
-    }
-    std::vector<std::pair<std::string, std::filesystem::path>> files;
-    for (std::filesystem::directory_iterator entry{directory, error}, last;
-         !error && entry != last; entry.increment(error)) {
-        std::error_code type_error;
-        if (entry->path().extension() == ".json" && entry->is_regular_file(type_error)) {
-            files.emplace_back(Common::FS::PathToUTF8String(entry->path().filename()),
-                               entry->path());
+    if (!directory.empty() && std::filesystem::is_directory(directory, error)) {
+        for (std::filesystem::directory_iterator entry{directory, error}, last;
+             !error && entry != last; entry.increment(error)) {
+            std::error_code type_error;
+            if (entry->path().extension() == ".json" && entry->is_regular_file(type_error)) {
+                copies_by_name[Common::FS::PathToUTF8String(entry->path().filename())].file =
+                    entry->path();
+            }
+        }
+        if (error) {
+            load.errors.push_back(fmt::format("{}: the folder could not be read: {}",
+                                              Common::FS::PathToUTF8String(directory),
+                                              error.message()));
         }
     }
-    if (error) {
-        load.errors.push_back(fmt::format("{}: the folder could not be read: {}", where,
-                                          error.message()));
-    }
-    std::sort(files.begin(), files.end());
-    for (const auto& [file_name, file_path] : files) {
-        std::error_code size_error;
-        const auto file_bytes = std::filesystem::file_size(file_path, size_error);
-        if (size_error || file_bytes > MaxPackBytes) {
-            load.errors.push_back(fmt::format("{}: cannot be read, or is over {} bytes",
-                                              file_name, MaxPackBytes));
-            continue;
+    for (const auto& [file_name, copies] : copies_by_name) {
+        if (!copies.file.empty()) {
+            if (const auto file_text = ReadPackFile(copies.file, file_name, load.errors)) {
+                if (auto pack = ParsePatchPack(*file_text, file_name, load.errors)) {
+                    load.packs.push_back(std::move(*pack));
+                    continue;
+                }
+            }
+            if (copies.compiled == nullptr) {
+                continue;
+            }
+            load.errors.push_back(
+                fmt::format("{}: the copy compiled into the program is used instead", file_name));
         }
-        const auto text =
-            Common::FS::ReadStringFromFile(file_path, Common::FS::FileType::BinaryFile);
-        if (text.size() != file_bytes) {
-            load.errors.push_back(fmt::format("{}: could not be read", file_name));
-            continue;
-        }
-        if (auto pack = ParsePatchPack(text, file_name, load.errors)) {
+        const std::string_view compiled_text{
+            reinterpret_cast<const char*>(copies.compiled->text.data()),
+            copies.compiled->text.size()};
+        if (auto pack = ParsePatchPack(compiled_text, fmt::format("{} (compiled in)", file_name),
+                                       load.errors)) {
+            pack->source = file_name;
+            pack->compiled_in = true;
             load.packs.push_back(std::move(*pack));
         }
     }
@@ -582,11 +636,24 @@ std::filesystem::path ShippedPatchPackDirectory() {
     const auto exe_directory = Common::FS::GetExeDirectory();
     return exe_directory.empty() ? std::filesystem::path{} : exe_directory / PackFolderName;
 #elif defined(__APPLE__)
-    // A bundle keeps them in Contents/Resources; a program outside one (tests) is its own bundle.
+    // A bundle keeps them in Contents/Resources. guarana-cli, in the bundle's Contents/MacOS, also
+    // looks from its own path, in case the main bundle is not the .app around it. A program outside
+    // a bundle (tests) has them next to it.
     const auto bundle = Common::FS::GetBundleDirectory();
-    const auto resources = bundle / "Contents" / "Resources" / PackFolderName;
-    std::error_code error;
-    return std::filesystem::is_directory(resources, error) ? resources : bundle / PackFolderName;
+    std::vector<std::filesystem::path> candidates{bundle / "Contents" / "Resources" /
+                                                  PackFolderName};
+    if (const auto exe = ExecutablePath(); !exe.empty()) {
+        candidates.push_back(exe.parent_path().parent_path() / "Resources" / PackFolderName);
+        candidates.push_back(exe.parent_path() / PackFolderName);
+    }
+    candidates.push_back(bundle / PackFolderName);
+    for (const auto& candidate : candidates) {
+        std::error_code error;
+        if (std::filesystem::is_directory(candidate, error)) {
+            return candidate;
+        }
+    }
+    return candidates.front();
 #elif defined(__linux__) && !defined(__ANDROID__)
     std::error_code error;
     const auto exe = std::filesystem::read_symlink("/proc/self/exe", error);
