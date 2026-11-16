@@ -143,6 +143,32 @@ TEST_CASE("The sample GPU trace has a snapshot, submits and presents", "[video_c
     std::filesystem::remove(path);
 }
 
+TEST_CASE("The sample GPU trace written without presents keeps its submits",
+          "[video_core][gpu_trace]") {
+    const auto path = TempTrace("lichii-gpu-trace-sample-no-presents.lxtrace");
+    REQUIRE(WriteSampleTrace(path, false));
+    {
+        Reader reader{path};
+        REQUIRE(reader.Error().empty());
+        size_t submits = 0;
+        size_t presents = 0;
+        bool end = false;
+        while (const auto record = reader.Next()) {
+            if (record->type == RecordType::Submit) {
+                ++submits;
+            } else if (record->type == RecordType::Present) {
+                ++presents;
+            }
+            end = record->type == RecordType::End;
+        }
+        CHECK(reader.Error().empty());
+        CHECK(end);
+        CHECK(submits == 2);
+        CHECK(presents == 0);
+    }
+    std::filesystem::remove(path);
+}
+
 TEST_CASE("GPU trace reader reads format 1 traces, not newer ones than its own",
           "[video_core][gpu_trace]") {
     const auto path = TempTrace("lichii-gpu-trace-version.lxtrace");

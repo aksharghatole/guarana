@@ -454,7 +454,10 @@ TOOLS = [
         "description": "Records a GPU trace (docs/nx2/gpu-trace.md): from the next GPU command "
                        "boundary, a snapshot then every submit, CPU memory write, map and present "
                        "for the given seconds (60 presents a second) or presents. Writes to path, "
-                       "else the dump directory. Poll trace_status for the file.",
+                       "else the dump directory. Returns at once: the snapshot of a 3D scene can "
+                       "take a minute and gigabytes. Poll trace_status until requested is false "
+                       "before the game closes; a game closed earlier leaves a trace without "
+                       "presents, which a replay refuses.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -472,7 +475,8 @@ TOOLS = [
     {
         "name": "trace_status",
         "description": "GPU trace recorder state: requested, recording, presents so far and "
-                       "wanted, the path, the last trace written and the last error.",
+                       "wanted, the path, the last trace written, the presents it holds "
+                       "(last_presents) and the last error.",
         "inputSchema": {"type": "object", "properties": {}},
     },
     {

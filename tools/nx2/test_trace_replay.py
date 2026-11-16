@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Tests trace_replay.py's PNG reader, frame comparison and paired bench."""
+"""Tests trace_replay.py's PNG reader, frame comparison, paired bench and corpus check."""
 
+import contextlib
+import io
+import json
 import math
 import struct
 import sys
@@ -187,6 +190,67 @@ class BenchTest(unittest.TestCase):
         rows = trace_replay.compare_runs("base", base, "head", head)
         self.assertFalse(rows[0]["equal"])
         self.assertNotIn("difference", rows[0])
+
+
+class CheckTest(unittest.TestCase):
+    """The corpus check, with the build that writes and replays the traces faked."""
+
+    def check(self, entry, run):
+        made = []
+
+        def generate(command, check):
+            made.append(command)
+
+        with tempfile.TemporaryDirectory() as directory:
+            corpus = Path(directory) / "corpus.json"
+            corpus.write_text(json.dumps({"version": 1, "traces": [entry]}))
+            printed = io.StringIO()
+            with contextlib.redirect_stdout(printed):
+                failures = trace_replay.check("cli", corpus, None, Path(directory) / "out", False,
+                                              run=run, generate=generate)
+        return failures, made, printed.getvalue()
+
+    REFUSED = {"id": "empty", "source": "generated", "generate": ["--no-presents"],
+               "expect_failure": "no frame to replay"}
+
+    def test_a_trace_the_replay_refuses_as_expected_passes(self):
+        def run(cli, trace, out, extra=()):
+            raise RuntimeError("cli --replay failed (1):\nreplay failed: the trace has no frame "
+                               "to replay: its recording ended before the first present")
+
+        failures, made, printed = self.check(self.REFUSED, run)
+        self.assertEqual(failures, 0)
+        self.assertEqual(made[0][:2], ["cli", "--gpu-trace-sample"])
+        self.assertEqual(made[0][-1], "--no-presents")
+        self.assertIn("refused as expected", printed)
+
+    def test_a_trace_that_replays_although_it_must_be_refused_fails(self):
+        def run(cli, trace, out, extra=()):
+            return frames([], [])
+
+        failures, _, printed = self.check(self.REFUSED, run)
+        self.assertEqual(failures, 1)
+        self.assertIn("must be refused", printed)
+
+    def test_a_trace_refused_for_another_reason_fails(self):
+        def run(cli, trace, out, extra=()):
+            raise RuntimeError("cli --replay failed (1):\nreplay failed: no Vulkan device")
+
+        failures, _, printed = self.check(self.REFUSED, run)
+        self.assertEqual(failures, 1)
+        self.assertIn("another reason", printed)
+
+    def test_a_generated_trace_is_compared_with_its_expected_frames(self):
+        def run(cli, trace, out, extra=()):
+            return {"renderer": "llvmpipe (LLVM 20)", "frames": [{"hash": "a"}, {"hash": "b"}]}
+
+        entry = {"id": "sample", "source": "generated", "expected": {"lavapipe": ["a", "b"]}}
+        failures, made, _ = self.check(entry, run)
+        self.assertEqual(failures, 0)
+        self.assertEqual(made[0][1], "--gpu-trace-sample")
+        self.assertEqual(len(made[0]), 3)
+        entry["expected"]["lavapipe"] = ["a", "c"]
+        self.assertEqual(self.check(entry, run)[0], 1)
 
 
 if __name__ == "__main__":

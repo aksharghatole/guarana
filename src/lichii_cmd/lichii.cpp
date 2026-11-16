@@ -631,15 +631,16 @@ static bool WarmPipelines(SdlState& state, const Core::LaunchParams& lp) {
 /// GPU trace replay (docs/nx2/gpu-trace.md):
 ///   eden-cli --replay <trace> --out <dir> [--frames N] [--device N] [--no-images]
 ///                     [--record <trace> --record-from <present> --record-presents N]
-///   eden-cli --gpu-trace-sample <trace>: writes the synthetic trace.
+///   eden-cli --gpu-trace-sample <trace> [--no-presents]: writes the synthetic trace.
 static bool ReplayGpuTrace(Core::System& system, int argc, char** argv) {
     namespace GpuTrace = VideoCommon::GpuTrace;
     if (std::string_view{argv[1]} == "--gpu-trace-sample") {
         if (argc < 3) {
-            fmt::print(stderr, "usage: --gpu-trace-sample <trace>\n");
+            fmt::print(stderr, "usage: --gpu-trace-sample <trace> [--no-presents]\n");
             return false;
         }
-        return GpuTrace::WriteSampleTrace(Common::FS::ToU8String(argv[2]));
+        const bool presents = argc < 4 || std::string_view{argv[3]} != "--no-presents";
+        return GpuTrace::WriteSampleTrace(Common::FS::ToU8String(argv[2]), presents);
     }
     GpuTrace::ReplayOptions options;
     for (int i = 2; i < argc; ++i) {

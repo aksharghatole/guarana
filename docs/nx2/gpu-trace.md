@@ -17,7 +17,7 @@ guarana-cli --replay <trace> --out <dir> [--frames N] [--device N] [--no-images]
 
 The window is a `VK_EXT_headless_surface` surface (`WindowSystemType::Headless`), so any Vulkan driver with that extension works, Mesa's lavapipe included. On Windows, where the loader lists no such extension (Intel's driver 32.0.101.9175 on an Arc 140T has none), the replay makes a window that is never shown and presents to it without vertical sync, with `EDEN_NX2_FLUID` and `EDEN_NX2_EXTRAPOLATE` set to 0 unless the environment already sets them.
 
-`guarana-cli --gpu-trace-sample <trace>` writes a synthetic trace that needs no game: one Switch 2 channel whose four frames are two CPU-written images and two sets of 3D engine clears (whole and scissored). The unit tests read it back (`[gpu_trace]`).
+`guarana-cli --gpu-trace-sample <trace>` writes a synthetic trace that needs no game: one Switch 2 channel whose four frames are two CPU-written images and two sets of 3D engine clears (whole and scissored). The unit tests read it back (`[gpu_trace]`). With `--no-presents` after the path it writes the same stream without its presents, which the replay must refuse (see "Recording").
 
 ## Bench: a paired A/B on the same frames
 
@@ -47,6 +47,8 @@ A recording starts at the GPU thread's next command boundary where no channel wa
 
 - the debug server: `trace_record` `{seconds?, presents?, path?}` (default 3 s, into the dump directory), `trace_stop`, `trace_status`;
 - or `EDEN_NX2_GPU_TRACE=<dir>`: touching `<dir>/record.now` starts `<dir>/trace-<time>.lxtrace` (`EDEN_NX2_GPU_TRACE_PRESENTS=<n>` sets the length).
+
+`trace_record` returns at once, and the snapshot comes first: in a 3D scene it is gigabytes and can take a minute (3 GB in Ocarina of Time's Hyrule Field), during which the game stands still and `trace_status` waits. **Keep the game open until `trace_status` shows `requested: false`.** `last_presents` then says how many presents the trace holds. A game closed during the snapshot leaves a well-formed trace with no presents: the recorder logs `holds no presents` as an error and reports it in `last_error`, and `--replay` refuses such a trace (`the trace has no frame to replay`) instead of writing an empty `frames.json`. A recording that ends short of the presents asked for logs a warning and replays up to where it ended.
 
 What happens (`video_core/gpu_trace/recorder.cpp`):
 
