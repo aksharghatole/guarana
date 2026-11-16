@@ -32,7 +32,9 @@ class ConfigurePerGameAddons : public QWidget {
     Q_OBJECT
 
 public:
-    enum PatchData { NUMERIC_VERSION = Qt::UserRole, PATCH_LOCATION };
+    /// PATCH_KEY is the name the settings store, set when the row shows another text.
+    /// PATCH_INFO is what the box under the list says about the row.
+    enum PatchData { NUMERIC_VERSION = Qt::UserRole, PATCH_LOCATION, PATCH_KEY, PATCH_INFO };
 
     explicit ConfigurePerGameAddons(Core::System& system_, QWidget* parent = nullptr);
     ~ConfigurePerGameAddons() override;
@@ -63,6 +65,7 @@ private:
 
     void LoadConfiguration();
     void OnItemChanged(QStandardItem* item);
+    void UpdateInfo();
 
     std::unique_ptr<Ui::ConfigurePerGameAddons> ui;
     FileSys::VirtualFile file;
@@ -74,6 +77,8 @@ private:
 
     std::vector<QList<QStandardItem*>> list_items;
     std::vector<QStandardItem*> update_items;
+    /// The built-in patches that did not apply when the game last started, one line each.
+    QString builtin_problems;
 
     Core::System& system;
 };
