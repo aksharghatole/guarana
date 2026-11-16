@@ -318,11 +318,11 @@
         "version": "230326"
     },
     "vulkan-headers": {
-        "hash": "d2846ea228415772645eea4b52a9efd33e6a563043dd3de059e798be6391a8f0ca089f455ae420ff22574939ed0f48ed7c6ff3d5a9987d5231dbf3b3f89b484b",
+        "hash": "ba55ed9e77560e8f4180731b973482fb077abdf91e9b91147b52727c754702042d6d236331f78dd16b71e5624b1090b1e41c2fc5ad4c6d7b2734b0046fc6250a",
         "min_version": "1.4.317",
         "package": "VulkanHeaders",
         "repo": "KhronosGroup/Vulkan-Headers",
-        "version": "v1.4.345"
+        "version": "v1.4.368"
     },
     "vulkan-memory-allocator": {
         "find_args": "CONFIG",
@@ -335,10 +335,10 @@
         "version": "v3.3.0"
     },
     "vulkan-utility-libraries": {
-        "hash": "114f6b237a6dcba923ccc576befb5dea3f1c9b3a30de7dc741f234a831d1c2d52d8a224afb37dd57dffca67ac0df461eaaab6a5ab5e503b393f91c166680c3e1",
+        "hash": "a51815d46d07b671b2693ca5fe9d9012b6b7b015380a0a0492347e902659a026a174be873b87040a4a5fd5d22e2ed5f33094d7aceabd226d250aaf5d7b85ae23",
         "package": "VulkanUtilityLibraries",
         "repo": "KhronosGroup/Vulkan-Utility-Libraries",
-        "version": "v1.4.345"
+        "version": "v1.4.368"
     },
     "vulkan-validation-layers": {
         "artifact": "android-binaries-%NUMERIC_VERSION%.zip",
