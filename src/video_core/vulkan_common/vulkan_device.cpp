@@ -2426,6 +2426,37 @@ void Device::RemoveUnsuitableExtensions() {
                      shapes.size(), has_8x16x16, guest_warp, usable,
                      cooperative_hmma_8x16x16);
         }
+        // EDEN_NX2_INTEL_COOP_MATRIX_8X8=1 (default off, parsed like the switch above): Intel's
+        // Xe-LPG+ driver (Arc 140T, 101.9175) lists no fp16-accumulator shape, only 8x8x16 with fp16
+        // inputs and fp32 accumulator and result (and 8x8x32 8-bit). Each HMMA then runs as two
+        // 8x8x16 products through shared memory, rounding once to fp16 (emit_spirv_tensor.cpp).
+        // Only where none of the paths above applies.
+        static const bool intel_coop_matrix_8x8 = [] {
+            const char* value = std::getenv("EDEN_NX2_INTEL_COOP_MATRIX_8X8");
+            return value != nullptr && std::strtoul(value, nullptr, 10) != 0;
+        }();
+        if (intel_coop_matrix_8x8 && properties.properties.vendorID == intel_vendor_id) {
+            const bool has_8x8x16 = std::ranges::any_of(
+                shapes, [](const VkCooperativeMatrixPropertiesKHR& shape) {
+                    return shape.MSize == 8 && shape.NSize == 8 && shape.KSize == 16 &&
+                           shape.AType == VK_COMPONENT_TYPE_FLOAT16_KHR &&
+                           shape.BType == VK_COMPONENT_TYPE_FLOAT16_KHR &&
+                           shape.CType == VK_COMPONENT_TYPE_FLOAT32_KHR &&
+                           shape.ResultType == VK_COMPONENT_TYPE_FLOAT32_KHR &&
+                           shape.saturatingAccumulation == VK_FALSE &&
+                           shape.scope == VK_SCOPE_SUBGROUP_KHR;
+                });
+            const bool other_path =
+                cooperative_hmma_16x8x16 || cooperative_hmma_16x16x16 || cooperative_hmma_8x16x16;
+            const bool guest_warp = IsGuestWarpSizeSupported(VK_SHADER_STAGE_COMPUTE_BIT);
+            cooperative_hmma_8x8x16 = usable && has_8x8x16 && guest_warp && !other_path;
+            LOG_INFO(Render_Vulkan,
+                     "EDEN_NX2_INTEL_COOP_MATRIX_8X8: {} cooperative matrix shapes listed, 8x8x16 "
+                     "fp16 with fp32 accumulators {}, 32-lane compute subgroups {}, usable {}, "
+                     "another path {}: 8x8x16 HMMA {}",
+                     shapes.size(), has_8x8x16, guest_warp, usable, other_path,
+                     cooperative_hmma_8x8x16);
+        }
         const auto has_fp32_result_shape = [&](VkComponentTypeKHR input) {
             return std::ranges::any_of(shapes, [=](const VkCooperativeMatrixPropertiesKHR& shape) {
                 return shape.MSize == 16 && shape.NSize == 16 && shape.KSize == 16 &&
@@ -2438,8 +2469,8 @@ void Device::RemoveUnsuitableExtensions() {
         };
         fp8_matrix_shapes = has_fp32_result_shape(VK_COMPONENT_TYPE_FLOAT16_KHR) &&
                             has_fp32_result_shape(VK_COMPONENT_TYPE_FLOAT8_E4M3_EXT);
-        extensions.cooperative_matrix =
-            cooperative_hmma_16x8x16 || cooperative_hmma_16x16x16 || cooperative_hmma_8x16x16;
+        extensions.cooperative_matrix = cooperative_hmma_16x8x16 || cooperative_hmma_16x16x16 ||
+                                        cooperative_hmma_8x16x16 || cooperative_hmma_8x8x16;
         features.cooperative_matrix.cooperativeMatrixRobustBufferAccess = VK_FALSE;
         RemoveExtensionFeatureIfUnsuitable(extensions.cooperative_matrix,
                                            features.cooperative_matrix,

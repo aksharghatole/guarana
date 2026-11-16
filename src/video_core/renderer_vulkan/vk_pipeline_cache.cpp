@@ -569,7 +569,11 @@ VideoCommon::ShaderWarm::DriverStamp PrecachedListStamp(const Device& device,
         variant = Common::CityHash64WithSeed(reinterpret_cast<const char*>(&variant),
                                              sizeof(variant), 0x8816ULL);
     }
-    // EDEN_NX2_HMMA_ZERO_C and EDEN_NX2_HMMA_K16_ONCE, the same way.
+    // EDEN_NX2_INTEL_COOP_MATRIX_8X8, EDEN_NX2_HMMA_ZERO_C and EDEN_NX2_HMMA_K16_ONCE, the same way.
+    if (profile.support_cooperative_hmma_8x8x16) {
+        variant = Common::CityHash64WithSeed(reinterpret_cast<const char*>(&variant),
+                                             sizeof(variant), 0x88160032ULL);
+    }
     if (profile.cooperative_hmma_zero_c) {
         variant = Common::CityHash64WithSeed(reinterpret_cast<const char*>(&variant),
                                              sizeof(variant), 0x2e40cULL);
@@ -1103,22 +1107,31 @@ PipelineCache::PipelineCache(Tegra::MaxwellDeviceMemoryManager& device_memory_,
     profile.support_cooperative_hmma_8x16x16 = !profile.support_cooperative_hmma &&
                                                !profile.support_cooperative_hmma_16x16x16 &&
                                                device.IsCooperativeHmma8x16x16Supported();
+    // EDEN_NX2_INTEL_COOP_MATRIX_8X8=1: the device offers the 8x8x16 path only then (see Device).
+    profile.support_cooperative_hmma_8x8x16 = !profile.support_cooperative_hmma &&
+                                              !profile.support_cooperative_hmma_16x16x16 &&
+                                              !profile.support_cooperative_hmma_8x16x16 &&
+                                              device.IsCooperativeHmma8x8x16Supported();
     if (profile.support_cooperative_hmma_16x16x16) {
         LOG_INFO(Render_Vulkan, "Guest tensor operations run on 16x16x16 cooperative matrices");
     } else if (profile.support_cooperative_hmma_8x16x16) {
         LOG_INFO(Render_Vulkan, "Guest tensor operations run on 8x16x16 cooperative matrices");
+    } else if (profile.support_cooperative_hmma_8x8x16) {
+        LOG_INFO(Render_Vulkan, "Guest tensor operations run on 8x8x16 cooperative matrices with "
+                                "fp32 accumulators");
     }
     // EDEN_NX2_HMMA_ZERO_C=1 and EDEN_NX2_HMMA_K16_ONCE=1 (experiments): less shared memory
     // traffic around each guest tensor operation on the paths that go through shared memory.
     const bool shared_memory_matrices = profile.support_cooperative_hmma_16x16x16 ||
-                                        profile.support_cooperative_hmma_8x16x16;
+                                        profile.support_cooperative_hmma_8x16x16 ||
+                                        profile.support_cooperative_hmma_8x8x16;
     if (NumberSwitchOn("EDEN_NX2_HMMA_ZERO_C")) {
         profile.cooperative_hmma_zero_c = shared_memory_matrices;
         LOG_INFO(Render_Vulkan, "EDEN_NX2_HMMA_ZERO_C: {}",
                  shared_memory_matrices
                      ? "a guest tensor operation that starts from zero skips its accumulator tile"
-                     : "no effect: guest tensor operations do not run on 16x16x16 or 8x16x16 "
-                       "matrices here");
+                     : "no effect: guest tensor operations do not run on 16x16x16, 8x16x16 or "
+                       "8x8x16 matrices here");
     }
     if (NumberSwitchOn("EDEN_NX2_HMMA_K16_ONCE")) {
         profile.cooperative_hmma_k16_once = profile.support_cooperative_hmma_8x16x16;
