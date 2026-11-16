@@ -57,10 +57,11 @@ constexpr NativeDrawAction DecideNativePending(NativePendingMode mode, bool can_
 }
 
 /// Eglantine #874 (EDEN_NX2_SKIP_REDRAWN): whether a native draw whose pipeline is still building
-/// may be skipped instead of waited for, because the game draws into that target every frame: the
-/// draw tests depth, writes a color target, and render target 0 was first written in an earlier
-/// frame. It is back once its pipeline is built. A draw into a target written once (a font atlas,
-/// a texture filled for later frames) or a depth-only draw keeps waiting.
+/// may be skipped, because the game draws into that target every frame: the draw tests depth,
+/// writes a color target, and render target 0 was first written in an earlier frame. It is back
+/// once its pipeline is built. Such a draw is handled as Bounded (wait within the frame's budget,
+/// then skip); a draw into a target first written this frame (a font atlas, a texture filled for
+/// later frames) or a depth-only draw keeps waiting.
 /// @param depth_test             A depth buffer is bound and the depth test is on.
 /// @param active_color_targets   Bound color targets with a format and a write mask.
 /// @param target_written_before  Render target 0 was first written in an earlier frame.

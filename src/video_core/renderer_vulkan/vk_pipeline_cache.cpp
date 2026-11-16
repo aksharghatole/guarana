@@ -3892,26 +3892,27 @@ GraphicsPipeline* PipelineCache::BuiltPipeline(GraphicsPipeline* pipeline) noexc
         return pipeline;
     }
     const PendingDrawPolicy policy{CurrentPendingDrawPolicy()};
-    if (policy.native && policy.mode == NativePendingMode::Wait && SkipRedrawnRequested()) {
+    NativePendingMode mode = policy.mode;
+    bool can_discard = policy.can_discard;
+    bool redrawn = false;
+    if (policy.native && mode == NativePendingMode::Wait && SkipRedrawnRequested()) {
+        // EDEN_NX2_SKIP_REDRAWN: a draw into a target the game redraws is Bounded, waiting for
+        // its build within the frame's budget (a fast link of built libraries lands well inside
+        // it) and skipped past it.
         const auto& regs = maxwell3d->regs;
         const bool depth_test = regs.zeta_enable != 0 && regs.depth_test_enable != 0;
         const u32 color_targets = depth_test ? ActiveColorTargetCount(regs) : 0;
-        if (MaySkipRedrawnNativeDraw(depth_test, color_targets,
-                                     color_targets != 0 &&
-                                         texture_cache.ColorTargetWrittenBeforeThisFrame())) {
-            static std::atomic<u64> skipped_redrawn{};
-            if ((skipped_redrawn.fetch_add(1, std::memory_order_relaxed) & 255) == 0) {
-                LOG_INFO(Render_Vulkan,
-                         "EDEN_NX2_SKIP_REDRAWN: {} native draws into redrawn targets skipped "
-                         "while their pipeline built",
-                         skipped_redrawn.load(std::memory_order_relaxed));
-            }
-            return nullptr;
+        redrawn = MaySkipRedrawnNativeDraw(
+            depth_test, color_targets,
+            color_targets != 0 && texture_cache.ColorTargetWrittenBeforeThisFrame());
+        if (redrawn) {
+            mode = NativePendingMode::Bounded;
+            can_discard = true;
         }
     }
-    bool discard = policy.can_discard;
+    bool discard = can_discard;
     if (policy.native) {
-        switch (DecideNativePending(policy.mode, policy.can_discard, native_wait_budget_us)) {
+        switch (DecideNativePending(mode, can_discard, native_wait_budget_us)) {
         case NativeDrawAction::Wait:
             discard = false;
             break;
@@ -3929,6 +3930,15 @@ GraphicsPipeline* PipelineCache::BuiltPipeline(GraphicsPipeline* pipeline) noexc
             discard = true;
             break;
         }
+        }
+    }
+    if (discard && redrawn) {
+        static std::atomic<u64> skipped_redrawn{};
+        if ((skipped_redrawn.fetch_add(1, std::memory_order_relaxed) & 255) == 0) {
+            LOG_INFO(Render_Vulkan,
+                     "EDEN_NX2_SKIP_REDRAWN: {} native draws into redrawn targets skipped past "
+                     "the frame's wait budget",
+                     skipped_redrawn.load(std::memory_order_relaxed));
         }
     }
     if (discard) {

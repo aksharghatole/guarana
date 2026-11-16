@@ -85,4 +85,10 @@ TEST_CASE("Native draws into a redrawn target may skip while the pipeline builds
     REQUIRE_FALSE(Vulkan::MaySkipRedrawnNativeDraw(false, 1, true));
     // Depth only, every color write masked: waits
     REQUIRE_FALSE(Vulkan::MaySkipRedrawnNativeDraw(true, 0, true));
+    // A redrawn draw is Bounded: it waits for the build while the frame's budget lasts (a fast
+    // link of built libraries lands inside it), and is skipped once the budget is spent.
+    REQUIRE(Vulkan::DecideNativePending(Vulkan::NativePendingMode::Bounded, true, 8000) ==
+            Vulkan::NativeDrawAction::WaitTimed);
+    REQUIRE(Vulkan::DecideNativePending(Vulkan::NativePendingMode::Bounded, true, 0) ==
+            Vulkan::NativeDrawAction::Skip);
 }
