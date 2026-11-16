@@ -467,7 +467,22 @@ set(ENABLE_TESTING OFF)
 # boost
 set(BOOST_INCLUDE_LIBRARIES algorithm icl pool container heap asio headers process filesystem crc variant)
 
+# Windows on ARM64 with clang-cl: Boost.Context picks its armasm sources there, which armasm64
+# rejects (it cannot expand their BOOST_CONTEXT_EXPORT). Its GNU-syntax PE sources, the ones MinGW
+# builds use, assemble with clang and give common/fiber.cpp the same fcontext functions.
+if (CXX_CLANG_CL AND ARCHITECTURE_arm64)
+    set(BOOST_CONTEXT_ASSEMBLER armclang CACHE STRING "Boost.Context assembler")
+endif()
+
 AddJsonPackage(boost)
+
+# CMake knows no debug information format flag for clang-cl's assembler, so a global
+# CMAKE_MSVC_DEBUG_INFORMATION_FORMAT (the release builds' Embedded) stops it from generating the
+# build of those sources. The property takes no per-language expression; empty means no flag, so
+# Boost.Context alone is built without debug information.
+if (CXX_CLANG_CL AND ARCHITECTURE_arm64 AND TARGET boost_context)
+    set_property(TARGET boost_context PROPERTY MSVC_DEBUG_INFORMATION_FORMAT "")
+endif()
 
 # really annoying thing where boost::headers doesn't work with cpm
 # TODO(crueter) investigate
@@ -744,6 +759,14 @@ if (MSVC AND CMAKE_GENERATOR STREQUAL "Ninja")
         /wd4711 # function 'function' selected for automatic inline expansion
         /wd4820 # 'bytes' bytes padding added after construct 'member_name'
     )
+endif()
+
+# The MSVC STL on Windows ARM64 runners (14.52) takes its vectorized std::find for any trivially
+# comparable element and then rejects sizes other than 1, 2, 4 and 8 with a static_assert
+# ("unexpected size", from shader_recompiler's 12-byte StorageBufferAddr). Its documented switch
+# turns those algorithms off for the ARM64 build only.
+if (MSVC AND ARCHITECTURE_arm64)
+    add_compile_definitions(_USE_STD_VECTOR_ALGORITHMS=0)
 endif()
 
 # Adjustments for clang-cl
