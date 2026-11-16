@@ -140,7 +140,8 @@ class AdapterTest(unittest.TestCase):
                                  "capture_image", "capture_bundle", "reject_shaders", "set_shading_rate",
                                  "set_prepass", "sample", "speed_limit", "read_memory",
                                  "search_memory", "read_gpu_memory", "input",
-                                 "input_sequence", "host_timing", "power", "power_set",
+                                 "input_sequence", "input_latency", "host_timing", "power",
+                                 "power_set",
                                  "gpu_costs", "gpu_perf", "frame_budget", "autopilot", "memory", "trace_record",
                                  "trace_stop", "trace_status", "thread_stats", "present_stats",
                                  "cache_stats", "readbacks", "boot_timing"])
@@ -242,7 +243,8 @@ class AdapterTest(unittest.TestCase):
                   "software_tensor_math", "device_class", "gpu_family", "refresh_hz", "display",
                   "output_width", "output_height", "gpu_cores", "gpu_cores_unit",
                   "pixels_per_core", "decision", "reason", "evidence", "measured", "where",
-                  "player_value", "shipped", "label", "available", "current", "name", "disabled"]
+                  "player_value", "shipped", "label", "available", "current", "name", "disabled",
+                  "community"]
         result = self.call("status", {"fps_window_ms": 0})
         status = json.loads(result["content"][0]["text"])
         self.assertEqual(status["resolution"]["pacing_set"], "144hz")

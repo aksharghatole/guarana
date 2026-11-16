@@ -15,6 +15,7 @@
 #include <bit>
 
 #include <windows.h>
+#include <winreg.h>
 #include <cfgmgr32.h>
 #elif defined(__linux__)
 #include <fstream>
@@ -689,6 +690,25 @@ void SetDriverAdvice(std::string advice) {
 std::string DriverAdvice() {
     std::scoped_lock lock{driver_advice_mutex};
     return driver_advice;
+}
+
+std::string_view HardwareGpuScheduling() {
+#ifdef _WIN32
+    static const std::string_view state = []() -> std::string_view {
+        DWORD value = 0;
+        DWORD size = sizeof(value);
+        const LSTATUS status =
+            RegGetValueW(HKEY_LOCAL_MACHINE, L"SYSTEM\\CurrentControlSet\\Control\\GraphicsDrivers",
+                         L"HwSchMode", RRF_RT_REG_DWORD, nullptr, &value, &size);
+        if (status != ERROR_SUCCESS) {
+            return "unknown";
+        }
+        return value == 2 ? "on" : value == 1 ? "off" : "unknown";
+    }();
+    return state;
+#else
+    return "unknown";
+#endif
 }
 
 } // namespace Common

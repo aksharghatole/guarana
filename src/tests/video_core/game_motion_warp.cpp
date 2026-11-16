@@ -173,3 +173,80 @@ TEST_CASE("Every in-between pixel gets a source inside the scene", "[video_core]
         }
     }
 }
+
+TEST_CASE("Scene pixels do not drag the HUD along", "[video_core][frame_gen]") {
+    // A pan of ten pixels a real frame under a still HUD block over [0.6, 0.7). Halfway, the
+    // newest frame's source lies five pixels right of each pixel and the previous frame's five left,
+    // so five pixels on each side of the block would take the HUD from one frame.
+    Field guide;
+    guide.Fill(0.0f, 1.0f, {{-0.1f, 0.0f}, 0.5f});
+    const auto is_hud = [](Vec2 uv) { return uv.x >= 0.6f && uv.x < 0.7f; };
+    for (const bool fill : {false, true}) {
+        int gave_way = 0;
+        for (int x = 0; x < WIDTH; ++x) {
+            const Vec2 target = At((static_cast<float>(x) + 0.5f) / WIDTH);
+            if (is_hud(target)) {
+                continue; // the HUD itself: the newest frame, unmoved, before any warp
+            }
+            Pick pick = Interpolate(guide, guide, target, 0.5f, SCREEN);
+            const HudGuard guard = GuardHud(is_hud, pick, target, fill);
+            INFO("x " << x << ", fill " << fill);
+            REQUIRE((guard == HudGuard::None || guard == HudGuard::OtherFrame));
+            gave_way += guard == HudGuard::OtherFrame ? 1 : 0;
+            if (pick.newest_weight > 0.0f) {
+                REQUIRE_FALSE(is_hud(pick.newest));
+            }
+            if (pick.newest_weight < 1.0f) {
+                REQUIRE_FALSE(is_hud(pick.previous));
+            }
+        }
+        REQUIRE(gave_way == 10);
+    }
+}
+
+TEST_CASE("A source on the HUD gives way to the other frame's, or the pixel falls back",
+          "[video_core][frame_gen]") {
+    const Vec2 target = At(0.5f);
+    const Vec2 clear = At(0.3f);
+    const Vec2 on_hud = At(0.7f);
+    const auto is_hud = [](Vec2 uv) { return uv.x >= 0.6f; };
+    SECTION("neither on the HUD: unchanged") {
+        Pick pick{clear, clear, 0.5f};
+        REQUIRE(GuardHud(is_hud, pick, target, false) == HudGuard::None);
+        REQUIRE(pick.newest_weight == 0.5f);
+    }
+    SECTION("the newest frame's source on the HUD: the previous frame's alone") {
+        Pick pick{on_hud, clear, 0.5f};
+        REQUIRE(GuardHud(is_hud, pick, target, false) == HudGuard::OtherFrame);
+        REQUIRE(pick.newest_weight == 0.0f);
+        REQUIRE(Near(pick.previous, clear));
+    }
+    SECTION("the previous frame's source on the HUD: the newest frame's alone") {
+        Pick pick{clear, on_hud, 0.5f};
+        REQUIRE(GuardHud(is_hud, pick, target, false) == HudGuard::OtherFrame);
+        REQUIRE(pick.newest_weight == 1.0f);
+        REQUIRE(Near(pick.newest, clear));
+    }
+    SECTION("a source the pick does not use does not count") {
+        Pick newest_alone{clear, on_hud, 1.0f};
+        REQUIRE(GuardHud(is_hud, newest_alone, target, false) == HudGuard::None);
+        Pick previous_alone{on_hud, clear, 0.0f};
+        REQUIRE(GuardHud(is_hud, previous_alone, target, false) == HudGuard::None);
+    }
+    SECTION("every source used on the HUD: the scene under it with fill, else unmoved") {
+        for (const Pick start : {Pick{on_hud, on_hud, 0.5f}, Pick{on_hud, clear, 1.0f}}) {
+            Pick filled = start;
+            REQUIRE(GuardHud(is_hud, filled, target, true) == HudGuard::SceneUnderHud);
+            REQUIRE(Near(filled.newest, on_hud));
+            REQUIRE(filled.newest_weight == 1.0f);
+            Pick unmoved = start;
+            REQUIRE(GuardHud(is_hud, unmoved, target, false) == HudGuard::Unmoved);
+            REQUIRE(Near(unmoved.newest, target));
+            REQUIRE(unmoved.newest_weight == 1.0f);
+        }
+        // The previous frame alone (a disocclusion) on the HUD: its position, read in the newest frame.
+        Pick previous_alone{clear, on_hud, 0.0f};
+        REQUIRE(GuardHud(is_hud, previous_alone, target, true) == HudGuard::SceneUnderHud);
+        REQUIRE(Near(previous_alone.newest, on_hud));
+    }
+}

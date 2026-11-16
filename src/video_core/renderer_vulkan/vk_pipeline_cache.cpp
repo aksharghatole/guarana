@@ -569,7 +569,11 @@ VideoCommon::ShaderWarm::DriverStamp PrecachedListStamp(const Device& device,
         variant = Common::CityHash64WithSeed(reinterpret_cast<const char*>(&variant),
                                              sizeof(variant), 0x8816ULL);
     }
-    // EDEN_NX2_HMMA_ZERO_C and EDEN_NX2_HMMA_K16_ONCE, the same way.
+    // EDEN_NX2_INTEL_COOP_MATRIX_8X8, EDEN_NX2_HMMA_ZERO_C and EDEN_NX2_HMMA_K16_ONCE, the same way.
+    if (profile.support_cooperative_hmma_8x8x16) {
+        variant = Common::CityHash64WithSeed(reinterpret_cast<const char*>(&variant),
+                                             sizeof(variant), 0x88160032ULL);
+    }
     if (profile.cooperative_hmma_zero_c) {
         variant = Common::CityHash64WithSeed(reinterpret_cast<const char*>(&variant),
                                              sizeof(variant), 0x2e40cULL);
@@ -1103,22 +1107,31 @@ PipelineCache::PipelineCache(Tegra::MaxwellDeviceMemoryManager& device_memory_,
     profile.support_cooperative_hmma_8x16x16 = !profile.support_cooperative_hmma &&
                                                !profile.support_cooperative_hmma_16x16x16 &&
                                                device.IsCooperativeHmma8x16x16Supported();
+    // EDEN_NX2_INTEL_COOP_MATRIX_8X8=1: the device offers the 8x8x16 path only then (see Device).
+    profile.support_cooperative_hmma_8x8x16 = !profile.support_cooperative_hmma &&
+                                              !profile.support_cooperative_hmma_16x16x16 &&
+                                              !profile.support_cooperative_hmma_8x16x16 &&
+                                              device.IsCooperativeHmma8x8x16Supported();
     if (profile.support_cooperative_hmma_16x16x16) {
         LOG_INFO(Render_Vulkan, "Guest tensor operations run on 16x16x16 cooperative matrices");
     } else if (profile.support_cooperative_hmma_8x16x16) {
         LOG_INFO(Render_Vulkan, "Guest tensor operations run on 8x16x16 cooperative matrices");
+    } else if (profile.support_cooperative_hmma_8x8x16) {
+        LOG_INFO(Render_Vulkan, "Guest tensor operations run on 8x8x16 cooperative matrices with "
+                                "fp32 accumulators");
     }
     // EDEN_NX2_HMMA_ZERO_C=1 and EDEN_NX2_HMMA_K16_ONCE=1 (experiments): less shared memory
     // traffic around each guest tensor operation on the paths that go through shared memory.
     const bool shared_memory_matrices = profile.support_cooperative_hmma_16x16x16 ||
-                                        profile.support_cooperative_hmma_8x16x16;
+                                        profile.support_cooperative_hmma_8x16x16 ||
+                                        profile.support_cooperative_hmma_8x8x16;
     if (NumberSwitchOn("EDEN_NX2_HMMA_ZERO_C")) {
         profile.cooperative_hmma_zero_c = shared_memory_matrices;
         LOG_INFO(Render_Vulkan, "EDEN_NX2_HMMA_ZERO_C: {}",
                  shared_memory_matrices
                      ? "a guest tensor operation that starts from zero skips its accumulator tile"
-                     : "no effect: guest tensor operations do not run on 16x16x16 or 8x16x16 "
-                       "matrices here");
+                     : "no effect: guest tensor operations do not run on 16x16x16, 8x16x16 or "
+                       "8x8x16 matrices here");
     }
     if (NumberSwitchOn("EDEN_NX2_HMMA_K16_ONCE")) {
         profile.cooperative_hmma_k16_once = profile.support_cooperative_hmma_8x16x16;
@@ -3432,6 +3445,37 @@ struct AsyncTranslationCounts {
 };
 AsyncTranslationCounts async_translations;
 
+/// EDEN_NX2_SKIP_REDRAWN=1 (Eglantine #874): native draws into a target the game redraws every
+/// frame are skipped while their pipeline builds instead of waited for (MaySkipRedrawnNativeDraw)
+bool SkipRedrawnRequested() {
+    static const bool requested = [] {
+        const char* value = std::getenv("EDEN_NX2_SKIP_REDRAWN");
+        const bool enabled = value != nullptr && value[0] == '1';
+        if (enabled) {
+            LOG_INFO(Render_Vulkan, "EDEN_NX2_SKIP_REDRAWN: native draws into redrawn targets skip "
+                                    "unbuilt pipelines (with asynchronous shaders on)");
+        }
+        return enabled;
+    }();
+    return requested;
+}
+
+/// Bound color targets with a format and a color write mask (Eglantine's ActiveColorTargetCount)
+u32 ActiveColorTargetCount(const Maxwell& regs) noexcept {
+    const u32 count =
+        std::min<u32>(regs.rt_control.count, static_cast<u32>(Maxwell::NumRenderTargets));
+    u32 active = 0;
+    for (u32 i = 0; i < count; ++i) {
+        const u32 rt_index = regs.rt_control.Map(i);
+        if (rt_index < Maxwell::NumRenderTargets &&
+            regs.rt[rt_index].format != Tegra::RenderTargetFormat::NONE &&
+            regs.color_mask[regs.color_mask_common ? 0 : rt_index].raw != 0) {
+            ++active;
+        }
+    }
+    return active;
+}
+
 void ReportAsyncTranslations() {
     static auto window_begin = std::chrono::steady_clock::now();
     const auto now = std::chrono::steady_clock::now();
@@ -3791,15 +3835,21 @@ void PipelineCache::EvictUnusedPipelines() {
 
 PipelineCache::PendingDrawPolicy PipelineCache::CurrentPendingDrawPolicy() const {
     // EDEN_NX2_ASYNC_DISCARD=1: skip native draws whose pipeline is still building instead of
-    // waiting for it (experimental; the draw may be missing for a frame or more).
-    static const bool discard_native = [] {
+    // waiting for it (experimental; the draw may be missing for a frame or more). =2 (Fritchii
+    // a962f20533): skip only those into render targets the frame clears and redraws; draws into
+    // a target cleared for the first time, or not cleared this frame, wait.
+    static const int discard_mode = [] {
         const char* value = std::getenv("EDEN_NX2_ASYNC_DISCARD");
-        const bool enabled = value != nullptr && value[0] == '1';
-        if (enabled) {
+        const int mode = value == nullptr ? 0 : value[0] == '1' ? 1 : value[0] == '2' ? 2 : 0;
+        if (mode == 1) {
             LOG_INFO(Render_Vulkan, "EDEN_NX2_ASYNC_DISCARD: native draws skip unbuilt pipelines");
+        } else if (mode == 2) {
+            LOG_INFO(Render_Vulkan, "EDEN_NX2_ASYNC_DISCARD=2: native draws skip unbuilt "
+                                    "pipelines only into render targets cleared every frame");
         }
-        return enabled;
+        return mode;
     }();
+    const bool discard_native = discard_mode != 0;
     const auto& draw_state = maxwell3d->draw_manager.draw_state;
     const bool native = maxwell3d->GetNativeMacroEngine().native_turing;
     NativePendingMode mode = NativePendingMode::Wait;
@@ -3818,9 +3868,17 @@ PipelineCache::PendingDrawPolicy PipelineCache::CurrentPendingDrawPolicy() const
             mode = NativePendingMode::Skip;
         }
     }
+    // Classified only when a native draw could otherwise be skipped: it takes the texture cache's
+    // lock and looks up the bound targets.
+    bool recurring_target = true;
+    if (discard_mode == 2 && native && mode != NativePendingMode::Wait) {
+        recurring_target =
+            texture_cache.ClassifyDrawTargets().kind == VideoCommon::DrawTargetClass::Recurring;
+    }
     const bool can_discard = CanDiscardPendingDraw(
         native, maxwell3d->regs.zeta_enable != 0, draw_state.draw_element_count,
-        draw_state.draw_element_count, native && mode != NativePendingMode::Wait);
+        draw_state.draw_element_count, native && mode != NativePendingMode::Wait,
+        recurring_target);
     return {.native = native, .mode = mode, .can_discard = can_discard};
 }
 
@@ -3861,9 +3919,27 @@ GraphicsPipeline* PipelineCache::BuiltPipeline(GraphicsPipeline* pipeline) noexc
         return pipeline;
     }
     const PendingDrawPolicy policy{CurrentPendingDrawPolicy()};
-    bool discard = policy.can_discard;
+    NativePendingMode mode = policy.mode;
+    bool can_discard = policy.can_discard;
+    bool redrawn = false;
+    if (policy.native && mode == NativePendingMode::Wait && SkipRedrawnRequested()) {
+        // EDEN_NX2_SKIP_REDRAWN: a draw into a target the game redraws is Bounded, waiting for
+        // its build within the frame's budget (a fast link of built libraries lands well inside
+        // it) and skipped past it.
+        const auto& regs = maxwell3d->regs;
+        const bool depth_test = regs.zeta_enable != 0 && regs.depth_test_enable != 0;
+        const u32 color_targets = depth_test ? ActiveColorTargetCount(regs) : 0;
+        redrawn = MaySkipRedrawnNativeDraw(
+            depth_test, color_targets,
+            color_targets != 0 && texture_cache.ColorTargetWrittenBeforeThisFrame());
+        if (redrawn) {
+            mode = NativePendingMode::Bounded;
+            can_discard = true;
+        }
+    }
+    bool discard = can_discard;
     if (policy.native) {
-        switch (DecideNativePending(policy.mode, policy.can_discard, native_wait_budget_us)) {
+        switch (DecideNativePending(mode, can_discard, native_wait_budget_us)) {
         case NativeDrawAction::Wait:
             discard = false;
             break;
@@ -3881,6 +3957,15 @@ GraphicsPipeline* PipelineCache::BuiltPipeline(GraphicsPipeline* pipeline) noexc
             discard = true;
             break;
         }
+        }
+    }
+    if (discard && redrawn) {
+        static std::atomic<u64> skipped_redrawn{};
+        if ((skipped_redrawn.fetch_add(1, std::memory_order_relaxed) & 255) == 0) {
+            LOG_INFO(Render_Vulkan,
+                     "EDEN_NX2_SKIP_REDRAWN: {} native draws into redrawn targets skipped past "
+                     "the frame's wait budget",
+                     skipped_redrawn.load(std::memory_order_relaxed));
         }
     }
     if (discard) {

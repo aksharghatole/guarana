@@ -392,6 +392,52 @@ TEST_CASE("The resolver decides by what the user chose", "[core][game_resolver]"
 #endif
 }
 
+TEST_CASE("Community measurements are cited and change no resolved value", "[core][game_resolver]") {
+    const std::vector<Core::CommunityEvidence::Effect> effects = Core::CommunityEvidence::Parse(R"json({
+      "effects": [
+        {"family": "IntelArrowLakeH", "title_id": "0400486024DEC000", "scene": "oot-hyrule-field",
+         "set": {"setting:Renderer/vram_usage_mode": "1"},
+         "against": {"setting:Renderer/vram_usage_mode": "0"}, "context": [], "build": "v20.5.0",
+         "power": "ac", "devices": 3, "pairs": 3, "issues": [12],
+         "fps_change_pct": {"min": 4.0, "median": 6.0, "max": 9.0}, "p99_change_pct": null}
+      ]})json");
+    REQUIRE(effects.size() == 1);
+    ResolveInput input;
+    input.title_id = OcarinaTitleId;
+    input.gpu = Arc140T;
+    input.gpu.gpu_family = Common::GpuFamily::IntelArrowLakeH;
+    const Resolution plain = Resolve(input);
+    input.community = effects;
+    const Resolution cited = Resolve(input);
+    REQUIRE(cited.settings.size() == plain.settings.size());
+    REQUIRE(cited.switches.size() == plain.switches.size());
+    for (std::size_t i = 0; i < cited.settings.size(); ++i) {
+        CHECK(cited.settings[i].label == plain.settings[i].label);
+        CHECK(cited.settings[i].value == plain.settings[i].value);
+        CHECK(cited.settings[i].decision == plain.settings[i].decision);
+        CHECK(plain.settings[i].community.empty());
+    }
+    for (std::size_t i = 0; i < cited.switches.size(); ++i) {
+        CHECK(cited.switches[i].value == plain.switches[i].value);
+        CHECK(cited.switches[i].community.empty());
+    }
+    const auto vram = std::ranges::find_if(
+        cited.settings, [](const SettingEntry& entry) { return entry.label == "vram_usage_mode"; });
+    REQUIRE(vram != cited.settings.end());
+    CHECK(vram->community ==
+          "setting:Renderer/vram_usage_mode=1 against setting:Renderer/vram_usage_mode=0 in "
+          "oot-hyrule-field: game fps +6.0% median (+4.0% to +9.0%), 3 devices, 3 pairs, v20.5.0, "
+          "mains, community reports #12");
+    CHECK(DescribeResolution(cited).find(" [community: setting:Renderer/vram_usage_mode=1") !=
+          std::string::npos);
+    CHECK(DescribeResolution(plain).find("[community:") == std::string::npos);
+    // Measured on another family: nothing is cited for this one.
+    input.gpu.gpu_family = Common::GpuFamily::IntelArcLunarLake;
+    for (const SettingEntry& entry : Resolve(input).settings) {
+        CHECK(entry.community.empty());
+    }
+}
+
 TEST_CASE("The resolution is described in one line", "[core][game_resolver]") {
     ResolveInput input;
     input.title_id = OcarinaTitleId;

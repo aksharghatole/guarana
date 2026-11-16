@@ -137,7 +137,19 @@ struct ImageBase {
     /// At least the newest modification_tick among aliased_images (raised when an alias's tick is
     /// set or an alias is added): SynchronizeAliases has nothing to do while it is not newer.
     u64 newest_alias_tick = 0;
+    /// frame_tick + 1 of the first GPU write into the image that was not a clear (a render
+    /// target, a copy destination), 0 while there was none (Eglantine #874).
+    u64 first_written_frame = 0;
     size_t lru_index = SIZE_MAX;
+
+    /// Asynchronous shaders' skip rule (EDEN_NX2_ASYNC_DISCARD=2, ClassifyClearedTarget): the
+    /// frames of the image's last two full clears that had a write between them (~0 = none), and
+    /// whether anything but a clear wrote it since the last one. Two clears with no draw between
+    /// count as one, so a tick that falls between them cannot make a layer the game renders once
+    /// look like a per-frame target.
+    u64 last_clear_frame = ~u64{0};
+    u64 previous_clear_frame = ~u64{0};
+    bool drawn_since_clear = false;
 
     std::array<u32, MAX_MIP_LEVELS> mip_level_offsets{};
 

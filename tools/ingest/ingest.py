@@ -661,7 +661,8 @@ def parse_report(body, number, created=None, logins=(), titles=None, validate=No
                 warnings.append("The tools/bench rows come from more than one machine; the row lists the first.")
             hardware = best.get("hardware") if isinstance(best.get("hardware"), dict) else {}
             gpus = [gpu for gpu in hardware.get("gpus") or [] if isinstance(gpu, dict) and isinstance(gpu.get("name"), str)]
-            bench_gpus = [scrub(gpu["name"], logins)[:100] for gpu in gpus[:4]]
+            bench_gpus = [{"name": scrub(gpu["name"], logins)[:100], "pci": device_classes.parse_pci_field(gpu.get("pci"))}
+                          for gpu in gpus[:4]]
             same_vendor = [gpu for gpu in gpus if vendor in gpu["name"].lower()] or gpus
             if same_vendor:
                 record["gpu"] = scrub(clean_gpu_name(same_vendor[0]["name"]), logins)[:60] or gpu_short

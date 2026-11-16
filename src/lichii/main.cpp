@@ -144,8 +144,7 @@ int main(int argc, char* argv[]) {
         return 0;
     }
 
-    if (StartupChecks(argv[0], &has_broken_vulkan,
-                      Settings::values.perform_vulkan_check.GetValue())) {
+    if (StartupChecks(argv[0], &has_broken_vulkan, PerformVulkanCheckSetting())) {
         return 0;
     }
 
@@ -207,7 +206,7 @@ int main(int argc, char* argv[]) {
 
     // Fix the Wayland appId. This needs to match the name of the .desktop file without the .desktop
     // suffix.
-    QGuiApplication::setDesktopFileName(QStringLiteral("io.github.zortos293.lichii"));
+    QGuiApplication::setDesktopFileName(QStringLiteral("io.github.karimalsalah.guarana"));
 #endif
 
     auto rounding_policy = GetHighDpiRoundingPolicy();

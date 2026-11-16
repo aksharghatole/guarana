@@ -16,6 +16,7 @@ add_executable(tests
     video_core/nx2_shown_frames.cpp
     video_core/nx2_stutter_trace.cpp
     video_core/game_motion_warp.cpp
+    video_core/dlss_skip_passes.cpp
     video_core/nx2_frame_predictor.cpp
     video_core/back_idle_trace.cpp
     video_core/list_macro_trace.cpp
@@ -35,11 +36,13 @@ add_executable(tests
     core/nx2_present_pacer.cpp
     core/nx2_fence_action.cpp
     core/nx2_frame_interval.cpp
+    core/nce_readiness.cpp
     core/ldn_lan_protocol.cpp
     core/perf_stats.cpp
     lichii/performance_overlay_model.cpp
     core/game_presets.cpp
     core/game_resolver.cpp
+    core/community_evidence.cpp
     core/service_auto_stub.cpp
     core/key_derivation.cpp
     common/boot_split.cpp
@@ -119,6 +122,7 @@ add_executable(tests
     video_core/autopilot_controller.cpp
     video_core/frame_budget.cpp
     video_core/fluid_present_mode.cpp
+    video_core/present_telemetry.cpp
     video_core/present_error_policy.cpp
     video_core/fluid_slot_math.cpp
     video_core/present_sync.cpp
@@ -243,6 +247,7 @@ add_executable(tests
     common/host_memory.cpp
     common/host_memory_failure.cpp
     common/host_memory_test_access.h
+    common/ini_peek.cpp
     core/host_memory_failure.cpp
     common/memory_detect.cpp
     common/multi_level_page_table.cpp

@@ -133,6 +133,9 @@ struct Profile {
     /// Without either, HMMA runs through shared memory as 8x16x16 cooperative matrix products (a
     /// K=16 HMMA as two, rounding after each K=8 half, as the guest does)
     bool support_cooperative_hmma_8x16x16{};
+    /// Without any of the above, HMMA runs through shared memory as two 8x8x16 products with fp32
+    /// accumulators (EDEN_NX2_INTEL_COOP_MATRIX_8X8, the Arc 140T's shape), rounding once per HMMA
+    bool support_cooperative_hmma_8x8x16{};
     /// Experiment (EDEN_NX2_HMMA_ZERO_C): on the 16x16x16 and 8x16x16 paths, an HMMA whose
     /// accumulator is the zero register starts from a zero matrix instead of storing and loading C
     bool cooperative_hmma_zero_c{};

@@ -172,6 +172,8 @@ struct CooperativeHmmaTypes {
     Id matrix_a{};
     Id matrix_b{};
     Id matrix_c{};
+    /// The accumulator's component type: fp16, or fp32 on the 8x8x16 path
+    Id accumulator{};
     /// A zero accumulator matrix, made by the first HMMA that starts from zero
     /// (Profile::cooperative_hmma_zero_c)
     Id zero_accumulator{};

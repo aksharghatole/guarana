@@ -625,6 +625,18 @@ MainWindow::MainWindow(bool has_broken_vulkan)
         launch_params && (!launch_params->filepath.empty() || launch_params->launch_setup ||
                           launch_params->launch_qlaunch || launch_params->launch_hlaunch);
 
+    // EDEN_NX2_STARTUP_CHECK_ASYNC: the Vulkan check's child ran while the frontend started.
+    // Nothing above uses Vulkan; the device list and the game below do, so its verdict comes first.
+    if (GetVulkanCheckOutcome().beside_start) {
+        const double wait_start = Common::BootTiming::Now();
+        has_broken_vulkan = FinishVulkanCheck() || has_broken_vulkan;
+        const VulkanCheckOutcome& check = GetVulkanCheckOutcome();
+        Common::BootTiming::Span(
+            fmt::format("startup: Vulkan check {}, beside the start", check.reason), check.start,
+            check.end);
+        Common::BootTiming::Mark("startup: waited for the Vulkan check", wait_start);
+    }
+
     if (has_broken_vulkan) {
         UISettings::values.has_broken_vulkan = true;
 

@@ -94,6 +94,8 @@ LOWER_TYPE=$(echo "$TYPE" | sed 's/./\L&/')
 
 if [ -n "${ANDROID_KEYSTORE_B64}" ]; then
     export ANDROID_KEYSTORE_FILE="${GITHUB_WORKSPACE}/ks.jks"
+    # Deleted however the script ends: under sh -e a failed build never reaches the rm below.
+    trap 'rm -f "${ANDROID_KEYSTORE_FILE}"' EXIT
     echo "${ANDROID_KEYSTORE_B64}" | base64 --decode > "${ANDROID_KEYSTORE_FILE}"
 	SHA1SUM=$(keytool -list -v -storepass "${ANDROID_KEYSTORE_PASS}" -keystore "${ANDROID_KEYSTORE_FILE}" | grep SHA1 | cut -d " " -f3)
 	echo "-- Keystore SHA1 is ${SHA1SUM}"

@@ -348,7 +348,7 @@ and are optional, so older rows stay valid.
 | `variant_env` | object | environment switches |
 | `emulator` | object | `exe` (file name) and, from `status`, `title`, `program_id`, `build`, `renderer` |
 | `game` | string | file name of the game |
-| `hardware` | object | `cpu`, `cpu_cores`, `cpu_threads`, `gpus` (`[{name, driver_version}]`), `ram_gb`, `os`, `os_build`, `display` (`WxH@Hz`), `power_source` (`AC`, `battery`, `unknown`), `battery_pct`, `power_plan` |
+| `hardware` | object | `cpu`, `cpu_cores`, `cpu_threads`, `gpus` (`[{name, driver_version, pci}]`; `pci` is the PCI vendor and device ID, `8086:7D51`, where the system reports it), `ram_gb`, `os`, `os_build`, `display` (`WxH@Hz`), `power_source` (`AC`, `battery`, `unknown`), `battery_pct`, `power_plan` |
 | `valid` | bool | true exactly when `invalid_reasons` is empty |
 | `invalid_reasons`, `warnings` | string lists | see above |
 | `error` | string or null | what failed |

@@ -50,8 +50,8 @@ What the table does not say, and where it comes from (code reading unless marked
   starts a child copy of `guarana.exe` that creates its own Vulkan instance, and waits for it, unless
   `vulkan_check.txt` matches the driver key and the last session ended cleanly. A session that was
   killed (a crash, a lab script, `taskkill`) makes the next start run it again: about one more
-  instance creation. Its Debug setting cannot turn it off, because `perform_vulkan_check` is read
-  before the configuration is loaded.
+  instance creation. Its Debug setting could not turn it off before step B2: `perform_vulkan_check`
+  was read before the configuration loaded.
 - A direct launch (`guarana.exe -g <game>`, a shortcut, the launcher, the bench) does not list the
   Vulkan devices at startup; #46 was a launch from the game list, which does. So the frontend's
   3.6 s instance is a game-list launch's only, and on a direct launch `EDEN_NX2_VULKAN_INSTANCE_ONCE`
@@ -162,7 +162,7 @@ Each is one pull request with its switch and row; "Saves" is the expected effect
 |---|---|---|---|---|
 | M1 | `tools/bench` boot matrix: cold, second and warm caches, the baseline against each switch, one command | Makes the rest measurable | none | Merged ([#222](https://github.com/karimalsalah/guarana/pull/222)) |
 | B1 | One Vulkan instance per boot | 3.6 s on a list launch (#46); 0.5-1 s direct (estimate) | `EDEN_NX2_VULKAN_INSTANCE_ONCE` (exists) | Measure (M1) |
-| B2 | The startup Vulkan check: make its Debug setting take effect (read it once the configuration is loaded). It stays on by default: after an unclean exit or a driver change it is what survives a crashing driver | Up to 4.1 s on a start after a killed session (#46's trace) for a player who turns it off; none after a clean exit, which skips it already | The existing setting | Next code step |
+| B2 | The startup Vulkan check: its Debug setting now takes effect (it was read before the configuration loaded), and `EDEN_NX2_STARTUP_CHECK_ASYNC` runs its child while the frontend starts, waiting for the verdict only before the first use of Vulkan. The check stays on by default: after an unclean exit or a driver change it is what survives a crashing driver | The whole check (4.1 s in #46) for a player who turns it off; with the switch, the frontend's start overlaps it, under 1 s (estimate) | `EDEN_NX2_STARTUP_CHECK_ASYNC`, the existing setting | This pull request |
 | B3 | Map the log, decode in parallel | Part of 1.79 s (#46) | `EDEN_NX2_CACHE_MMAP` (exists) | Measure (M1) |
 | B4 | Boot builds behind the first frame, compute included | Up to 5.85 s (#46), less the builds the first frames wait for | `EDEN_NX2_BOOT_ASYNC` (exists); compute: new | Measure graphics; compute is the next code step |
 | B5 | The 4.0 s from the load to the first frame: the guest's start plus the pipelines its first frames build | Not known: the suite's `at_first_frame` (held draws and builds at the first frame) says how much is pipelines | none | Measure (M1) |
@@ -171,7 +171,7 @@ Each is one pull request with its switch and row; "Saves" is the expected effect
 | F1 | First-play rows: GPL on and off, async shaders, Bounded, Skip | The first-play numbers this page lacks | Settings, `EDEN_NX2_GPL=0` | Measure (M1) |
 | F2 | Library builds in parallel, waited-for builds raised, unoptimized first | Shorter stalls, not fewer | `EDEN_NX2_GPL_PARALLEL_PARTS`, `EDEN_NX2_WAIT_BOOST`, `EDEN_NX2_UNOPT_FIRST` (exist) | Measure (M1) |
 | F3 | Translation off the GPU thread, translated stages reused | Up to 3.4 s to 0.9 s of GPU-thread time on a cold Ocarina of Time boot (E#825, NVIDIA) | `EDEN_NX2_ASYNC_TRANSLATE`, `EDEN_NX2_SHADER_REUSE` (exist) | Measure (M1) |
-| F4 | Skip what may be skipped while it builds (port of Eglantine #874, then Lichii #1169) | Stalls of 50-330 ms on new pipelines (E#874, RX 6700S) | New, default off | Port |
+| F4 | Skip what may be skipped while it builds: port of Eglantine #874, a native draw into a target the game redraws every frame (then Lichii #1169) | Stalls of 50-330 ms on new pipelines (E#874, RX 6700S) | `EDEN_NX2_SKIP_REDRAWN` (#874's part) | This pull request |
 | F5 | Build ahead from the player's own records: queue the pipelines an earlier session first used right after the one just drawn ([A5](../ROADMAP.md#a5-shader-need-prediction)) | Builds a later area needs before it is reached, in session 2 on; not known | New | After M1 rows |
 | F6 | Build ahead from the game's files, as a background task the player starts (port of Lichii #1719) | Library driver time 220.4 s to 0.32 s after a 582 s warm-up (#1719, RX 6650 XT) | New, setting Ask/Never | Later |
 

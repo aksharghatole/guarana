@@ -235,8 +235,7 @@ private:
     /// its motion can be extrapolated, records a prediction for each slot until the next real
     /// frame is due and one more, each as of its slot's time.
     void RecordFluidFrames(Frame* frame, const HdrPresent& output,
-                           std::vector<Frame*>& predicted_frames,
-                           bool& real_flushed);
+                           std::vector<Frame*>& predicted_frames);
     /// EDEN_NX2_FLUID_INTERP: records the in-between frames of the last two real frames, each on
     /// the slot before the next, and gives the real frame the slot after them.
     void RecordFluidInterpolated(Frame* frame, const HdrPresent& output, size_t generations,

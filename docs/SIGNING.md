@@ -108,4 +108,6 @@ base64 -w0 guarana-release.jks   # the value of ANDROID_KEYSTORE_B64
 | `ANDROID_KEYSTORE_PASS` | The keystore's password, which `build.gradle.kts` also uses for the key |
 | `ANDROID_KEY_ALIAS` | The key's alias (`guarana` above) |
 
-`.ci/android/build.sh` (from Eden) decodes the keystore for the build and deletes it afterwards. Pull requests from forks get no secrets, so their test APKs are preview builds.
+`.ci/android/build.sh` (from Eden) decodes the keystore for the build and deletes it afterwards. Only a build that `release-binaries.yml` asks to sign (`sign`: tags, the nightly and runs on `main`) receives the key. Pull requests, including ones from a branch of this repository, and runs dispatched by hand build code no release has taken yet, so their test APKs are preview builds.
+
+Anyone who can push a branch can still change `android.yml` in it and read the secrets, as with any repository secret. To keep the key from every branch, put the three secrets in a GitHub environment that only tags and `main` may use (Settings > Environments, "Deployment branches and tags"), and have the `apk` job use it when `sign` is set (`environment: ${{ inputs.sign && 'android-release' || '' }}`). Creating the environment is a settings change for the owner.
