@@ -9,6 +9,7 @@ This section is the fork's. Everything under "Upstream Lichii guidance" is upstr
 - Our upstream is zortos293/Lichii. "Before writing a fix" below names Eglantine, which is Lichii's own upstream: check Lichii first, then Eglantine.
 - Experiment switches may land on `main` behind a default-off `EDEN_NX2_*` switch with a row in `docs/switches.md`. Upstream keeps them off its `nx2` ("Toggles and merging").
 - The PC, paths and scripts below (`C:/lx`, `build-fix.sh`, `C:/Users/Zortos/...`) and the model split are the upstream owner's setup. Use the commands in this section instead.
+- Log lines and messages that name the program say Guarana where the section below quotes Lichii: after a device loss the log says `Closing Guarana: the GPU driver lost the Vulkan device`.
 
 ### Rules
 
