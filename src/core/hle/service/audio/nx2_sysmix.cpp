@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <cstring>
@@ -49,6 +50,11 @@ struct MicrophoneOpen {
     bool done{};
     bool abandoned{};
 };
+
+/// Helper threads inside a host microphone open, across every capture stream. While one waits on
+/// the permission prompt another open would only wait beside it, so a stream that asks then
+/// waits for it to return before it starts its own (the answer is known by then).
+std::atomic<u32> microphone_opens_waiting{0};
 } // namespace
 
 struct SysmixOutput::Impl {
@@ -75,6 +81,7 @@ struct SysmixOutput::Impl {
         ReleaseHost();
         AbandonMicrophone();
         microphone_requested = false;
+        microphone_deferred = false;
         if (state_event) {
             state_event->Signal(system.Kernel());
         }
@@ -118,8 +125,11 @@ struct SysmixOutput::Impl {
      * and Pump takes the stream once the open returns.
      */
     void OpenMicrophone() {
-        microphone_requested = true;
-        microphone_requested_at = std::chrono::steady_clock::now();
+        if (!microphone_requested) {
+            microphone_requested = true;
+            microphone_requested_at = std::chrono::steady_clock::now();
+        }
+        microphone_deferred = false;
         auto name = "sysmix-" + std::to_string(id);
         // The helper keeps the sink alive, so only a sink owned by a shared_ptr gets one.
         auto owner = sink.InputOpenMayBlock() ? sink.weak_from_this().lock() : nullptr;
@@ -128,12 +138,19 @@ struct SysmixOutput::Impl {
                 sink.AcquireSinkStream(system, channels, name, AudioCore::Sink::StreamType::In));
             return;
         }
+        u32 idle{};
+        if (!microphone_opens_waiting.compare_exchange_strong(idle, 1)) {
+            // Pump asks again once the other open returns.
+            microphone_deferred = true;
+            return;
+        }
         microphone = std::make_shared<MicrophoneOpen>();
         std::thread{[request = microphone, owner_sink = std::move(owner), &emulated = system,
                      guest_channels = channels, stream_name = std::move(name)] {
             Common::SetCurrentThreadName("SysmixMicOpen");
             auto* opened = owner_sink->AcquireSinkStream(emulated, guest_channels, stream_name,
                                                          AudioCore::Sink::StreamType::In);
+            microphone_opens_waiting.fetch_sub(1);
             {
                 std::scoped_lock lock{request->mutex};
                 if (!request->abandoned) {
@@ -167,6 +184,9 @@ struct SysmixOutput::Impl {
 
     /// Take the host microphone once its open on the helper thread has returned.
     void AdoptMicrophone() {
+        if (microphone_deferred && engaged && microphone_opens_waiting.load() == 0) {
+            OpenMicrophone();
+        }
         if (!microphone) {
             return;
         }
@@ -265,6 +285,8 @@ struct SysmixOutput::Impl {
     std::shared_ptr<MicrophoneOpen> microphone;
     std::chrono::steady_clock::time_point microphone_requested_at{};
     bool microphone_requested{};
+    /// Another stream's open was waiting when this one asked; Pump asks again when it returns
+    bool microphone_deferred{};
     mutable std::mutex mutex;
     u32 id;
     u64 buffer;
