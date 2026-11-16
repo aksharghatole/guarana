@@ -218,7 +218,10 @@ output pixel, `t` the in-between frame's position from the previous real frame (
   except where the camera's own translation reveals what the previous frame showed (parallax): the
   same reprojection fills those pixels; the rest keep today's background rule.
 - **HUD.** Today's mask (`hud_reference` against `hud_composite`): HUD pixels come from the newest
-  frame, unmoved.
+  frame, unmoved. Scene pixels must not drag it along, as extrapolation's rule says: a source on
+  the mask (the newest frame's, standing for both: the HUD stays put) gives way to the other
+  frame's; where every source a pixel uses lies on it, the scene under the HUD
+  (`EDEN_NX2_EXTRAPOLATE_HUD_FILL`) or the newest frame's colour there, unmoved.
 
 The arithmetic lives in a header shared by the test (C++ on plain arrays: pans, a foreground over a
 moving background, a disocclusion in each direction, a cut) and mirrored line by line in the shader;
@@ -280,7 +283,7 @@ moved, from `shown_frames`), so both arms of the target can be measured on the o
 | B2 | `EDEN_NX2_FG_GAME_MOTION=2` | B1, and extrapolated frames (`EDEN_NX2_FLUID` without interpolation) take the parallax fill |
 | B3 | debug server `input_latency` | the onset probe of 3.5: built (a right-stick step, then the first shown frame whose picture moved, timed from when the game read the step) |
 | B4 | `EDEN_NX2_FG_GAME_MOTION` with a DLSS-contract game | the second provider (3.1); measured once such a game has a bench scene |
-| B5 | ports | the HUD depth and motion passes of CheezerWheezer/Lichii `amd-superior` (a mask that holds when the scene is smaller than the output), Lichii #1493 (generated frames in HDR) and #1945 (one set of intermediates, about 70 MiB less at 1440p) |
+| B5 | ports | the HUD passes of CheezerWheezer's Lichii fork (`f0ff1554ba`, `57dc6d8d0c`) feed AMD frame generation, which Guarana does not have, and mend a mask read texel by texel at the scene's size; Guarana's mask is read by UV, both its images must match in size, and the 4K mode has one (the `OcarinaLiveDlss` scene reference against the game's composite). What transfers is their rule that the HUD carries no motion: B1's scene pixels no longer drag the HUD along (3.2, `EDEN_NX2_FG_GAME_MOTION`). Still to port: Lichii #1493 (generated frames in HDR) and #1945 (one set of intermediates, about 70 MiB less at 1440p) |
 
 ## 4. Measurement plan
 
@@ -333,7 +336,9 @@ Image checks (screenshots the suite saves, plus `EDEN_NX2_FRAME_DUMP` where name
    ghosting or doubling there is the known limit of the Ocarina provider (3.1), recorded, not a
    failure of the warp.
 6. **B, cuts and HUD**: through a door and into the pause screen and back: no frame of the old scene
-   after the new one; HUD text steady during a pan.
+   after the new one; HUD text steady during a pan,
+   and no copy of the hearts or buttons beside them (`EDEN_NX2_EXTRAPOLATE_DEBUG=1`: yellow where the
+   HUD rule acted).
 
 ## 5. Ports and what is not ported
 
@@ -342,7 +347,7 @@ Already in Guarana: Lichii #779 and Fritchii-Intel-Fixes 0007 and 0008 (the 8x16
 the guide. To port, in this order: Lichii #864 and #1985 (A2), #1941 (A2), #1243 (a tensor bench
 in `tools/shader-sweep` that measures the paths without the game, with a CPU reference: the best
 home for A1's numbers between owner runs), Fritchii-Intel-Fixes 0009 if the title movie shows its
-symptom with 8x16x16, and B5's three. Not ported: NVIDIA DLSS frame generation and Reflex, NVIDIA
+symptom with 8x16x16, and B5's two. Not ported: NVIDIA DLSS frame generation and Reflex, NVIDIA
 optical flow (NVIDIA only), Lossless Scaling (image only, no game data). The survey that found these
 is summarised in the pull request that adds this page.
 
