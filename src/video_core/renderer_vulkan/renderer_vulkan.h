@@ -105,6 +105,8 @@ public:
     [[nodiscard]] VideoCore::DlssStatus GetDlssStatus() const override;
 #endif
 
+    [[nodiscard]] VideoCore::UpscalerStatus GetUpscalerStatus() const override;
+
     void RequestGpuBusySample() override {
         scheduler.RequestGpuBusySample();
     }

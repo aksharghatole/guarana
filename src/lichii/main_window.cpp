@@ -1269,6 +1269,20 @@ void MainWindow::InitializeWidgets() {
             });
     statusBar()->insertPermanentWidget(0, frame_gen_status_button);
 
+    // The game-specific upscaler (Ocarina of Time's FSR or DLSS): which one runs and at what sizes,
+    // or why not (CheezyEmu 76f03c3c03). A click turns Ocarina FSR on or off between games.
+    upscale_status_button = new QPushButton();
+    upscale_status_button->setObjectName(QStringLiteral("TogglableStatusBarButton"));
+    upscale_status_button->setProperty("chip", QStringLiteral("upscale"));
+    upscale_status_button->setFocusPolicy(Qt::NoFocus);
+    upscale_status_button->setCheckable(true);
+    connect(upscale_status_button, &QPushButton::clicked, this, [this] {
+        Settings::values.ocarina_fsr.SetValue(!Settings::values.ocarina_fsr.GetValue());
+        UpdateUpscaleButton();
+    });
+    UpdateUpscaleButton();
+    statusBar()->insertPermanentWidget(0, upscale_status_button);
+
 #ifdef HAS_RESHADE
     post_shader_status_button = new QPushButton();
     post_shader_status_button->setObjectName(QStringLiteral("TogglableStatusBarButton"));
@@ -2643,6 +2657,11 @@ void MainWindow::BootGame(const QString& filename, Service::AM::FrontendAppletPa
     status_bar_update_timer.start(500);
     renderer_status_button->setDisabled(true);
     frame_gen_status_button->setDisabled(true);
+    upscale_status_button->setDisabled(true);
+    upscale_frames = 0;
+    upscale_running = false;
+    upscale_game = false;
+    upscale_name.clear();
     frame_gen_state = VideoCore::FrameGenState::Pending;
     frame_gen_frames = 0;
     frame_gen_generating = false;
@@ -2700,6 +2719,8 @@ void MainWindow::BootGame(const QString& filename, Service::AM::FrontendAppletPa
     loading_screen->show();
 
     emulation_running = true;
+    // Hidden until the first status update says the game has the upscaler.
+    UpdateUpscaleButton();
     if (ui->action_Fullscreen->isChecked()) {
         ShowFullscreen();
     } else if (!(ui->action_Single_Window_Mode->isChecked() ? isMaximized()
@@ -3025,6 +3046,10 @@ void MainWindow::OnEmulationStopped() {
     emu_frametime_label->setVisible(false);
     renderer_status_button->setEnabled(!UISettings::values.has_broken_vulkan);
     frame_gen_status_button->setEnabled(true);
+    upscale_status_button->setEnabled(true);
+    upscale_running = false;
+    upscale_game = false;
+    UpdateUpscaleButton();
     refresh_button->setEnabled(true);
 
     if (!firmware_label->text().isEmpty()) {
@@ -5945,6 +5970,28 @@ void MainWindow::UpdateStatusBar() {
     dlss_status_label->setText(dlss_status_text);
     dlss_status_label->setVisible(!dlss_status_text.isEmpty());
 
+    constexpr u64 ocarina_program = 0x0400486024DEC000ULL;
+    const auto upscaler = QtCommon::system->GPU().Renderer().GetUpscalerStatus();
+    // A renderer without the game's upscaler (OpenGL) reports neither a name nor a reason.
+    upscale_game = QtCommon::system->GetApplicationProcessProgramID() == ocarina_program &&
+                   !(upscaler.name.empty() && upscaler.idle_tag.empty());
+    upscale_running = upscaler.upscaled_frames > upscale_frames;
+    upscale_frames = upscaler.upscaled_frames;
+    if (!upscaler.name.empty()) {
+        upscale_name = QString::fromStdString(upscaler.name);
+    }
+    upscale_sizes = tr("%1p → %2p", "Render and output heights, e.g. 720p → 1080p")
+                        .arg(upscaler.render_height)
+                        .arg(upscaler.output_height);
+    upscale_size_detail = tr("%1x%2 to %3x%4")
+                              .arg(upscaler.render_width)
+                              .arg(upscaler.render_height)
+                              .arg(upscaler.output_width)
+                              .arg(upscaler.output_height);
+    upscale_idle_tag = QString::fromStdString(upscaler.idle_tag);
+    upscale_idle_reason = QString::fromStdString(upscaler.idle_reason);
+    UpdateUpscaleButton();
+
     emit statsUpdated(results, shader_notify);
 
     if (shaders_building > 0) {
@@ -6055,6 +6102,54 @@ void MainWindow::UpdatePostShaderText() {
     post_shader_status_button->setText(QString::fromStdString(preset).toUpper());
 }
 #endif
+
+QString MainWindow::UpscaleStatusText() const {
+    if (!upscale_status_button || !emulation_running || !upscale_game) {
+        return {};
+    }
+    return upscale_status_button->text();
+}
+
+void MainWindow::UpdateUpscaleButton() {
+    if (!upscale_status_button) {
+        return;
+    }
+    if (!emulation_running) {
+        const bool enabled = Settings::values.ocarina_fsr.GetValue();
+        upscale_status_button->setVisible(true);
+        upscale_status_button->setChecked(enabled);
+        upscale_status_button->setText(enabled ? tr("FSR") : tr("NO FSR"));
+        upscale_status_button->setToolTip(
+            enabled ? tr("Ocarina FSR is on: in The Legend of Zelda: Ocarina of Time, FSR replaces "
+                         "the game's own upscaler. Whether it runs shows here once the game "
+                         "starts. Click to turn it off.")
+                    : tr("Ocarina FSR is off: Ocarina of Time uses its own upscaler. Click to "
+                         "turn FSR on."));
+        return;
+    }
+    // Only Ocarina of Time has a game-specific upscaler.
+    upscale_status_button->setVisible(upscale_game);
+    if (!upscale_game) {
+        return;
+    }
+    const QString upscaler = upscale_name.isEmpty() ? tr("FSR") : upscale_name;
+    if (upscale_running) {
+        upscale_status_button->setChecked(true);
+        // DLSS's mode and preset have their own label; this one adds the sizes.
+        upscale_status_button->setText(upscale_name == QStringLiteral("DLSS")
+                                           ? upscale_sizes
+                                           : tr("%1 %2").arg(upscaler, upscale_sizes));
+        upscale_status_button->setToolTip(
+            tr("%1 is upscaling the game from %2.").arg(upscaler, upscale_size_detail));
+        return;
+    }
+    upscale_status_button->setChecked(false);
+    upscale_status_button->setText(upscale_idle_tag.isEmpty()
+                                       ? tr("%1 (IDLE)").arg(upscaler)
+                                       : tr("%1 (%2)").arg(upscaler, upscale_idle_tag));
+    upscale_status_button->setToolTip(
+        tr("%1 is not upscaling. %2").arg(upscaler, upscale_idle_reason));
+}
 
 void MainWindow::UpdateFrameGenButton() {
     const bool enabled = Settings::values.frame_gen.GetValue();
@@ -6175,6 +6270,7 @@ void MainWindow::UpdateStatusButtons() {
     UpdateFilterText();
     UpdateAAText();
     UpdateFrameGenButton();
+    UpdateUpscaleButton();
     UpdateVolumeUI();
 }
 
