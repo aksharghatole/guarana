@@ -181,17 +181,19 @@ so after every update Windows saw a new program and all of these started over.
 - `versions\<version>\` stays the installed copy of each version, the one rollback goes back to,
   and `current.json` names the current one. `installed[].path` and `current.json`'s `path` are
   these folders, as before.
-- `app\` mirrors the current version's emulator folder (the one with `guarana.exe`): a real folder
-  of hard links to its files, so it takes no extra space; where the volume has no hard links, copies
-  (a version is about 190 MB). `app-version.json` in it records the version, channel,
-  `installed_at` and source folder. It is written last; a folder whose record names another install
-  (a reinstall of the same version has a new `installed_at`) is switched before it is used.
+- `app\` mirrors the current version's emulator folder (the one with `guarana.exe`) in a real
+  folder. `guarana.exe` and `guarana-cli.exe` (`lichii.exe` and `eden-cli.exe` in builds from
+  before the rename) are copies, about 100 MB; every other file is a hard link, which takes no
+  space, or a copy where the volume has no hard links (a version is about 190 MB in all).
+  `app-version.json` in it records the version, channel, `installed_at` and source folder. It is
+  written last; a folder whose record names another install (a reinstall of the same version has a
+  new `installed_at`) is switched before it is used.
 - A switch makes the new mirror in `.app-staging-<time>-<pid>\`, renames `app\` to
   `.app-old-<time>-<pid>\` and the mirror to `app\`. When the second rename fails, the old folder
   is renamed back. Each rename is tried 10 times, 200 ms apart, because a virus scanner can hold a
-  new file for a moment. So `app\` is never a half-made folder. The old folder is then deleted:
-  links only, the installed copy keeps every file. At launcher start, a half-made mirror is
-  deleted and an `app\` a crash left aside between the two renames is put back.
+  new file for a moment. So `app\` is never a half-made folder. The old folder is then deleted;
+  the installed copy keeps every file. At launcher start, a half-made mirror is deleted and an
+  `app\` a crash left aside between the two renames is put back.
 - When: after `install_version` and `set_current_version`; at launcher start, which also moves an
   install from before the program folder into it; and at `launch_game` and `warm_shaders` when a
   switch is waiting. Never while `guarana.exe`, `lichii.exe`, `guarana-cli.exe` or `eden-cli.exe`
@@ -205,8 +207,11 @@ so after every update Windows saw a new program and all of these started over.
   has one runs from that folder, where its data is. One made in `app\` moves into each new `app\`;
   an old folder whose `user\` cannot move is left in place.
 - Not a junction or a symbolic link: Windows resolves those, so to the settings keyed by path the
-  process would still be `versions\<version>\guarana.exe`. A hard link is another name of the same
-  file, and a process keeps the name it was started by.
+  process would still be `versions\<version>\guarana.exe`. The programs are not hard links either:
+  Windows keeps one image of a program file for all its names and can name a process after the
+  name that image was first loaded from, which is the version folder's when the program ran from
+  there before (every install from before this folder). A copy has only the `app\` name. A test
+  on a device confirms which path the settings record.
 - The first start from `app\` is a new path to Windows once: it asks for the microphone again, and
   a GPU preference set for a `versions\` path has to be set again for `app\guarana.exe`. The
   launcher copies neither. After that, updates and rollbacks keep them.

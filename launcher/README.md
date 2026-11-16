@@ -12,8 +12,8 @@ and events between them are in [CONTRACT.md](CONTRACT.md).
 - **Keeps emulator versions side by side** in `%LOCALAPPDATA%\Guarana\versions\<version>\`;
   `current.json` names the one that runs, and an older one can be made current again (rollback).
 - **Runs every version from one path**, `%LOCALAPPDATA%\Guarana\app\guarana.exe`: the launcher
-  fills `app\` with hard links to the current version's files and swaps it whole with two renames,
-  never while Guarana runs. Windows keeps the microphone permission, the GPU choice in Settings,
+  fills `app\` with copies of the current version's programs and hard links to its other files,
+  and swaps it whole with two renames, never while Guarana runs. Windows keeps the microphone permission, the GPU choice in Settings,
   firewall rules and Game Bar's game detection by that path, so they survive updates and rollbacks
   (see [CONTRACT.md](CONTRACT.md#program-folder)).
 - **Updates from GitHub releases**: the stable channel is the newest release, the nightly channel is

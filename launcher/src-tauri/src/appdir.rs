@@ -5,10 +5,13 @@
 //! Windows, and all of them started over.
 //!
 //! `versions\<version>\` stays the installed copy of each version (rollback switches back to one)
-//! and `current.json` names the one to run. `app\` mirrors that one: a real folder of hard links to
-//! its files, copies where the volume has no hard links. A junction or a symbolic link would not
-//! do: Windows resolves them, so the process would still be `versions\<version>\guarana.exe` to it.
-//! A hard link is another name of the same file, and a process keeps the name it was started by.
+//! and `current.json` names the one to run. `app\` mirrors that one in a real folder: the programs
+//! Windows knows Guarana by (`guarana.exe`, `guarana-cli.exe` and their old names) are copies, and
+//! every other file is a hard link to the version's file (a copy too where the volume has no hard
+//! links). A junction or a symbolic link would not do: Windows resolves them, so the process would
+//! still be `versions\<version>\guarana.exe` to it. Nor would a hard link to the program: Windows
+//! keeps one image of a program file for all its names, and can name a process after the name that
+//! image was first loaded from, the version folder's when the program ran from there before.
 //!
 //! A switch builds the new mirror beside `app\` (`.app-staging-*`) and writes `app-version.json`
 //! into it last. It then moves `app\` aside (`.app-old-*`) and the mirror into its place; when the
@@ -23,6 +26,7 @@
 //! deleted. A version folder that has one keeps running from that folder, where the data is. One
 //! made in `app\` moves into each new `app\`.
 
+use std::ffi::OsStr;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -104,6 +108,13 @@ fn is_portable(version_dir: &Path) -> bool {
     version_dir.join(USER).is_dir()
 }
 
+/// The programs Windows keys its settings to, at the top of a version folder: always copied.
+fn is_program(name: &OsStr) -> bool {
+    [paths::EMULATOR_EXE, paths::EMULATOR_EXE_LEGACY, paths::CLI_EXE, paths::CLI_EXE_LEGACY]
+        .iter()
+        .any(|p| name.eq_ignore_ascii_case(p))
+}
+
 /// Makes `root\app` hold `v`, whose emulator folder is `v.path`. Blocking.
 fn switch_in(root: &Path, v: &InstalledVersion, link: LinkFn, rename: RenameFn) -> io::Result<Outcome> {
     let source = Path::new(&v.path);
@@ -139,8 +150,8 @@ fn build(source: &Path, staging: &Path, v: &InstalledVersion, link: LinkFn) -> i
 }
 
 /// Makes the folder `to` with the folders of `from` and a link (or copy) of each file. At the top
-/// it leaves out `user` and a record; links and junctions are skipped, so nothing outside the
-/// version's folder is reached.
+/// it copies the programs and leaves out `user` and a record; links and junctions are skipped, so
+/// nothing outside the version's folder is reached.
 fn mirror_dir(from: &Path, to: &Path, top: bool, link: LinkFn, mirror: &mut Mirror) -> io::Result<()> {
     fs::create_dir(to)?;
     for entry in fs::read_dir(from)? {
@@ -156,7 +167,7 @@ fn mirror_dir(from: &Path, to: &Path, top: bool, link: LinkFn, mirror: &mut Mirr
         } else if kind.is_dir() {
             mirror_dir(&src, &dst, false, link, mirror)?;
         } else if kind.is_file() {
-            if link(&src, &dst).is_ok() {
+            if !(top && is_program(&name)) && link(&src, &dst).is_ok() {
                 mirror.linked += 1;
             } else {
                 fs::copy(&src, &dst)?;
@@ -448,6 +459,23 @@ mod tests {
     }
 
     #[test]
+    fn the_programs_are_copied_and_the_rest_linked() {
+        let root = scratch("programs");
+        let v = install(&root, "20.4.0", "t", &[("guarana.exe", "e"), ("guarana-cli.exe", "c"), ("Qt6Core.dll", "q")]);
+        let linked = std::cell::RefCell::new(Vec::new());
+        let link = |from: &Path, to: &Path| {
+            linked.borrow_mut().push(from.file_name().unwrap().to_string_lossy().into_owned());
+            fs::hard_link(from, to)
+        };
+        switch_in(&root, &v, &link, &plain_rename).unwrap();
+        assert_eq!(*linked.borrow(), ["Qt6Core.dll"]);
+        // The program in `app` is its own file: a write to the version's copy does not reach it.
+        fs::write(Path::new(&v.path).join("guarana.exe"), "patched").unwrap();
+        assert_eq!(read(&root.join(paths::APP_DIR).join("guarana.exe")), "e");
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
     fn an_update_and_a_rollback_keep_the_same_path() {
         let root = scratch("update");
         let old = install(&root, "20.3.0", "2026-11-10T00:00:00Z", &[("guarana.exe", "old"), ("gone.dll", "x")]);
@@ -458,7 +486,7 @@ mod tests {
         assert_eq!(read(&app.join("guarana.exe")), "new");
         assert!(!app.join("gone.dll").exists(), "nothing of the previous version stays");
         assert!(holds(&app, &new) && !holds(&app, &old));
-        // Retiring the previous folder removed only its links: the installed copy is whole.
+        // Retiring the previous folder left the installed copy whole.
         assert_eq!(read(&Path::new(&old.path).join("guarana.exe")), "old");
         assert_eq!(read(&Path::new(&old.path).join("gone.dll")), "x");
         assert!(matches!(switch(&root, &old).unwrap(), Outcome::Switched(_)));
