@@ -412,8 +412,9 @@ TEST_CASE("Built-in FPS Unlock defaults on and replaces Dynamic FPS", "[patch_ma
     // Default: FPS Unlock applies, Dynamic FPS is listed as replaced by it when it applies.
     REQUIRE(listed(FpsUnlock).enabled);
     REQUIRE(listed(DynamicFps).enabled);
-    REQUIRE(listed(DynamicFps).version ==
-            fmt::format("IPS, replaced by {} when it applies", FpsUnlock));
+    REQUIRE(listed(DynamicFps).version == FileSys::BUILTIN_PATCH_LABEL);
+    REQUIRE(listed(DynamicFps).replaced_by == FpsUnlock);
+    REQUIRE(listed(FpsUnlock).replaced_by.empty());
     auto patched = manager.PatchNSO(nso, "main");
     REQUIRE(WordAt(patched, DynamicCallOffset) == DynamicCallInstruction);
     REQUIRE(routine(patched, UnlockRoutineSize) ==
@@ -462,7 +463,8 @@ TEST_CASE("Built-in FPS Unlock defaults on and replaces Dynamic FPS", "[patch_ma
     // Without FPS Unlock, Dark's routine applies unchanged.
     Settings::values.disabled_addons[OcarinaTitleId] = {std::string{FpsUnlock}};
     REQUIRE_FALSE(listed(FpsUnlock).enabled);
-    REQUIRE(listed(DynamicFps).version == "IPS");
+    REQUIRE(listed(DynamicFps).version == FileSys::BUILTIN_PATCH_LABEL);
+    REQUIRE(listed(DynamicFps).replaced_by.empty());
     patched = manager.PatchNSO(nso, "main");
     REQUIRE(WordAt(patched, DynamicCallOffset) == DynamicCallInstruction);
     REQUIRE(routine(patched, DynamicRoutineSize) ==
@@ -1174,5 +1176,147 @@ TEST_CASE("Unchecked add-on lists store off-by-default built-ins when checked", 
     SECTION("Other titles are stored as given") {
         REQUIRE(FileSys::StoredDisabledAddons(OtherTitleId, {Double}) ==
                 std::vector<std::string>{Double});
+    }
+}
+
+TEST_CASE("Listed built-ins carry a label, a description and a level for players",
+          "[patch_manager]") {
+    using Level = FileSys::BuiltinPatchLevel;
+    constexpr std::string_view TexturePool = "Texture Pool x2 (built-in)";
+    PatchManagerTestContext context{NopInstruction};
+    const auto patches = context.Manager().GetPatches();
+    const auto level = [&](std::string_view name) {
+        const auto it = std::ranges::find(patches, name, &FileSys::Patch::name);
+        REQUIRE(it != patches.end());
+        return it->level;
+    };
+
+    size_t builtins = 0;
+    for (const auto& patch : patches) {
+        CAPTURE(patch.name);
+        if (!patch.builtin) {
+            // The user mod of the test context: nothing of a built-in is set.
+            CHECK(patch.version != FileSys::BUILTIN_PATCH_LABEL);
+            CHECK(patch.description.empty());
+            CHECK(patch.last_result == FileSys::BuiltinPatchResult::NotLoaded);
+            continue;
+        }
+        ++builtins;
+        CHECK(patch.version == FileSys::BUILTIN_PATCH_LABEL);
+        CHECK(patch.type == FileSys::PatchType::Mod);
+        // A sentence to read, not a placeholder.
+        CHECK(patch.description.size() >= 40);
+        CHECK(patch.description.ends_with('.'));
+        // An option that is off until checked is never one to leave on.
+        if (patch.off_by_default) {
+            CHECK(patch.level != Level::Recommended);
+        }
+    }
+    CHECK(builtins >= 4);
+
+    CHECK(level(TexturePool) == Level::Recommended);
+    CHECK(level(FpsUnlock) == Level::Recommended);
+    CHECK(level(MaxResolution) == Level::Standard);
+    CHECK(level(DynamicFps) == Level::Standard);
+    CHECK(level("Text Speed 2x (built-in)") == Level::Experimental);
+
+    for (const auto& patch : context.Manager(OtherTitleId).GetPatches()) {
+        CHECK_FALSE(patch.builtin);
+    }
+}
+
+TEST_CASE("The patch list says what became of each built-in at the last start",
+          "[patch_manager]") {
+    using Result = FileSys::BuiltinPatchResult;
+    constexpr std::string_view TexturePool = "Texture Pool x2 (built-in)";
+    constexpr std::string_view TextDouble = "Text Speed 2x (built-in)";
+    constexpr std::string_view TextQuadruple = "Text Speed 4x (built-in)";
+    constexpr std::string_view TextInstant = "Text Speed Instant (built-in)";
+    constexpr size_t TextSiteOffset = sizeof(Loader::NSOHeader) + 0xAFE1B4;
+    constexpr u32 TextOriginalInstruction = 0x7940DE69;
+    const auto result_of = [](PatchManagerTestContext& context, std::string_view name) {
+        const auto patches = context.Manager().GetPatches();
+        const auto it = std::ranges::find(patches, name, &FileSys::Patch::name);
+        REQUIRE(it != patches.end());
+        return it->last_result;
+    };
+    const auto start = [](PatchManagerTestContext& context, const std::vector<u8>& nso) {
+        return context.Manager().PatchNSO(nso, "main");
+    };
+
+    SECTION("Nothing is known after a module that could not be patched") {
+        PatchManagerTestContext context;
+        start(context, MakeDynamicMain());
+        REQUIRE(result_of(context, MaxResolution) == Result::Applied);
+        // Too short to hold a header: what the earlier start left is dropped.
+        start(context, std::vector<u8>(4));
+        CHECK(result_of(context, MaxResolution) == Result::NotLoaded);
+        CHECK(result_of(context, FpsUnlock) == Result::NotLoaded);
+    }
+
+    SECTION("Applied, unchecked, contained in another and not what the patch expects") {
+        PatchManagerTestContext context;
+        start(context, MakeDynamicMain());
+        CHECK(result_of(context, MaxResolution) == Result::Applied);
+        CHECK(result_of(context, FpsUnlock) == Result::Applied);
+        CHECK(result_of(context, DynamicFps) == Result::Replaced);
+        // MakeDynamicMain leaves the pool's store at zero, which is not the game's instruction.
+        CHECK(result_of(context, TexturePool) == Result::UnexpectedCode);
+        // Off until checked.
+        CHECK(result_of(context, TextDouble) == Result::Disabled);
+
+        Settings::values.disabled_addons[OcarinaTitleId] = {std::string{FpsUnlock}};
+        start(context, MakeDynamicMain());
+        CHECK(result_of(context, FpsUnlock) == Result::Disabled);
+        CHECK(result_of(context, DynamicFps) == Result::Applied);
+    }
+
+    SECTION("Another build of the game") {
+        PatchManagerTestContext context;
+        auto other = OcarinaBuildId;
+        other[0] ^= 1;
+        start(context, MakeMain(other, TbzInstruction));
+        CHECK(result_of(context, MaxResolution) == Result::WrongBuild);
+        CHECK(result_of(context, FpsUnlock) == Result::WrongBuild);
+        CHECK(result_of(context, TextDouble) == Result::Disabled);
+    }
+
+    SECTION("A user mod that changes the same instruction") {
+        PatchManagerTestContext context{NopInstruction};
+        start(context, MakeDynamicMain());
+        CHECK(result_of(context, MaxResolution) == Result::ModConflict);
+        CHECK(result_of(context, FpsUnlock) == Result::Applied);
+    }
+
+    SECTION("A user mod that writes into the patch's zero-filled state") {
+        PatchManagerTestContext context{NopInstruction, DynamicStateOffset};
+        start(context, MakeDynamicMain());
+        CHECK(result_of(context, FpsUnlock) == Result::ModConflict);
+        CHECK(result_of(context, DynamicFps) == Result::ModConflict);
+        CHECK(result_of(context, MaxResolution) == Result::Applied);
+    }
+
+    SECTION("Only the first of a group that applies") {
+        PatchManagerTestContext context;
+        auto nso = MakeDynamicMain();
+        std::memcpy(nso.data() + TextSiteOffset, &TextOriginalInstruction, sizeof(u32));
+        Settings::values.disabled_addons[OcarinaTitleId] = {
+            FileSys::EnabledAddonKey(TextDouble), FileSys::EnabledAddonKey(TextQuadruple)};
+        start(context, nso);
+        CHECK(result_of(context, TextInstant) == Result::Disabled);
+        CHECK(result_of(context, TextQuadruple) == Result::Applied);
+        CHECK(result_of(context, TextDouble) == Result::GroupTaken);
+    }
+
+    SECTION("Each title has its own results") {
+        PatchManagerTestContext context;
+        start(context, MakeDynamicMain());
+        REQUIRE(result_of(context, MaxResolution) == Result::Applied);
+        // Another title's main leaves Ocarina's results alone.
+        void(context.Manager(OtherTitleId).PatchNSO(MakeDynamicMain(), "main"));
+        CHECK(result_of(context, MaxResolution) == Result::Applied);
+        // So does another module of Ocarina.
+        void(context.Manager().PatchNSO(MakeDynamicMain(), "sdk"));
+        CHECK(result_of(context, MaxResolution) == Result::Applied);
     }
 }

@@ -28,6 +28,24 @@ Each mod should be placed inside **its own subfolder**.
 
 ---
 
+# Built-in Patches
+
+Some games come with patches that are part of Guarana. They need no download and are in the same **Add-Ons** list, with **Built-in** in the Version column:
+
+- **Built-in, recommended**: leave it on. The game misbehaves without it.
+- **Built-in, experimental**: new or little tested, and off until you tick it.
+- **Built-in**: no advice either way. Read what it does and choose.
+
+Click a built-in patch to read under the list what it does. Once the game has been started, the same box says whether the patch was applied. A warning sign next to a ticked patch means it was not, and the box says why:
+
+- **It is made for another version of the game.** The patch does nothing for the version you have.
+- **A mod changes the same part of the game.** Turn that mod off to use the patch.
+- **The game's code is not what it expects.** The patch does nothing for this copy of the game.
+
+Guarana knows this from the last time the game started, and forgets it when it is closed.
+
+---
+
 # Important Note About SD Card Paths
 
 Some mods are designed for real Nintendo Switch consoles and refer to the **SD card root**.

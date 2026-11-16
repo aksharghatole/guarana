@@ -16,6 +16,7 @@
 #include <QStandardItemModel>
 #include <QStandardPaths>
 #include <QString>
+#include <QStyle>
 #include <QTimer>
 #include <QTreeView>
 
@@ -33,6 +34,90 @@
 #include "ui_configure_per_game_addons.h"
 #include "lichii/configuration/configure_input.h"
 #include "lichii/configuration/configure_per_game_addons.h"
+
+namespace {
+
+/// A built-in's name without the " (built-in)" that the Version column already says.
+QString BuiltinDisplayName(const std::string& name) {
+    QString text = QString::fromStdString(name);
+    const QString suffix = QStringLiteral(" (built-in)");
+    if (text.endsWith(suffix)) {
+        text.chop(suffix.size());
+    }
+    return text;
+}
+
+QString BuiltinVersionText(const FileSys::Patch& patch) {
+    switch (patch.level) {
+    case FileSys::BuiltinPatchLevel::Recommended:
+        return ConfigurePerGameAddons::tr("Built-in, recommended");
+    case FileSys::BuiltinPatchLevel::Experimental:
+        return ConfigurePerGameAddons::tr("Built-in, experimental");
+    case FileSys::BuiltinPatchLevel::Standard:
+        break;
+    }
+    return ConfigurePerGameAddons::tr("Built-in");
+}
+
+/// Whether a checked built-in was left out when the game last started, for a reason the player
+/// can act on.
+bool BuiltinFailed(const FileSys::Patch& patch) {
+    using Result = FileSys::BuiltinPatchResult;
+    return patch.enabled &&
+           (patch.last_result == Result::WrongBuild || patch.last_result == Result::ModConflict ||
+            patch.last_result == Result::UnexpectedCode);
+}
+
+/// What became of a checked built-in when the game last started. The reasons are the ones
+/// PatchManager::PatchNSO logs.
+QString BuiltinStatusText(const FileSys::Patch& patch) {
+    using Result = FileSys::BuiltinPatchResult;
+    if (!patch.enabled) {
+        return {};
+    }
+    switch (patch.last_result) {
+    case Result::Applied:
+        return ConfigurePerGameAddons::tr("Applied when the game last started.");
+    case Result::WrongBuild:
+        return ConfigurePerGameAddons::tr(
+            "Not applied when the game last started: it is made for another version of the game.");
+    case Result::ModConflict:
+        return ConfigurePerGameAddons::tr(
+            "Not applied when the game last started: a mod changes the same part of the game. "
+            "Turn that mod off to use this patch.");
+    case Result::UnexpectedCode:
+        return ConfigurePerGameAddons::tr(
+            "Not applied when the game last started: the game's code is not what it expects.");
+    case Result::Replaced:
+        return ConfigurePerGameAddons::tr(
+            "Not used when the game last started: another built-in patch includes it.");
+    case Result::GroupTaken:
+        return ConfigurePerGameAddons::tr(
+            "Not used when the game last started: another option of the same kind was applied.");
+    case Result::NotLoaded:
+        return ConfigurePerGameAddons::tr(
+            "Start the game once, then look here to see whether it was applied.");
+    case Result::Disabled:
+        break;
+    }
+    return {};
+}
+
+/// The text of the box under the list for a built-in: what it does, then what became of it.
+QString BuiltinInfoText(const FileSys::Patch& patch) {
+    QStringList lines{QString::fromStdString(patch.description)};
+    if (!patch.replaced_by.empty()) {
+        lines << ConfigurePerGameAddons::tr("%1 includes it: while that one applies, this one "
+                                            "is not used.")
+                     .arg(BuiltinDisplayName(patch.replaced_by));
+    }
+    if (const QString status = BuiltinStatusText(patch); !status.isEmpty()) {
+        lines << status;
+    }
+    return lines.join(QStringLiteral("\n"));
+}
+
+} // Anonymous namespace
 
 ConfigurePerGameAddons::ConfigurePerGameAddons(Core::System& system_, QWidget* parent)
     : QWidget(parent), ui{std::make_unique<Ui::ConfigurePerGameAddons>()}, system{system_} {
@@ -82,6 +167,10 @@ ConfigurePerGameAddons::ConfigurePerGameAddons(Core::System& system_, QWidget* p
 
     connect(tree_view, &QTreeView::customContextMenuRequested, this,
             &ConfigurePerGameAddons::showContextMenu);
+
+    connect(tree_view->selectionModel(), &QItemSelectionModel::currentRowChanged, this,
+            &ConfigurePerGameAddons::UpdateInfo);
+    ui->info->setVisible(false);
 }
 
 ConfigurePerGameAddons::~ConfigurePerGameAddons() = default;
@@ -114,6 +203,8 @@ void ConfigurePerGameAddons::ApplyConfiguration() {
                 item.front()->text() == QStringLiteral("Update")) {
                 quint32 numeric_version = userData.toUInt();
                 disabled_addons.push_back(fmt::format("Update@{}", numeric_version));
+            } else if (const QVariant key = item.front()->data(PATCH_KEY); key.isValid()) {
+                disabled_addons.push_back(key.toString().toStdString());
             } else {
                 disabled_addons.push_back(item.front()->text().toStdString());
             }
@@ -319,12 +410,14 @@ void ConfigurePerGameAddons::LoadConfiguration() {
     std::vector<FileSys::Patch> patches = pm.GetPatches(update_raw);
 
     bool has_enabled_update = false;
+    bool has_builtin = false;
+    QStringList problems;
 
     for (const auto& patch : patches) {
         const auto name = QString::fromStdString(patch.name);
 
         auto* const first_item = new QStandardItem;
-        first_item->setText(name);
+        first_item->setText(patch.builtin ? BuiltinDisplayName(patch.name) : name);
         first_item->setCheckable(true);
 
         const bool is_external_update = patch.type == FileSys::PatchType::Update &&
@@ -366,10 +459,47 @@ void ConfigurePerGameAddons::LoadConfiguration() {
 
         first_item->setCheckState(should_enable ? Qt::Checked : Qt::Unchecked);
 
-        list_items.push_back(QList<QStandardItem*>{
-            first_item, new QStandardItem{QString::fromStdString(patch.version)}});
+        auto* const version_item = new QStandardItem{
+            patch.builtin ? BuiltinVersionText(patch) : QString::fromStdString(patch.version)};
+        if (patch.builtin) {
+            has_builtin = true;
+            // The settings store the full name; the row shows it without " (built-in)".
+            first_item->setData(name, PATCH_KEY);
+            const QString info = BuiltinInfoText(patch);
+            first_item->setData(info, PATCH_INFO);
+            // Rich text, so that the tooltip wraps.
+            const QString tooltip =
+                QStringLiteral("<p>%1</p>")
+                    .arg(info.toHtmlEscaped().replace(QStringLiteral("\n"), QStringLiteral("<br>")));
+            first_item->setToolTip(tooltip);
+            version_item->setToolTip(tooltip);
+            if (BuiltinFailed(patch)) {
+                first_item->setIcon(style()->standardIcon(QStyle::SP_MessageBoxWarning));
+                problems << QStringLiteral("%1: %2").arg(first_item->text(),
+                                                         BuiltinStatusText(patch));
+            }
+        }
+
+        list_items.push_back(QList<QStandardItem*>{first_item, version_item});
         item_model->appendRow(list_items.back());
     }
 
     tree_view->resizeColumnToContents(1);
+
+    builtin_problems = problems.join(QStringLiteral("\n"));
+    ui->info->setVisible(has_builtin);
+    UpdateInfo();
+}
+
+void ConfigurePerGameAddons::UpdateInfo() {
+    QString text;
+    if (const QModelIndex current = tree_view->currentIndex(); current.isValid()) {
+        text = current.siblingAtColumn(0).data(PATCH_INFO).toString();
+    }
+    if (text.isEmpty()) {
+        text = builtin_problems.isEmpty()
+                   ? tr("Select a built-in patch to see what it does and whether it was applied.")
+                   : builtin_problems;
+    }
+    ui->info->setText(text);
 }
