@@ -1409,6 +1409,17 @@ bool CacheMapRequested() {
     return requested;
 }
 
+/// EDEN_NX2_LOAD_SAVE=1 (Lichii #1838): where reading the driver pipeline cache during a build
+/// crashes, the boot load still saves it once its builds have ended, and starts the background
+/// prebuild after that save (SaveDriverCacheAtLoadEnd, PrebuildAfterLoadSave)
+bool LoadSaveRequested() {
+    static const bool requested = [] {
+        const char* value = std::getenv("EDEN_NX2_LOAD_SAVE");
+        return value != nullptr && value[0] == '1';
+    }();
+    return requested;
+}
+
 /// Why a draw or dispatch built its pipeline at run time
 enum class RuntimeBuild : size_t {
     Recorded, ///< Graphics, recorded on disk but not built at boot: translated from live state
@@ -2728,9 +2739,12 @@ void PipelineCache::LoadPipelinesV2(u64 title_id,
     // precache's. Where reads of the driver pipeline cache wait for the builds into it
     // (Device::SerializesPipelineCacheReads), after the save below too, which would otherwise
     // wait for the background builds then running (Intel's Windows driver crashed reading the
-    // cache during them, IGCIT #1614). The older sessions' pipelines come first.
-    const bool prebuild_after_save =
-        !async_boot && (precache || device.SerializesPipelineCacheReads());
+    // cache during them, IGCIT #1614); with EDEN_NX2_LOAD_SAVE likewise where such reads crash,
+    // so that the save runs with no build in flight. The older sessions' pipelines come first.
+    const bool load_save = use_vulkan_pipeline_cache && LoadSaveRequested();
+    const bool prebuild_after_save = PrebuildAfterLoadSave(
+        async_boot != nullptr, precache, device.CanReadPipelineCacheDuringBuilds(),
+        device.SerializesPipelineCacheReads(), load_save);
     const size_t deferred_pipelines = prebuild.size();
     std::vector<VideoCommon::ShaderJobHandle> older_jobs;
     const auto start_prebuild = [&] {
@@ -2860,9 +2874,18 @@ void PipelineCache::LoadPipelinesV2(u64 title_id,
     // background prebuild can already be building into the cache here, and nothing joins its
     // builds before this read; a stopped load can leave a cancelled prebuild build running
     // past the same point. The session-end save in ~PipelineCache stays ordered after the
-    // build workers shut down and still covers persistence.
-    if (use_vulkan_pipeline_cache && !async_boot &&
-        (device.CanReadPipelineCacheDuringBuilds() || device.SerializesPipelineCacheReads())) {
+    // build workers shut down and still covers persistence. With EDEN_NX2_LOAD_SAVE the
+    // prebuild has not started there, and the boot builds have ended (boot.Wait above).
+    if (load_save && !device.CanReadPipelineCacheDuringBuilds() &&
+        !device.SerializesPipelineCacheReads()) {
+        LOG_INFO(Render_Vulkan, "EDEN_NX2_LOAD_SAVE: {}",
+                 async_boot ? "does nothing with EDEN_NX2_BOOT_ASYNC, whose builds still run"
+                            : "the driver pipeline cache is saved at the end of the load; the "
+                              "background prebuild starts after the save");
+    }
+    if (use_vulkan_pipeline_cache &&
+        SaveDriverCacheAtLoadEnd(async_boot != nullptr, device.CanReadPipelineCacheDuringBuilds(),
+                                 device.SerializesPipelineCacheReads(), load_save)) {
         // Its size from the save's own read: another read would need the build lock as well
         last_cache_size.store(SerializeVulkanPipelineCache(vulkan_pipeline_cache_filename,
                                                            vulkan_pipeline_cache, CACHE_VERSION,
