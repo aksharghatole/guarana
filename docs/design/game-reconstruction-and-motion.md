@@ -269,11 +269,10 @@ time and the vblank wait only, the game's own queue the same in both):
 So the target is reachable only within about 4 ms by position in the pipeline, with extrapolation
 or with interpolation's onset; meeting it outright needs a shorter queue than the 60 frame baseline
 (the cadence's phase lock, which keeps real frames done about 3 ms before their slot; a cap on
-the GPU queue, `EDEN_NX2_QUEUE_LIMIT`, showed no gain and was removed). What is measured today
-is the presenter's part, `real frame age at
-display` in the `Fluid presenter` line. An onset probe does not exist: B3 adds one to the debug
-server (a right-stick step through `input`, then the time to the first shown frame whose picture
-moved, from `shown_frames`), so both arms of the target can be measured on the owner's machine.
+the GPU queue, `EDEN_NX2_QUEUE_LIMIT`, showed no gain and was removed). The presenter's part is
+`real frame age at display` in the `Fluid presenter` line. The whole of it, from when the game
+reads the input to the first shown frame whose picture moved, is B3's probe, the debug server's
+`input_latency`; section 4 says how to measure both arms of the target with it.
 
 ### 3.6 Steps
 
@@ -283,7 +282,7 @@ moved, from `shown_frames`), so both arms of the target can be measured on the o
 | B2 | `EDEN_NX2_FG_GAME_MOTION=2` | B1, and extrapolated frames (`EDEN_NX2_FLUID` without interpolation) take the parallax fill |
 | B3 | debug server `input_latency` | the onset probe of 3.5: built (a right-stick step, then the first shown frame whose picture moved, timed from when the game read the step) |
 | B4 | `EDEN_NX2_FG_GAME_MOTION` with a DLSS-contract game | the second provider (3.1); measured once such a game has a bench scene |
-| B5 | ports | the HUD passes of CheezerWheezer's Lichii fork (`f0ff1554ba`, `57dc6d8d0c`) feed AMD frame generation, which Guarana does not have, and mend a mask read texel by texel at the scene's size; Guarana's mask is read by UV, both its images must match in size, and the 4K mode has one (the `OcarinaLiveDlss` scene reference against the game's composite). What transfers is their rule that the HUD carries no motion: B1's scene pixels no longer drag the HUD along (3.2, `EDEN_NX2_FG_GAME_MOTION`). Still to port: Lichii #1493 (generated frames in HDR) and #1945 (one set of intermediates, about 70 MiB less at 1440p) |
+| B5 | ports | from the HUD passes of CheezerWheezer's Lichii fork (`f0ff1554ba`, `57dc6d8d0c`), which feed AMD frame generation (not in Guarana): their rule that the HUD carries no motion, as B1's (scene pixels no longer drag the HUD along, 3.2; #258). Open: the case they were written for, a scene smaller than the output. Guarana's guide path keeps the mask only when the presented image and the scene copy match in size; otherwise it logs `Frame extrapolation: no HUD mask for frame N (...): the presented image and the scene differ in size`, and the HUD moves with the scene in generated frames. That would happen with a scene below the output size (Max Resolution off, A4); not verified. The shaders already read both images by UV, so the fix would keep the mask at any size: look for that line in the B suite's and A4's logs first. Still to port: Lichii #1493 (generated frames in HDR) and #1945 (one set of intermediates, about 70 MiB less at 1440p) |
 
 ## 4. Measurement plan
 
@@ -302,11 +301,12 @@ python -I tools/bench/bench.py suite tools/bench/suites/game-network.json @commo
 | Suite | Arrives with | Compares |
 |---|---|---|
 | `game-network.json` | this design (A0) | network on: software, shared-memory software, 8x16x16 (a no-op on the Arc 140T: its row equals software, and its log line says why); No sharpening as the floor |
+| `game-network-a1b.json` | A1b | the Arc 140T's own shape: software against 8x8x16 with fp32 accumulators (`EDEN_NX2_INTEL_COOP_MATRIX_8X8`), alone and with `EDEN_NX2_HMMA_ZERO_C` |
 | `game-network-a1.json` | A1 | 8x16x16 alone, then with each A1 switch, then all. For a GPU that lists 8x16x16 fp16 (Xe2) or 16x16x16 (RDNA 3, where only `ZERO_C` applies), not the Arc 140T |
 | `game-network-render-low.json` | A4 | Max Resolution off at a pinned step with the network on, against the preset |
 | `game-motion-fg.json` | B1 | `FLUID_INTERP` with optical flow against B1, and extrapolation as the latency reference; the 120 Hz set's frame generation pinned, fullscreen, pacing counters on (B2 adds its arm) |
 
-Every arm of an A suite emits new SPIR-V for the network, so its first boot compiles cold: run each suite twice in one session and read only the second pass. On the Arc 140T the matrix arms are no-ops until A1b exists; the owner's A0 rows there compare software with the shared-memory gather, and say what the network costs on this GPU at all.
+Every arm of an A suite emits new SPIR-V for the network, so its first boot compiles cold: run each suite twice in one session and read only the second pass. On the Arc 140T the 8x16x16 arms are no-ops: its A0 rows compare software with the shared-memory gather and say what the network costs on this GPU at all, and `game-network-a1b.json` measures its 8x8x16 path.
 
 What counts:
 
@@ -319,6 +319,24 @@ What counts:
   game's fps and p99. B: `Fluid presenter` slots on time and misses, `Shown frames` within 2 ms and
   p99, `frames received`, `real frame age at display`, and the `frame_gen_*` rows.
 - Nothing becomes a default from this plan alone: a default needs these rows plus the image checks.
+
+Onset latency (B3, the target of 3.5), on the same build after the B suite. Start Ocarina of Time
+once per arm, with `EDEN_NX2_DEBUG_SERVER=127.0.0.1:6545` and the arm's switches from
+`game-motion-fg.json` (its base `env` plus the arm's own, and frame generation on with FSR3 in the
+graphics settings). Then start it once more without frame generation and without the FLUID switches,
+on a 60 Hz display, as the reference. In Hyrule Field, standing still with nothing moving nearby and
+the camera free to turn right, run this five times per arm, a few seconds apart:
+
+```powershell
+python -I tools/nx2/debug_mcp.py --server 127.0.0.1:6545 --call input_latency
+```
+
+A call counts when `input_read` is true, `onset_ms` is positive (a frame shown before the game read
+the step cannot show it) and the frames before the onset stay under half the `threshold`; otherwise
+stand somewhere stiller or raise the threshold. Report each arm's
+median `onset_ms` and `real_onset_ms`, and their differences from the reference's. The target is an
+onset within about 4 ms of the reference's at 40 real frames shown at 120 (3.5). Times are taken
+when the present call returns, so the display's own lag comes on top in every arm alike.
 
 Image checks (screenshots the suite saves, plus `EDEN_NX2_FRAME_DUMP` where named):
 
