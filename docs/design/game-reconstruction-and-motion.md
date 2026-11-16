@@ -118,7 +118,8 @@ stated.
 These help every game's network on AMD and on Intel with the 8x16x16 path, not only Ocarina. Tests
 in `src/tests/video_core/spirv_software_matrix.cpp` check the emitted SPIR-V (stores, loads,
 barriers and products per `HMMA`), as the existing 8x16x16 tests do, and a CPU model of the
-arithmetic checks the rounding (2.4).
+arithmetic checks the rounding (2.4). The first pull request (#226) built `EDEN_NX2_TENSOR_LOG`,
+`EDEN_NX2_HMMA_ZERO_C` and `EDEN_NX2_HMMA_K16_ONCE`; `SHARE_A` and `PAIR_N` are the second.
 
 **A2. Fewer passes (ports).** Lichii #864 and #1985 skip a game's network passes whose output only
 feeds a pass a replacement overwrites (measured upstream: Duskbloods on a Steam Deck 56.6 -> 40.4 ms
@@ -190,17 +191,24 @@ output pixel, `t` the in-between frame's position from the previous real frame (
 - **One solve for both directions.** A surface point at `p` in the newest frame is at
   `p + (1 - t) m(p)` at time `t` and at `p - advance m(p)` after it. Both are today's fixed-point
   solve in `frame_extrapolation.comp` (`p = q + a m(p)`), with `a = -(1 - t)` to interpolate and
-  `a = advance` to extrapolate, including its nearer-neighbour test.
-- **Interpolation (B1).** When the solve from the newest frame converges at `p`, the same point in
-  the previous frame is at `p' = p + m(p)`. If the previous frame's nearness there matches the
-  point's reprojected nearness, both frames saw it: blend the two samples by `t`. If not, the
-  previous frame saw something in front of it: take the newest frame's sample alone.
-- **Disocclusion fill from depth (B1, roadmap A2).** When the solve does not converge, an occluder
-  moved off `q` between `t` and the newest frame, and the previous frame is where `q` was visible.
-  Solve from the previous frame with its forward motion, which is its own depth reprojected through
-  the inverse of the newest frame's camera step (camera motion only; exact for static surfaces).
-  Where that converges, the previous frame supplies the pixel; where neither does, the farther of
-  the two candidates (the background) wins, as today's `behind` rule picks.
+  `a = advance` to extrapolate.
+- **Interpolation (B1, as built in `present/game_motion_warp.h`).** Two solves per pixel: from the
+  newest frame with `a = -(1 - t)` on its guide, and from the previous frame with `a = t` on the
+  previous guide, its own motion reversed standing for its forward motion (constant velocity).
+  - The newest frame's solve converged, and the previous one did not or found the same surface
+    (nearness within 10%) or a farther one: the newest frame's point, mixed by `t` with the same
+    point in the previous frame, `p + m(p)` (exact by the guide's definition), where that frame's
+    nearness there says it saw the point; else the newest frame's point alone.
+  - Both converged on different surfaces and the previous frame's is nearer: it is in front at time
+    `t` (an occluder's leading edge) and the previous frame supplies the pixel alone.
+- **Disocclusion fill from depth (B1, roadmap A2).** Only the previous frame's solve converged: an
+  occluder moved over `q` in the newest frame, and the previous frame, which saw behind it,
+  supplies the pixel. Neither converged: the farther of the two solves' last estimates (the
+  background) wins, as today's `behind` rule picks.
+- **Later: the exact forward motion.** The previous frame's forward motion is its own depth
+  reprojected through the inverse of the newest frame's camera step (camera motion only; exact for
+  static surfaces), which needs the camera matrices beside the guide. B1's constant velocity is
+  right for steady camera motion and wrong where it turns or stops within one real frame interval.
 - **Extrapolation (B2).** Ahead of the newest frame nothing has seen what the camera will reveal,
   except where the camera's own translation reveals what the previous frame showed (parallax): the
   same reprojection fills those pixels; the rest keep today's background rule.
@@ -262,7 +270,7 @@ moved, from `shown_frames`), so both arms of the target can be measured on the o
 
 | Step | Switch | What |
 |---|---|---|
-| B1 | `EDEN_NX2_FG_GAME_MOTION=1` | With `EDEN_NX2_FLUID_INTERP`: in-between frames from the guide and the depth fill (3.2) instead of the optical-flow chain; the guide is made without `EDEN_NX2_EXTRAPOLATE`; the previous real frame's guide is kept |
+| B1 | `EDEN_NX2_FG_GAME_MOTION=1` | With `EDEN_NX2_FLUID_INTERP`: in-between frames from the guide and the depth fill (3.2) instead of the optical-flow chain; the guide is made without `EDEN_NX2_EXTRAPOLATE`; each real frame's guide is copied. As built, the optical flow still runs as the fallback for frames without two guides; skipping it when a batch needs none is the next step |
 | B2 | `EDEN_NX2_FG_GAME_MOTION=2` | B1, and extrapolated frames (`EDEN_NX2_FLUID` without interpolation) take the parallax fill |
 | B3 | debug server `input_latency` | the onset probe of 3.5 |
 | B4 | `EDEN_NX2_FG_GAME_MOTION` with a DLSS-contract game | the second provider (3.1); measured once such a game has a bench scene |
@@ -287,7 +295,7 @@ python -I tools/bench/bench.py suite tools/bench/suites/game-network.json @commo
 | `game-network.json` | this design (A0) | network on: software, shared-memory software, 8x16x16; No sharpening as the floor |
 | `game-network-a1.json` | A1 | 8x16x16 alone, then with each A1 switch, then all |
 | `game-network-render-low.json` | A4 | Max Resolution off at a pinned step with the network on, against the preset |
-| `game-motion-fg.json` | B1 | `FLUID_INTERP` with optical flow against B1; `FLUID=2` extrapolation with and without B2; fullscreen, pacing counters on |
+| `game-motion-fg.json` | B1 | `FLUID_INTERP` with optical flow against B1, and extrapolation as the latency reference; the 120 Hz set's frame generation pinned, fullscreen, pacing counters on (B2 adds its arm) |
 
 What counts:
 

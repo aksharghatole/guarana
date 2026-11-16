@@ -666,6 +666,12 @@ constexpr VkFormat EFFECTS_FORMAT = VK_FORMAT_R8_UNORM;
 constexpr VkFormat BIAS_FORMAT = VK_FORMAT_R16_SFLOAT;
 constexpr VkFormat GUIDE_FORMAT = VK_FORMAT_R16G16B16A16_SFLOAT;
 
+/// EDEN_NX2_FG_GAME_MOTION copies each guide (GameMotionInterpolation::Push).
+VkImageUsageFlags GuideCopyUsage() {
+    return GameMotionRequested() ? VkImageUsageFlags{VK_IMAGE_USAGE_TRANSFER_SRC_BIT}
+                                 : VkImageUsageFlags{0};
+}
+
 vk::Image CreateOcarinaImage(MemoryAllocator& allocator, VkExtent2D extent, VkFormat format,
                             VkImageUsageFlags usage) {
     return allocator.CreateImage(VkImageCreateInfo{
@@ -867,7 +873,8 @@ struct OcarinaUpscaler::Impl {
         }
         guide_frame.reset();
         guide = CreateOcarinaImage(allocator, extent, GUIDE_FORMAT,
-                                   VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT);
+                                   VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
+                                       GuideCopyUsage());
         guide_view = CreateOcarinaView(device, *guide, GUIDE_FORMAT);
         guide_extent = extent;
     }
@@ -1009,7 +1016,10 @@ std::optional<ExtrapolationSource> OcarinaUpscaler::Extrapolation(u64 frame) con
     if (state.guide_frame != frame || state.Failed()) {
         return std::nullopt;
     }
-    return ExtrapolationSource{.guide = *state.guide_view, .cut = state.guide_cut};
+    return ExtrapolationSource{.guide = *state.guide_view,
+                               .guide_image = *state.guide,
+                               .guide_extent = state.guide_extent,
+                               .cut = state.guide_cut};
 }
 
 bool OcarinaUpscaler::Record(VkImageView color, VkImageView depth, VkImageView target, VkExtent2D extent,
@@ -1027,7 +1037,7 @@ bool OcarinaUpscaler::Record(VkImageView color, VkImageView depth, VkImageView t
     if (!transform || !std::isfinite(projection_y) || projection_y < 0.01f) {
         return false;
     }
-    const bool extrapolate = ExtrapolationRequested();
+    const bool extrapolate = MotionGuideRequested();
     if (extrapolate) {
         state.PrepareGuide(extent); // before anything is queued: a resize waits for the GPU
     }
@@ -1274,7 +1284,10 @@ std::optional<ExtrapolationSource> OcarinaMotionGuide::Extrapolation(u64 frame) 
     if (impl->frame != frame) {
         return std::nullopt;
     }
-    return ExtrapolationSource{.guide = *impl->guide_view, .cut = impl->cut};
+    return ExtrapolationSource{.guide = *impl->guide_view,
+                               .guide_image = *impl->guide,
+                               .guide_extent = impl->guide_extent,
+                               .cut = impl->cut};
 }
 
 bool OcarinaMotionGuide::Record(VkImageView depth, VkExtent2D extent, const Matrix& current,
@@ -1299,7 +1312,8 @@ bool OcarinaMotionGuide::Record(VkImageView depth, VkExtent2D extent, const Matr
         state.scene_extent = extent;
         state.guide = CreateOcarinaImage(state.allocator, state.guide_extent, GUIDE_FORMAT,
                                          VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
-                                             VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT);
+                                             VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
+                                             GuideCopyUsage());
         state.guide_view = CreateOcarinaView(state.device, *state.guide, GUIDE_FORMAT);
     }
 

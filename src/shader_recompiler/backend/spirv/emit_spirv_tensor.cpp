@@ -5,7 +5,11 @@
 #include <array>
 #include <optional>
 #include <span>
+#include <string>
+#include <string_view>
 #include <vector>
+
+#include <fmt/format.h>
 
 #include "shader_recompiler/backend/spirv/emit_spirv.h"
 #include "shader_recompiler/backend/spirv/emit_spirv_instructions.h"
@@ -166,18 +170,63 @@ std::optional<u32> SoftwareMatrixScratchOffset(const Profile& profile,
 }
 
 // Shared memory words per subgroup for the cooperative HMMA tiles A, B and C (128 words each). The
-// 8-row matrices of Intel's 8x16x16 add a second B tile, for the upper K half of a K=16 product.
+// 8-row matrices of Intel's 8x16x16 add a second B tile, for the upper K half of a K=16 product,
+// unless that product runs at once (EDEN_NX2_HMMA_K16_ONCE).
 u32 CooperativeScratchWordsPerSubgroup(const Profile& profile) {
-    return profile.support_cooperative_hmma_16x16x16 ? 384U : 512U;
+    return profile.support_cooperative_hmma_16x16x16 || profile.cooperative_hmma_k16_once ? 384U
+                                                                                         : 512U;
+}
+
+// Whether an HMMA's accumulator is the zero register: the translator builds it from two zero
+// immediates (tensor_mul_add.cpp).
+bool IsZeroAccumulator(const IR::Value& value) {
+    if (value.IsImmediate()) {
+        return false;
+    }
+    const IR::Inst* const inst{value.InstRecursive()};
+    if (inst->GetOpcode() != IR::Opcode::CompositeConstructU32x2) {
+        return false;
+    }
+    for (size_t index = 0; index < 2; ++index) {
+        const IR::Value word{inst->Arg(index)};
+        if (!word.IsImmediate() || word.U32() != 0) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// Whether two HMMAs multiply the same A registers: the same four values, whatever composite holds
+// them.
+bool SameMatrixA(const IR::Value& lhs, const IR::Value& rhs) {
+    if (lhs.IsImmediate() || rhs.IsImmediate()) {
+        return false;
+    }
+    const IR::Inst* const left{lhs.InstRecursive()};
+    const IR::Inst* const right{rhs.InstRecursive()};
+    if (left == right) {
+        return true;
+    }
+    if (left->GetOpcode() != IR::Opcode::CompositeConstructU32x4 ||
+        right->GetOpcode() != IR::Opcode::CompositeConstructU32x4) {
+        return false;
+    }
+    for (size_t index = 0; index < 4; ++index) {
+        if (left->Arg(index) != right->Arg(index)) {
+            return false;
+        }
+    }
+    return true;
 }
 
 // One HMMA.16816.F16 (or .1688 with zero upper halves) of a 32-lane warp on 16x16x16 matrices: the
 // NVIDIA fragments go to row-major A, column-major B (columns 8-15 zero) and row-major C tiles in
 // shared memory, one cooperative-matrix multiply-add replaces the per-lane emulation, and each lane
 // reads its two D words back from where it wrote C. With 8-row matrices (Intel's 8x16x16) the top
-// and bottom halves of A and C are two products with the same B.
+// and bottom halves of A and C are two products with the same B. With zero_c the accumulator is
+// the zero register: the first products start from types.zero_accumulator and C is not stored.
 Id EmitCooperativeTensorMulAdd(EmitContext& ctx, const CooperativeHmmaTypes& types,
-                               u32 scratch_word, Id a, Id b, Id c, u32 depth) {
+                               u32 scratch_word, Id a, Id b, Id c, u32 depth, bool zero_c) {
     const Id u32ty = ctx.U32[1];
     const auto imm = [&](u32 value) { return ctx.Const(value); };
     const auto add = [&](Id lhs, Id rhs) { return ctx.OpIAdd(u32ty, lhs, rhs); };
@@ -194,8 +243,8 @@ Id EmitCooperativeTensorMulAdd(EmitContext& ctx, const CooperativeHmmaTypes& typ
     // the same), but one K=16 matrix product rounds once. On 8-row matrices a K=16 HMMA is
     // therefore two products, with B's upper K half zero and then its lower half zero, so the fp16
     // accumulator in between gives the guest's midpoint rounding. Only B is split. K=8 and the
-    // 16-row paths keep one product.
-    const bool split_k = depth == 16 && types.rows == 8;
+    // 16-row paths keep one product, and so does EDEN_NX2_HMMA_K16_ONCE, which rounds once.
+    const bool split_k = depth == 16 && types.rows == 8 && !ctx.profile.cooperative_hmma_k16_once;
     const Id tile_b_high = split_k ? add(base, imm(384)) : Id{};
     const Id g = ctx.OpShiftRightLogical(u32ty, lane, imm(2));
     const Id t = ctx.OpBitwiseAnd(u32ty, lane, imm(3));
@@ -222,8 +271,10 @@ Id EmitCooperativeTensorMulAdd(EmitContext& ctx, const CooperativeHmmaTypes& typ
         store(tile_b_high, add(lane, imm(64)), ctx.u32_zero_value);
         store(tile_b_high, add(lane, imm(96)), ctx.u32_zero_value);
     }
-    store(tile_c, row_lo, ctx.OpCompositeExtract(u32ty, c, 0));
-    store(tile_c, row_hi, ctx.OpCompositeExtract(u32ty, c, 1));
+    if (!zero_c) {
+        store(tile_c, row_lo, ctx.OpCompositeExtract(u32ty, c, 0));
+        store(tile_c, row_hi, ctx.OpCompositeExtract(u32ty, c, 1));
+    }
     SubgroupBarrier(ctx);
     const Id stride = imm(8);
     const auto visible = ctx.SharedMemoryAccess(spv::MemoryAccessMask::MakePointerVisible);
@@ -252,7 +303,10 @@ Id EmitCooperativeTensorMulAdd(EmitContext& ctx, const CooperativeHmmaTypes& typ
                 matrix_b = load(types.matrix_b, k_half == 0 ? tile_b : tile_b_high,
                                 LayoutColumnMajor);
             }
-            const Id matrix_c = load(types.matrix_c, rows_c, LayoutRowMajor);
+            // A second K half reads the first one's fp16 results, also after a zero start.
+            const Id matrix_c = zero_c && k_half == 0
+                                    ? types.zero_accumulator
+                                    : load(types.matrix_c, rows_c, LayoutRowMajor);
             // OpCooperativeMatrixMulAddKHR and OpCooperativeMatrixStoreKHR %pointer %object
             // %layout %stride %memory_operands after PatchCooperativeHmma.
             const Id matrix_d = ctx.OpSelect(types.matrix_c, matrix_a, matrix_b, matrix_c);
@@ -337,6 +391,72 @@ bool UsesCooperativeMatrix(const Profile& profile, const IR::Program& program) {
 
 bool UsesSoftwareMatrixSharedMemory(const Profile& profile, const IR::Program& program) {
     return SoftwareMatrixScratchOffset(profile, program).has_value();
+}
+
+namespace {
+// Why a program with tensor instructions keeps the software path on a device with matrices.
+std::string_view WhyNoCooperativeMatrix(const Profile& profile, const IR::Program& program) {
+    if (!profile.support_cooperative_hmma && !profile.support_cooperative_hmma_16x16x16 &&
+        !profile.support_cooperative_hmma_8x16x16) {
+        return "the device lists no cooperative matrix shape for it";
+    }
+    if (program.stage != Stage::Compute) {
+        return "not a compute program";
+    }
+    if (program.workgroup_size[0] == 0 || program.workgroup_size[0] % GUEST_WARP_LANES != 0) {
+        return "its workgroup rows leave a 32-lane warp unfilled";
+    }
+    if (program.info.requires_coherent_global_memory ||
+        program.info.requires_coherent_image_memory) {
+        return "it needs coherent memory, which the Vulkan memory model has no decoration for";
+    }
+    if (profile.support_cooperative_hmma) {
+        return "the 16x8x16 path takes K=16 only";
+    }
+    return "its scratch would pass the device's shared memory limit";
+}
+} // Anonymous namespace
+
+std::string DescribeTensorProgram(const Profile& profile, const IR::Program& program) {
+    u32 k16{}, k8{}, zero_c{}, same_a{};
+    for (const auto* block : program.blocks) {
+        const IR::Inst* previous{};
+        for (const auto& inst : block->Instructions()) {
+            if (inst.GetOpcode() != IR::Opcode::TensorMulAdd) {
+                continue;
+            }
+            ++(inst.Flags<u32>() == 8 ? k8 : k16);
+            zero_c += IsZeroAccumulator(inst.Arg(2)) ? 1U : 0U;
+            same_a += previous != nullptr && SameMatrixA(previous->Arg(0), inst.Arg(0)) ? 1U : 0U;
+            previous = &inst;
+        }
+    }
+    if (k16 + k8 == 0) {
+        return {};
+    }
+    std::string path;
+    if (UsesCooperativeHmma(profile, program)) {
+        path = k8 == 0 ? "16x8x16 cooperative matrices"
+                       : "16x8x16 cooperative matrices, K=8 in software";
+    } else if (FindCooperativeHmmaScratch(profile, program)) {
+        path = fmt::format("{} cooperative matrices through shared memory{}{}",
+                           profile.support_cooperative_hmma_16x16x16 ? "16x16x16" : "8x16x16",
+                           profile.cooperative_hmma_zero_c ? ", zero accumulators skip C" : "",
+                           profile.cooperative_hmma_k16_once && !profile.support_cooperative_hmma_16x16x16
+                               ? ", K=16 at once"
+                               : "");
+    } else {
+        path = fmt::format("software, {} ({})",
+                           SoftwareMatrixScratchOffset(profile, program)
+                               ? "operands gathered through shared memory"
+                               : "operands shuffled",
+                           WhyNoCooperativeMatrix(profile, program));
+    }
+    return fmt::format("{} HMMA ({} K=16, {} K=8), {} from a zero accumulator, {} with the "
+                       "previous HMMA's A in their block; workgroup {}x{}x{}, {} shared bytes: {}",
+                       k16 + k8, k16, k8, zero_c, same_a, program.workgroup_size[0],
+                       program.workgroup_size[1], program.workgroup_size[2],
+                       program.shared_memory_size, path);
 }
 
 std::optional<u32> ReserveSoftwareMatrixScratch(const Profile& profile, IR::Program& program) {
@@ -607,8 +727,15 @@ Id EmitTensorMulAdd(EmitContext& ctx, IR::Inst* inst, Id a, Id b, Id c) {
         throw NotImplementedException("Unsupported matrix multiply depth");
     }
     if (ctx.tensor_scratch_word) {
+        // EDEN_NX2_HMMA_ZERO_C: the zero matrix is made once, by the first HMMA that needs it, so
+        // a program without one keeps its SPIR-V.
+        const bool zero_c{ctx.profile.cooperative_hmma_zero_c && IsZeroAccumulator(inst->Arg(2))};
+        if (zero_c && !Sirit::ValidId(ctx.cooperative_hmma->zero_accumulator)) {
+            ctx.cooperative_hmma->zero_accumulator = ctx.ConstantComposite(
+                ctx.cooperative_hmma->matrix_c, ctx.ConstantNull(ctx.cooperative_hmma->float16));
+        }
         return EmitCooperativeTensorMulAdd(ctx, *ctx.cooperative_hmma, *ctx.tensor_scratch_word, a,
-                                           b, c, depth);
+                                           b, c, depth, zero_c);
     }
     if (depth == 16 && ctx.cooperative_hmma) {
         return EmitCooperativeHmma(ctx, *ctx.cooperative_hmma, ctx.U32[1], ctx.U32[2], a, b, c);
