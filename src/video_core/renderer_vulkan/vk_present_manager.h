@@ -324,6 +324,11 @@ private:
 
     void NoteShownFrame();
 
+    /// One line per swapchain (re)creation: the display the window is on and its refresh rate,
+    /// the present mode and image count, EDEN_NX2_FLUID and Windows' GPU scheduling. Also keeps
+    /// the refresh rate for EDEN_NX2_SHOWN_STATS.
+    void LogPresentSetup(const char* when);
+
     /// The debug server's shown_frames: notes the frame just presented (`slot` 0 when shown in
     /// arrival order). Called only while VideoCore::Nx2ShownFrames::Armed().
     void NoteShownCapture(const Frame* frame, u64 slot, std::string_view presenter);
@@ -391,6 +396,8 @@ private:
     bool fluid_queue_mismatch_logged{};
     std::vector<Frame> frames;
     std::vector<f32> shown_intervals; ///< EDEN_NX2_SHOWN_STATS, present thread only
+    /// The window's display rate as of the last swapchain (re)creation; 0 when unknown.
+    std::atomic<double> display_refresh_hz{};
     std::chrono::steady_clock::time_point shown_last{};
     std::chrono::steady_clock::time_point shown_window{};
     boost::container::deque<Frame*> present_queue;

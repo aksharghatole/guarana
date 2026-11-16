@@ -1836,6 +1836,29 @@ class SuiteTest(RunCase):
             for name in switches:
                 self.assertIn(f"`{name}`", documented)
 
+    def test_shipped_presenter_ab_suite(self):
+        args, defaults = self.suite_args(os.path.join(HERE, "suites", "presenter-ab.json"))
+        plans, compare_to = bench.load_suite(args.suite, args, defaults)
+        self.assertEqual(len(plans), 1)
+        plan = plans[0]
+        self.assertEqual((plan.suite, plan.scene["name"]), ("presenter-ab", "oot-kokiri-forest"))
+        fluid = {"EDEN_NX2_FLUID": "1", "EDEN_NX2_SHOWN_STATS": "1"}
+        env = {variant["name"]: variant.get("env") or {} for variant in plan.variants}
+        self.assertEqual(env, {
+            "fifo": {**fluid, "EDEN_NX2_PRESENT_MODE": "fifo"},
+            "immediate": {**fluid, "EDEN_NX2_PRESENT_MODE": "immediate"},
+            "fifo-fg": {**fluid, "EDEN_NX2_PRESENT_MODE": "fifo"},
+            "immediate-fg": {**fluid, "EDEN_NX2_PRESENT_MODE": "immediate"}})
+        frame_gen = {variant["name"]: variant["settings"]["Renderer"]["frame_gen"] for variant in plan.variants}
+        self.assertEqual(frame_gen, {"fifo": False, "immediate": False, "fifo-fg": True, "immediate-fg": True})
+        self.assertTrue(all(variant["fullscreen"] and variant["pacing"] for variant in plan.variants))
+        self.assertTrue(all(compare_to[("oot-kokiri-forest", name)] == "fifo" for name in env))
+        with open(os.path.join(HERE, "..", "..", "docs", "switches.md"), encoding="utf-8") as file:
+            documented = file.read()
+        for switches in env.values():
+            for name in switches:
+                self.assertIn(f"`{name}`", documented)
+
     def test_shipped_game_network_a1_suite(self):
         args, defaults = self.suite_args(os.path.join(HERE, "suites", "game-network-a1.json"))
         plans, compare_to = bench.load_suite(args.suite, args, defaults)
