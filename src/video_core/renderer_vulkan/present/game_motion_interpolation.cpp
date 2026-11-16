@@ -22,6 +22,7 @@ constexpr u32 FLAG_DEBUG = 2;
 constexpr u32 FLAG_HUD_LINEAR = 4;
 constexpr u32 FLAG_HUD_EXACT = 8;
 constexpr u32 FLAG_HUD_DILATE = 32;
+constexpr u32 FLAG_HUD_FILL = 64;
 constexpr u32 SAMPLED_BINDINGS = 6;
 constexpr u32 OUTPUT_BINDING = 6;
 constexpr u32 GROUP_SIZE = 8;
@@ -200,6 +201,7 @@ void GameMotionInterpolation::Generate(const Device& device, Scheduler& schedule
         return value != nullptr && std::strtoul(value, nullptr, 10) != 0;
     }();
     static const bool dilate_hud = GameMotionFlag("EDEN_NX2_EXTRAPOLATE_HUD_DILATE", true);
+    static const bool fill_hud = GameMotionFlag("EDEN_NX2_EXTRAPOLATE_HUD_FILL", false);
     static const bool keep_hud = GameMotionFlag("EDEN_NX2_EXTRAPOLATE_HUD", true);
 
     if (!descriptor_pool) {
@@ -250,6 +252,7 @@ void GameMotionInterpolation::Generate(const Device& device, Scheduler& schedule
         .t = t,
         .flags = (has_hud ? FLAG_HUD : 0) | (debug ? FLAG_DEBUG : 0) |
                  (has_hud && dilate_hud ? FLAG_HUD_DILATE : 0) |
+                 (has_hud && fill_hud ? FLAG_HUD_FILL : 0) |
                  (has_hud && newest_source->hud_reference_linear ? FLAG_HUD_LINEAR : 0) |
                  (has_hud && newest_source->hud_exact ? FLAG_HUD_EXACT : 0),
     };
