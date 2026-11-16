@@ -57,6 +57,12 @@ GPU_OPTIONS = {
     "AMD Ryzen Z1 / Z2 (handheld)": ("AMD Ryzen Z1 / Z2", "amd", "integrated"),
     "Steam Deck (AMD, handheld)": ("Steam Deck", "amd", "integrated"),
     "Other AMD integrated": ("AMD integrated", "amd", "integrated"),
+    "Qualcomm Adreno X1 / X2 (Snapdragon X laptops)": ("Qualcomm Adreno X1 / X2", "qualcomm", "integrated"),
+    "Qualcomm Adreno 8xx (Snapdragon 8 Elite and newer)": ("Qualcomm Adreno 8xx", "qualcomm", "integrated"),
+    "Qualcomm Adreno 7xx (Snapdragon 8 Gen 1 to 8 Gen 3)": ("Qualcomm Adreno 7xx", "qualcomm", "integrated"),
+    "Qualcomm Adreno 6xx or older (Snapdragon 865, 888, 8cx)": ("Qualcomm Adreno 6xx or older", "qualcomm",
+                                                                "integrated"),
+    "Other Android GPU (Mali, Xclipse, PowerVR)": ("Android GPU", "other", "integrated"),
     "Intel Arc discrete (A or B series)": ("Intel Arc A / B series", "intel", "discrete"),
     "NVIDIA RTX 50 series": ("NVIDIA RTX 50 series", "nvidia", "discrete"),
     "NVIDIA RTX 40 series": ("NVIDIA RTX 40 series", "nvidia", "discrete"),
@@ -81,6 +87,8 @@ def gpu_labels(option):
         labels.add("amd-igpu")
     if re.search(r"(?i)handheld", option):
         labels.add("handheld")
+    if re.search(r"(?i)qualcomm|adreno|snapdragon|android", option):
+        labels.add("arm64")
     return labels
 
 

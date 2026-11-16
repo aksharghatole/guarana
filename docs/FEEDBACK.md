@@ -8,7 +8,7 @@ itself.
 flowchart TD
     A["Player or tester<br/>launcher or in-app report"] -->|"opens the issue form, text fields prefilled"| B["Issue form<br/>device-report, crash, game bug, perf idea, agent task"]
     B --> C{"Bots on new and edited issues"}
-    C -->|"triage.yml"| D["Labels: stutter, frame-pacing, boot-time, Crash,<br/>intel-arc, amd-igpu, handheld<br/>one polite request for a missing log<br/>agent-ready when the acceptance test is filled"]
+    C -->|"triage.yml"| D["Labels: stutter, frame-pacing, boot-time, Crash,<br/>intel-arc, amd-igpu, handheld, arm64<br/>one polite request for a missing log<br/>agent-ready when the acceptance test is filled"]
     C -->|"label-issues.yml"| D2["Labels: game, GPU vendor, OS, regression"]
     C -->|"ingest-reports.yml, device reports"| E["Comment with the parsed row or what to fix<br/>pull request updating site/data/community.json"]
     E -->|"a maintainer reviews and merges"| F["Community leaderboard<br/>benchmarks.html, deployed by pages.yml"]
@@ -83,7 +83,7 @@ Runs once per new issue, reads only the reporter's own words, and adds labels:
 | Label | When |
 |---|---|
 | `stutter`, `frame-pacing`, `boot-time`, `Crash` | The title or the answers say so: "stutters", "uneven frame pacing", "takes 3 minutes to boot", "crashes". Negated mentions ("no crashes", "stutter-free") do not count, and neither do headings, pasted logs or code |
-| `intel-arc`, `amd-igpu`, `handheld` | The "Graphics card" and "Form factor" answers, by the same tests as `label-issues.yml`. Without a specific GPU answer, device names in the text (Arc 140V, 780M, Steam Deck, ROG Ally) |
+| `intel-arc`, `amd-igpu`, `handheld`, `arm64` | The "Graphics card" and "Form factor" answers, by the same tests as `label-issues.yml`. Without a specific GPU answer, device names in the text (Arc 140V, 780M, Steam Deck, ROG Ally, Snapdragon, Adreno, Android) |
 | `needs-info` and one comment | A crash reported without a log, through a bug form, a device report or an issue without a form. Agent tasks, performance ideas and feature requests that only mention a crash are not asked. The comment asks politely for `eden_log.txt`, says where it is and how to remove the user name from its paths, and asks for no dumps, keys or game files. `label-issues.yml` already asks when the crash form's log field is empty, so triage asks in every other case and the two never both comment |
 | `agent-ready` | An agent task whose acceptance test says something checkable (not "n/a" or "tbd"), with a goal and files, and not marked Large. `needs-triage` stays until a maintainer removes it; agents take only issues without it |
 

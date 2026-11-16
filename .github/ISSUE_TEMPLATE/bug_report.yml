@@ -77,6 +77,11 @@ body:
         - AMD Radeon 880M / 890M
         - AMD Ryzen Z1 / Z2 (handheld)
         - Other AMD integrated
+        - Qualcomm Adreno X1 / X2 (Snapdragon X laptops)
+        - Qualcomm Adreno 8xx (Snapdragon 8 Elite and newer)
+        - Qualcomm Adreno 7xx (Snapdragon 8 Gen 1 to 8 Gen 3)
+        - Qualcomm Adreno 6xx or older (Snapdragon 865, 888, 8cx)
+        - Other Android GPU (Mali, Xclipse, PowerVR)
         - Intel Arc discrete (A or B series)
         - Apple silicon
         - Other
@@ -87,7 +92,7 @@ body:
     id: gpu_driver
     attributes:
       label: GPU model and driver version
-      placeholder: "e.g. RTX 4070, NVIDIA 581.57 / RX 7800 XT, Adrenalin 25.10.1 / Steam Deck, Mesa 25.2"
+      placeholder: "e.g. RTX 4070, NVIDIA 581.57 / RX 7800 XT, Adrenalin 25.10.1 / Steam Deck, Mesa 25.2 / Adreno 740, Turnip 25.x"
     validations:
       required: true
 
@@ -97,6 +102,7 @@ body:
       label: Operating system
       options:
         - Windows 11
+        - Windows 11 on ARM (Snapdragon)
         - Windows 10
         - Linux
         - SteamOS

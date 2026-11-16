@@ -54,6 +54,9 @@
 - name: handheld
   color: "1d76db"
   description: "Handheld PCs: power limits, battery, small screens"
+- name: arm64
+  color: "0e8a16"
+  description: "ARM64 hosts: Snapdragon X laptops, Android devices, Linux on ARM"
 
 # Lanes and kinds of change
 - name: upstream-port
@@ -119,12 +122,18 @@
 - name: INTEL
   color: "0068b5"
   description: "Intel GPUs"
+- name: QUALCOMM
+  color: "3253dc"
+  description: "Qualcomm Adreno GPUs (Snapdragon)"
 - name: windows
   color: "0078d6"
   description: "Windows"
 - name: linux
   color: "fcc624"
   description: "Linux"
+- name: android
+  color: "3ddc84"
+  description: "Android"
 - name: MacOS
   color: "999999"
   description: "macOS"

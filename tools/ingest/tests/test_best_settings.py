@@ -50,6 +50,7 @@ class ClassTests(unittest.TestCase):
             (dict(gpu_option="NVIDIA RTX 30 series or older", vendor="nvidia", kind="discrete", form="Handheld"), "nvidia-rtx-laptop"),
             (dict(gpu_option="AMD RX 7000 series", vendor="amd", kind="discrete", form="Desktop"), "amd-desktop"),
             (dict(gpu_option="Other", vendor="other", kind="unknown"), "other"),
+            (dict(gpu_option="Qualcomm Adreno X1 / X2", vendor="qualcomm", form="Laptop"), "other"),
         ]
         for kwargs, expected in cases:
             with self.subTest(kwargs=kwargs):

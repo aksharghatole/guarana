@@ -74,6 +74,8 @@ HARDWARE_KEYWORDS = {
                            r"amd[ -]?(?:igpu|apu|integrated))\b"),
     "handheld": re.compile(r"(?i)\b(?:handheld|rog[ -]?ally|xbox[ -]?ally|legion[ -]?go|steam[ -]?deck|msi[ -]?claw|"
                            r"aya[ -]?neo|onexplayer|onexfly|gpd[ -]?win|zotac[ -]?zone)\b"),
+    "arm64": re.compile(r"(?i)\b(?:snapdragon|adreno|arm64|aarch64|windows[ -]on[ -]arm|android|ayn[ -]?odin|"
+                        r"retroid[ -]?pocket)\b"),
 }
 # Labels this script may add; tests/test_triage.py checks each is in .github/labels.yml.
 LABELS = tuple(KEYWORDS) + tuple(HARDWARE_KEYWORDS) + ("needs-info", "agent-ready")
