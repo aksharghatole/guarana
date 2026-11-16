@@ -1,1 +1,0 @@
-- Vulkan: add an opt-in bounded presenter event history with `EDEN_NX2_FLUID_RECREATE_TRACE` for swapchain and compositor failure diagnosis (#136).

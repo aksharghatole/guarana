@@ -5,68 +5,73 @@ where things stand, how to pick up each lane, and how a change is measured. The 
 [AGENTS.md](AGENTS.md), and how an agent finds and claims work is in
 [docs/agents/README.md](docs/agents/README.md).
 
-**Last checked: 2026-11-13, 17:42 UTC**, from branch `feat/agent-magnet`. "Observed" below means
+**Last checked: 2026-11-16, 00:40 UTC**, from branch `chore/release-v20.4.0`. "Observed" below means
 what `git` and `gh` showed at that time. Anything this file could not confirm is marked
 **(unsure)**. If you change the state of a lane, update its row in the same pull request.
 
 ## Where things stand
 
-- **`main` is v20.2.0.** `VERSION` says `20.2.0`, and the tag `v20.2.0` is on `main`'s head,
-  `0c8587d3ee`. v20.2 brings the Guarana rebrand, the new window and play modes (Smooth is
-  `EDEN_NX2_FLUID=2` with `EDEN_NX2_CADENCE=3`), Ocarina of Time smooth by default on Windows
-  integrated GPUs, opt-in pipeline library fast links (`EDEN_NX2_GPL`), and an upstream merge. The
-  details are in [CHANGELOG.md](CHANGELOG.md).
-- **The v20.2.0 release is still building.** The `release-binaries` run for the tag started at
-  17:08 UTC and was still running at 17:42 UTC. The newest published release then was v20.1.0.
-  Whether the v20.2.0 run succeeded **(unsure)**: check with
-  `gh run list -R karimalsalah/guarana --workflow release-binaries.yml`.
-- **Open pull requests:**
-  - **#58** `feat/pacing-switches`: frame pacing switches, all off by default:
-    - `EDEN_NX2_QUEUE_LIMIT`, `EDEN_NX2_FLUID_OFFSET_US`, `EDEN_NX2_FLUID_SPLIT_SUBMIT`,
-      `EDEN_NX2_FLUID_QUEUE=5` with `EDEN_NX2_FLUID_QUEUE_HOST_WAIT`, and `EDEN_NX2_BUDGET_HOLD_RES`;
-    - an exact-size borderless fullscreen window;
-    - upstream pull requests #1602 and #995.
+- **`main` is v20.4.0, tagged `v20.4.0-rc1`.** The final `v20.4.0` tag waits for the pacing run
+  below. It holds v20.3.0 plus:
+  - the merge of zortos293/Lichii `nx2` up to `99e89096cb` (67 commits, pull request #197; the
+    resolutions are listed there);
+  - six fixes ported from open upstream pull requests and Eglantine, the replay bench
+    (`tools/nx2/trace_replay.py bench`) and the driver verdict at boot (pull request #198).
 
-    Its three CI checks passed, and GitHub reported it mergeable. Its description says a paired
-    A/B of each switch in Hyrule Field on the Arc 140T is running, and that the rows go into the
-    pull request and `docs/switches.md` before any switch becomes a default. Six more commits on
-    the local branch were not pushed (FLUID at 120 Hz, `EDEN_NX2_CADENCE_DIVISOR`,
-    `EDEN_NX2_FLUID_QUEUE` 6 and 7, and two cache fixes).
-  - **#53** `docs/bug-form-device-fields` and **#54** `docs/switch-registry-nx2-13`: documentation.
-  - **Drafts #1 to #5:**
-    - #1 `exp/fluid-presenter`
-    - #2 `exp/intel-cache-safety`
-    - #3 `exp/boot-time`
-    - #4 `exp/upload-batching`
-    - #5 `exp/gm4-rebase`
-- **The work queue:** 18 open `agent-ready` issues, #6 to #46, none assigned
+  The details are in [CHANGELOG.md](CHANGELOG.md).
+- **The `upstream` mirror is at `99e89096cb`.** It was pushed by hand, because an upstream commit
+  changes a workflow file ([docs/LANES.md](docs/LANES.md), "When the sync stops"). The scheduled
+  sync continues from there and will need the same push the next time upstream touches a workflow,
+  unless `UPSTREAM_SYNC_TOKEN` is set.
+- **What the merge changed for our own code**, for whoever merges upstream next:
+  - Upstream routes each global memory access among its own candidate buffers. `EDEN_NX2_GM` bits
+    2 and 4 sit on top: a load takes its narrowed list when it has one, its route otherwise.
+  - Upstream's pass trace took the names of our per-pass GPU cost timing, which is now
+    `cost_pass_*`, `CostPass` and `ReportCostPassTimes` in `vk_scheduler`.
+  - A lookup drops a prebuilt pipeline that is still queued and the draw builds it; the async
+    boot counts such a build as ended.
+- **Open pull requests:** #195 (the Hall of fame, from the `legacy` workflow).
+- **Known problems found on 16 November:**
+  - #199: a host microphone open that never returns leaves the game without a first frame (one
+    boot in six on the measurement machine; the code path is older than the merge).
+  - The replay bench has no real rows yet: `guarana-cli --replay` now starts on Intel's Windows
+    driver, but the Hyrule Field trace recorded for it replays no frames. Whether the recording or
+    the replay drops the presents is not known.
+  - Shown-frame pacing is not settled. On warm boots in Hyrule Field, v20.3.0 showed 118 frames
+    a second with 96% within 2 ms and 12 to 27 of 1200 slots missed per 10 s; this version showed
+    102 to 110 a second, 73 to 82%, and 141 to 207 slots missed, 117 to 174 of them because the
+    present thread woke late. Another process was compiling on the machine during the later
+    runs, which is what a late wake-up looks like, but nothing separates that from a regression.
+    A quiet back-to-back decides it: the baseline twice, this version three times, with
+    `EDEN_DKB_FRAME_TRACE=1` for the GPU's busy time, which a compile disturbs far less.
+- **The work queue:** the open `agent-ready` issues
   ([the list](https://github.com/karimalsalah/guarana/issues?q=is%3Aissue%20is%3Aopen%20label%3Aagent-ready%20-label%3Aneeds-triage%20no%3Aassignee)).
+
+## Candidates from the 16 November survey
+
+Read from the open pull requests of zortos293/Lichii, Eglantine's branches and about 480 forks with
+commits of their own. None of these is measured on an integrated GPU; each needs a paired run before
+it becomes a default.
+
+| Candidate | What it is | State |
+|---|---|---|
+| `EDEN_NX2_OOT_BYPASS_SKIP=d9ee412f00ce399a` | Also skip the network's heavy dispatch while the output pass is bypassed (raphaeltorquat0/Lichii `c91d646a52`) | The switch exists: an A/B needs no code |
+| zortos293/Lichii#1903 | Host-visible buffer cache on integrated GPUs (15 to 25 fps on Adreno 830) | Read only; touches the buffer cache |
+| zortos293/Lichii#1897, #1810, #1797, #1816 | Collector waits once per pass; semaphore acquires without a drain; ASTC decode image reuse | Behind a switch, then A/B |
+| zortos293/Lichii#1832 | Marks routed stores' buffers written | Wait: it runs after `EDEN_NX2_GM` has built its narrowed lists from the read-only buffers |
+| zortos293/Lichii#1874 | Formatless image loads on Vulkan 1.3 | No effect on Intel 32.0.101.9175, which reports the feature; no evidence yet where it changes something |
+| Eglantine `662af0bfaf` (part) | `Scheduler::WaitSubmitted` woken by a counter instead of 50 us sleeps | Behind a switch, then A/B |
+| Eglantine `d1195b7d49` | Translated stages reused across pipelines that differ only in fixed state | Second wave: it sits in the shader cache |
+| Deathnetworks/Lichii `059e931f66` | Retry a failed graphics pipeline build on a later draw | Needs a thread-safe counter |
 
 ## Lanes in progress
 
-Each lane is a branch from `main` at `0c8587d3ee`. At 17:42 UTC none of these was pushed to
-`karimalsalah/guarana` except `feat/pacing-switches`. Their purpose comes from their names and
-commit subjects only. Whoever runs a lane owns the details **(unsure)**.
+No lane is open on the public repository. To start one:
 
-| Branch | Observed | Resume |
-|---|---|---|
-| `feat/pacing-switches` | Pull request #58 plus six local commits, see above | Finish the paired A/B, put the rows in #58 and `docs/switches.md`, then push and merge. A switch becomes a default only after a measured gain |
-| `feat/readme-v203` | 3 commits: the README for v20.3, an index of `docs/` in `docs/README.md`, README art in SVG | This lane owns `README.md`; link the agent docs from it, not the other way round |
-| `feat/game-booster` | No commits yet | Ask the owner what it is for **(unsure)** |
-| `feat/sign-and-ship` | No commits yet | Ask the owner; the name suggests signing and shipping the binaries **(unsure)** |
-| `feat/device-profile` | 1 commit: "common: record the device profile and its class at boot" | Related to issue #24, per-device presets **(unsure)** |
-| `feat/windows-integrations` | No commits yet | Ask the owner what it is for **(unsure)** |
-| `chore/brand-sweep` | 3 commits: Guarana names in the UI, the installer and metainfo links, the README warm-up row | Rebase on `main` before review; it touches many files, so merge it early or late, not in the middle |
-| `feat/agent-magnet` | This branch: the agent front door, the claim workflow, optional agent workflows, the MCP registry entry, this file | Merge to `main`: the claim and agent workflows only work from the default branch |
-
-To pick up a lane:
-
-1. `git fetch origin`, then `git worktree add ../wt-<lane> <branch>`. Use one worktree per lane.
-2. Read its commits (`git log main..<branch>`) and its pull request, if it has one.
-3. Rebase on `main`.
-4. Continue, keep the pull request in draft until it is measured, and update the lane's row here.
-
-A branch with no commits has its goal only with whoever started it. Ask rather than guess.
+1. `git fetch origin`, then `git worktree add ../wt-<lane> -b <branch> origin/main`. Use one
+   worktree per lane.
+2. Keep the pull request in draft until it is compiled and, for a performance change, measured.
+3. Update this file's rows in the same pull request.
 
 ## How a change is measured
 
@@ -122,7 +127,6 @@ The full rules are in [docs/BENCHMARKING.md](docs/BENCHMARKING.md) and
 
 ## Not confirmed when this was written
 
-- Whether the v20.2.0 release run finished and published its assets.
-- What `feat/game-booster`, `feat/sign-and-ship` and `feat/windows-integrations` are for, and
-  whether `feat/device-profile` is issue #24.
-- Whether the A/B for #58 has finished, and its numbers.
+- Whether the v20.4.0 release run published every platform's files: check with
+  `gh run list -R karimalsalah/guarana --workflow release-binaries.yml`.
+- The three known problems above.

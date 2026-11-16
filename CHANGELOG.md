@@ -11,6 +11,8 @@ Upstream pull request numbers refer to [Lichii](https://github.com/zortos293/Lic
 
 ## [Unreleased]
 
+## [20.4.0] - 2026-11-16
+
 ### Added
 
 - Issue forms: the crash, gameplay bug and visual bug forms now ask for the GPU driver (required, with where to find it on Intel, AMD and Linux), and the UI bug form asks for it as an optional field, as the device report form already did (issue #42).
@@ -49,6 +51,29 @@ Upstream pull request numbers refer to [Lichii](https://github.com/zortos293/Lic
 - `EDEN_NX2_FRAME_TARGET_HOTKEYS=1` (experiment, off by default): four hotkeys that set the frame generation target without opening Configure: "Frame target 30", "Frame target 40", "Frame target 60" (no default keys) and "Cycle frame target" (controller Home + Dpad Left). All can be rebound; each shows the new target over the game window for a moment, or "Frame generation is off". Targets are published atomically for the current session and do not change saved configuration (issue #35).
 - `EDEN_NX2_HMMA_FULL_SUBGROUPS=1` (experiment, off by default): a compute pipeline whose HMMA runs on cooperative matrices is created with full subgroups also when its SPIR-V is emitted by a deferred shader job, as the synchronous route already does; the flag was set only by emission, after the pipeline had copied the shader info. The SPIR-V is unchanged, and no wrong output was shown without it ([#105](https://github.com/karimalsalah/guarana/issues/105)). Not measured; plan in [docs/switches.md](docs/switches.md).
 - `EDEN_NX2_ASYNC_TRANSLATE=1` (experiment, off by default): with asynchronous shaders on and `native_async_draws` Bounded or Skip, a new native graphics pipeline whose draw may be skipped is translated on a shader job worker from environments detached from guest memory, and its draw waits within `native_pipeline_wait_ms` instead of the GPU thread translating it; from upstream pull request [#1379](https://github.com/zortos293/Lichii/pull/1379), on top of #1378. Snapshot memory is reserved before copying, unexpected worker failures retry synchronously, and stale prepass generations are invalidated. The size estimate uses `bucket_count` because `boost::unordered_flat_map` has no `capacity`. `EDEN_NX2_PREBUILD_NO_INLINE` still skips a draw whose prebuild entry is queued, without caching a null pipeline.
+- Vulkan: add an off-by-default ASTC upload flush-batching experiment for texture streaming (#136).
+- Benchmark: `tools/bench/suites/slot-compositor.json` measures the slot compositor (`EDEN_NX2_FLUID_COMPOSE`) against the baseline and its diagnostic control, then `EDEN_NX2_FG_PINGPONG`, `EDEN_NX2_FG_MEDIAN_ONCE`, `EDEN_NX2_SHOWN_GOVERNOR` and `EDEN_NX2_OOT_RENDER_SCALE=75` one at a time on top of it, fullscreen with the pacing counters. Rows from it are how these switches get a measured result ([#136](https://github.com/karimalsalah/guarana/issues/136)).
+- Changelog fragments ([#118](https://github.com/karimalsalah/guarana/issues/118)): a pull request adds `changelog.d/<slug>.<section>.md` instead of a line in `CHANGELOG.md`, so merging one pull request no longer makes every other one conflict there. `tools/ci/changelog_fragments.py` has `collect` (the `[Unreleased]` section with the fragments folded in, used by `changelog-section.sh` and the nightly notes), `check` (build-check: a pull request that changes code needs a fragment or a line under `[Unreleased]`) and `release` (`bump-version.sh` folds the fragments into the new version and deletes them). Lines already under `[Unreleased]` stay, and both forms are accepted until the next release. See [changelog.d/README.md](changelog.d/README.md).
+- Drivers: at boot the engine compares the graphics driver's version with the versions it
+  knows something about and logs the result after the `Device profile:` line. Known today:
+  NVIDIA's driver before 580.119.02 and Mesa RADV before 26.2.5, which the renderer works
+  around (the window names such a driver once per run), and Intel's Windows driver before
+  32.0.101.9175 on the Core Ultra and Arc B-series integrated families, the driver the Intel
+  numbers were measured on (logged only). Every other driver gets no verdict
+  (`Common::AssessDriver`, `docs/DEVICES.md`).
+- Added experimental slot-compositor bicubic and light sharpen filters behind
+  `EDEN_NX2_FLUID_COMPOSE_FILTER` (default off), in the existing single pass.
+  Not measured; part of #136.
+- Vulkan: add default-off `EDEN_NX2_FLUID_INTERP_PHASE` for the FSR3 chain only (other frame generation types use main's path), to map interpolated frames to their display slots using unrounded source intervals (#136, #104).
+- Vulkan: add an opt-in bounded presenter event history with `EDEN_NX2_FLUID_RECREATE_TRACE` for swapchain and compositor failure diagnosis (#136).
+- Benchmark: add explicit GM=11, GM=0 and GM=3 variants and traced twins to the iGPU switch suite.
+- Tools: `tools/nx2/trace_replay.py bench` runs a paired A/B on a recorded GPU trace: each
+  variant (switches, a build, or both) replays the same frames in turn, and the report says
+  whether its frames are the baseline's bit for bit and what a frame cost to replay. No game,
+  save or reference screenshot is needed, so the scene cannot be the wrong one
+  (`docs/nx2/gpu-trace.md`). `guarana-cli --replay` gains `--no-images` and writes `replay_ms`
+  per frame, the frame's own cost without the PNG encoding of the one before it.
+
 ### Changed
 
 - `docs/switches.md` lists the known issues of the image-changing experiments merged on 14 November (`EDEN_NX2_FG_PINGPONG`, `EDEN_NX2_OOT_BYPASS_STEP_GUARD`, `EDEN_NX2_OOT_BYPASS_SHAPE`): none has had its scene check yet, so they stay off outside paired runs. `EDEN_NX2_FLUID_COMPOSE` is on that list too: it draws at the game's internal size and scales with a bilinear pass, so the configured scaling filter does not run.
@@ -57,6 +82,32 @@ Upstream pull request numbers refer to [Lichii](https://github.com/zortos293/Lic
 - Upstream Lichii sync (through `7a4fe8e0`): solid NSZ files play, with a bounded NCZ decoder and a private disk cache (#1675, #1734) and idle readers releasing their decoder for the memory budget (#1737); Mario Kart World gets a 60 FPS mode at normal game speed with a 30 FPS fallback (#1704, two new Advanced settings); command list pages are copied again after DMA copies and clears (#1736); on Intel only divergent barriers lose their execution barrier, uniform ones are kept (Mario Kart World ANV hang, #1377, #1677).
 - Upstream Lichii sync (through `2834e34c`): the texture cache's garbage collector no longer spends its deletion budget on images it cannot evict — non-evictable CostlyLoad (ASTC) images at the oldest end of the LRU no longer starve the pass, candidates are filtered before the budget is spent, the `EDEN_NX2_TC_OLD_AGE` pass drains the emptiest VMA blocks first, and deleted images keep the block fill ratios accurate (#1731). Guarana's batched eviction downloads (`EDEN_NX2_HITCH_GC_BATCH`) and clean-first ordering are kept on top of it, with the same block accounting for batch deletions.
 - The FSR 3 scaling filter no longer allocates and clears an output-size RGBA16F history image that no pass reads (no descriptor, shader or draw ever bound it), so it saves one image of memory per filter instance and one clear at the first frame; the rendered result is unchanged (#136).
+- Launcher: a new interface. The fruit is now an eye that follows your focus and opens into the game when you press Play, and Home shows your last measured session: the share of shown frames on time, a pacing strip and the fps readouts ([#188](https://github.com/karimalsalah/guarana/issues/188)).
+- The performance overlay eases the fps, frame time, and CPU/GPU readouts toward the measured values, draws CPU and GPU meters, fills the frame-time trace, and marks a hitch when the newest frame is slower than 1.2× the median. The footer shows guest-to-wall speed and how many shaders are building. The motion timer stops while the overlay is hidden.
+- The FLUID presenter and the frame-generation cadence parse `EDEN_NX2_SHOWN_RATE` once per process instead of calling `getenv` on every vblank. The frame-generation setting is still read each time, so a UI change applies when the environment did not override it. The rate is unchanged.
+- Upstream: merged zortos293/Lichii `nx2` from `642eace1b7` to `99e89096cb` (67 commits).
+  Among them: Loading Shaders waits only for the pipelines the last two sessions used and
+  builds older ones in the background (Lichii #1803); generated-frame spacing counts from the
+  deadline, which ends Ocarina of Time locking at 11 to 17 game fps at 240 Hz with 4x frame
+  generation (Lichii #1779); images newer ones overwrote are collected at the collector's own
+  age, which ends the 16 GB growth in Ocarina of Time's Skulltula House (Lichii #1845); global
+  memory accesses are routed among their own candidate buffers (Lichii #1807, #1848, #1853);
+  large ASTC arrays decode in batches on integrated GPUs (Lichii #1823); a staging buffer
+  without memory degrades instead of aborting (Lichii #1870); Ocarina of Time's upscale passes
+  are recognised by native program key, so a lowering change no longer turns FSR and DLSS off
+  (Lichii #1871); Mario Kart World keeps GPU tick timestamps (Lichii #1817); SDL gyro survives
+  a controller reconnect (Lichii #1805); and bounds fixes in the NCZ, KIP, NPDM, IPSwitch and
+  cheat parsers.
+- `EDEN_NX2_GM`: narrowed and rebased loads (bits 2 and 4) now sit on top of upstream's
+  per-access routes: a load takes its narrowed list when it has one and its route otherwise.
+  Buffer base hoisting (bit 1) applies to both.
+- Frame trace: Guarana's per-pass GPU cost timing (`DKB gpu_pass renderer_frame=...`, the
+  debug server's `gpu_costs`) runs next to upstream's new pass trace (`DKB gpu_passes`, one
+  `DKB gpu_pass <ms>` line per pass); `tools/bench` reads the summary line only.
+- Shader cache: the log line and marker that count the pipelines admitted for the background
+  prebuild report the planned count again; it had read 0 since the v20.3 merge, which also
+  kept the "Background prebuild done" line from being logged.
+- CI: the Windows build uses ccache 4.14.3 (response-file escaping and false cache hits).
 
 ### Fixed
 
@@ -94,6 +145,63 @@ Upstream pull request numbers refer to [Lichii](https://github.com/zortos293/Lic
 - One device profile before the device ([#101](https://github.com/karimalsalah/guarana/issues/101)): the game's pacing set (Ocarina of Time on an Intel integrated GPU) is chosen from the refresh rate of the display the game's window is on, not the primary display's, and the GPU vendor is read once, by PCI vendor ID, for the settings presets and the switch defaults alike (they read it by driver ID and by PCI ID before). With one display nothing changes. The boot log's switch-defaults line names the display (`display \\.\DISPLAY2 (primary) at 144 Hz`). Not measured on a machine with two displays.
 - Debug adapter (`tools/nx2/debug_mcp.py`): with no emulator listening it says to start Guarana (guarana.exe), not Lichii, and names itself `guarana-debug`; `--call status` (a method name alone) works from PowerShell, which can drop the inner quotes of `--call '{"method":"status"}'` (Windows PowerShell 5.1, or any PowerShell through a `.cmd` wrapper), and a JSON error now says so. AGENTS.md's list of debug methods gains the nine it lacked (`sample`, `speed_limit`, `host_timing`, `autopilot`, `read_memory`, `search_memory`, `read_gpu_memory`, `input`, `input_sequence`), `docs/nx2/debug-mcp.md` gains the `trace_*` ones, and a test keeps both in step with the adapter.
 - ASTC decoding and the OpenGL unswizzle shaders no longer store texels outside the image: a block at the right or bottom edge of an image whose size is not a multiple of the block size, and workgroups rounded past the image, wrote out of range, which can corrupt other images' memory or fault the GPU on some drivers (AMD in particular). Stores inside the image are unchanged. Ported from Nolar-Hack/Lichii `eb518660ec` (Frizti), which took it from CheezerWheezer/Lichii `132cc46c9e`; not yet checked on a device.
+- Shader: the global increment and decrement loops take the storage element
+  pointer again, after the NVIDIA buffer-select merge passed the whole type.
+- Vulkan: drain background GPL optimization builds before the teardown driver pipeline cache save
+  in `~PipelineCache`, and add unit-tested shared/exclusive gating, reload drain, and unchanged
+  save skipping behind opt-in `EDEN_NX2_CACHE_SAFE=1` on Intel Windows drivers
+  ([#7](https://github.com/karimalsalah/guarana/issues/7)).
+- Frame target hotkeys: read the experiment switch once after loading the switch file instead of on every target read (#35).
+- Tests: `game_presets` binds the `SwitchDefaults` span to a named local before its range-for, so GCC 13's `-Wdangling-reference` no longer reads the default `DisplayInfo{}` argument as a destroyed temporary. The span points at the static switch arrays; behaviour is unchanged.
+- Switch registry: document the Intel 8x16x16 cooperative path and its shared-memory scratch requirement for full HMMA subgroups (#105).
+- Launcher: on an Intel integrated GPU the profile block no longer writes
+  `EDEN_NX2_FLUID=1`. That line won over Ocarina of Time's measured `FLUID=2`,
+  the same way a leftover `EXTRAPOLATE=1` turned interpolation off (#119).
+- Launcher: contain game and shader warm-up workers and their descendants in Windows jobs,
+  ending them when the launcher exits or crashes ([#172](https://github.com/karimalsalah/guarana/issues/172)).
+- Launcher: assign workers to their Windows job immediately after normal startup, document the brief pre-assignment containment gap, and fix Windows paths in the containment tests.
+- Build: MSVC can fill a solid NCZ prefix and search storage-buffer addresses,
+  and GCC can compile the query-report lambda and the tests that shadowed
+  Catch2, dynarmic, and ring-buffer names (Lichii #1768, #1763, #1762, #1761, #1760).
+- Fire Emblem 1.1.1's captured prepass opens the same replacement chain as the
+  original prepass (Lichii #1752).
+- Dump RomFS reads a loose .nup from its loader instead of looking for an
+  installed NCA (Lichii #1764).
+- Ocarina of Time: the 3D view no longer comes out white or in false colours after a load.
+  A stream buffer wrap that was refused kept the start position, so the next uploads were
+  written over bytes the GPU had not read yet (Lichii #1835).
+- Resolution scaling: images are not scaled past the device's 2D image and framebuffer limits.
+  Ocarina of Time's sun shadow map at 1.5x and 2x went over 16384 and lost the device on AMD
+  (Lichii #1890).
+- Texture cache: the retention limit follows the lowest driver budget read lately, so a budget
+  that Windows moves down and up no longer takes the process over it every few seconds
+  (Lichii #1860).
+- Memory: native compute launches clear the pending upload list, which grew for the whole
+  session in Ocarina of Time, 768 MiB after 90 minutes (Lichii #1908).
+- Moving the window during play no longer aborts with VK_INCOMPLETE: the swapchain image,
+  surface format and present mode queries are repeated (Eglantine c40fca7da4).
+- Status bar: "Building: N shader(s)" returns to zero when a compute pipeline is dropped before
+  its build ran (Lichii #1799).
+- A render target that gets no memory is left out of the framebuffer instead of being bound as the null view, which handed the driver a null attachment (an access violation on AMD's Windows driver with a small UMA carve-out). Port of [zortos293/Lichii#1766](https://github.com/zortos293/Lichii/pull/1766).
+- The pipeline prebuild's failed-translation counter takes its lock as `failed_lock`, so GCC's `-Wshadow` does not stop the build (port of [zortos293/Lichii#1759](https://github.com/zortos293/Lichii/pull/1759)).
+- Log: the file log flushes once a second, so a hang or a kill keeps the last
+  second of lines below Error (Lichii #1771).
+- DLSS panel: installing super resolution also copies `sl.common.dll` and
+  `sl.dlss.dll` (Lichii #1753).
+- GameChat: answer the camera request over CMIF and return `chat:u`'s objects
+  (Lichii #1750).
+- Ocarina FSR: on AMD the jitter offset stays non-negative so the integer viewport
+  scissor does not drop the last column and row (Lichii #1744).
+- NVIDIA: routed global memory picks its storage buffer with OpSelect instead of
+  one branch per buffer, which hung the driver (Lichii #1757, #619). Other
+  drivers keep the per-buffer chain.
+- Vulkan: report an ignored pipeline-binary override even when the driver does not offer the extension (#20).
+- Vulkan: defer zero-extent swapchains, handle failed image acquisition explicitly, and flush fatal presentation-thread errors before exiting ([#136](https://github.com/karimalsalah/guarana/issues/136)).
+- Vulkan: avoid submitting a frame twice after a failed present, and exclude queue activity
+  during the blit screen's device idle wait, including pending copy-ahead presents (#136).
+- Build: the frame-target toast test can include `qt_config.h`, so SimpleIni's
+  headers travel with `qt_common` instead of being private to that library.
+- Build: `video_core.h` includes `core/game_presets.h`, so `Core::GamePresets::DisplayInfo` is a complete type where `ApplyGameSwitchDefaults` gives it a default argument. `main` did not compile on GCC or clang-cl after the resolver changes landed ([#101](https://github.com/karimalsalah/guarana/issues/101)).
 
 ## [20.3.0] - 2026-11-14
 
