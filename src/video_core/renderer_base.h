@@ -69,6 +69,13 @@ struct DlssStatus {
     Settings::NvidiaDlssPreset preset{};
 };
 
+/// Host GPU memory this process uses and the driver's budget for it, in bytes
+struct VideoMemoryUsage {
+    u64 used{};
+    u64 budget{}; ///< 0 when the driver reports none
+    bool shared{}; ///< An integrated GPU: its device memory is system RAM
+};
+
 struct RendererSettings {
     // Screenshot
     std::atomic<bool> screenshot_requested{false};
@@ -112,6 +119,11 @@ public:
 
     /// Host GPU busy time of the last sampled frame, nullopt when it isn't measured
     [[nodiscard]] virtual std::optional<double> GetGpuBusyMs() const {
+        return std::nullopt;
+    }
+
+    /// Host GPU memory in use and the driver's budget, nullopt when the renderer cannot tell
+    [[nodiscard]] virtual std::optional<VideoMemoryUsage> GetVideoMemoryUsage() const {
         return std::nullopt;
     }
 

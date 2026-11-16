@@ -1192,4 +1192,17 @@ VideoCore::DlssStatus RendererVulkan::GetDlssStatus() const {
 }
 #endif
 
+std::optional<VideoCore::VideoMemoryUsage> RendererVulkan::GetVideoMemoryUsage() const {
+    if (!device.CanReportMemoryUsage()) {
+        return std::nullopt;
+    }
+    // As the texture cache counts them; the budget is the driver's own, without the share an
+    // integrated GPU's caches are held to.
+    return VideoCore::VideoMemoryUsage{
+        .used = device.GetDeviceMemoryUsage(),
+        .budget = device.GetDeviceHeapMemoryBudget(),
+        .shared = device.IsIntegrated(),
+    };
+}
+
 } // namespace Vulkan
