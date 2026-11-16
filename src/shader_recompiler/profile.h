@@ -133,6 +133,12 @@ struct Profile {
     /// Without either, HMMA runs through shared memory as 8x16x16 cooperative matrix products (a
     /// K=16 HMMA as two, rounding after each K=8 half, as the guest does)
     bool support_cooperative_hmma_8x16x16{};
+    /// Experiment (EDEN_NX2_HMMA_ZERO_C): on the 16x16x16 and 8x16x16 paths, an HMMA whose
+    /// accumulator is the zero register starts from a zero matrix instead of storing and loading C
+    bool cooperative_hmma_zero_c{};
+    /// Experiment (EDEN_NX2_HMMA_K16_ONCE): on the 8x16x16 path a K=16 HMMA is one product per row
+    /// half, rounding once as the 16x16x16 path does, instead of once per K=8 half
+    bool cooperative_hmma_k16_once{};
     /// Software HMMA gathers its operands from a subgroup's scratch in shared memory instead of
     /// shuffling them; the pipeline gets full subgroups of the guest's 32 lanes
     bool support_software_matrix_shared_memory{};
