@@ -6604,7 +6604,7 @@ static QPalette LichiiPalette() {
 }
 
 void MainWindow::UpdateMenuIcons() {
-    const std::array<std::pair<QAction*, const char*>, 56> icons{{
+    const std::array<std::pair<QAction*, const char*>, 57> icons{{
         {ui->action_Install_File_NAND, "download"},
         {ui->action_Load_File, "file"},
         {ui->action_Load_Folder, "folder"},
