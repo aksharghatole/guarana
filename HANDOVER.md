@@ -5,20 +5,24 @@ where things stand, how to pick up each lane, and how a change is measured. The 
 [AGENTS.md](AGENTS.md), and how an agent finds and claims work is in
 [docs/agents/README.md](docs/agents/README.md).
 
-**Last checked: 2026-11-16, 00:40 UTC**, from branch `chore/release-v20.4.0`. "Observed" below means
+**Last checked: 2026-11-16, 08:43 UTC**, from branch `docs/handover-v20.4.0-final`. "Observed" below means
 what `git` and `gh` showed at that time. Anything this file could not confirm is marked
 **(unsure)**. If you change the state of a lane, update its row in the same pull request.
 
 ## Where things stand
 
-- **`main` is v20.4.0, tagged `v20.4.0-rc1`.** The final `v20.4.0` tag waits for the pacing run
-  below. It holds v20.3.0 plus:
+- **v20.4.0 is released.** The tag `v20.4.0` is on `4fabf93048`, the commit `v20.4.0-rc1` names:
+  the release candidate became the release unchanged. Next to the 417 commits `main` gained
+  after v20.3.0, it holds:
   - the merge of zortos293/Lichii `nx2` up to `99e89096cb` (67 commits, pull request #197; the
     resolutions are listed there);
   - six fixes ported from open upstream pull requests and Eglantine, the replay bench
     (`tools/nx2/trace_replay.py bench`) and the driver verdict at boot (pull request #198).
 
   The details are in [CHANGELOG.md](CHANGELOG.md).
+- **`main` is ahead of the release** by the Ocarina of Time text speed add-ons with the
+  off-by-default built-in patches (pull request #202, Lichii #1422) and by what the add-ons page
+  says about a built-in patch (#204). They go out with the next version.
 - **The `upstream` mirror is at `99e89096cb`.** It was pushed by hand, because an upstream commit
   changes a workflow file ([docs/LANES.md](docs/LANES.md), "When the sync stops"). The scheduled
   sync continues from there and will need the same push the next time upstream touches a workflow,
@@ -30,20 +34,43 @@ what `git` and `gh` showed at that time. Anything this file could not confirm is
     `cost_pass_*`, `CostPass` and `ReportCostPassTimes` in `vk_scheduler`.
   - A lookup drops a prebuilt pipeline that is still queued and the draw builds it; the async
     boot counts such a build as ended.
-- **Open pull requests:** #195 (the Hall of fame, from the `legacy` workflow).
-- **Known problems found on 16 November:**
-  - #199: a host microphone open that never returns leaves the game without a first frame (one
-    boot in six on the measurement machine; the code path is older than the merge).
-  - The replay bench has no real rows yet: `guarana-cli --replay` now starts on Intel's Windows
-    driver, but the Hyrule Field trace recorded for it replays no frames. Whether the recording or
-    the replay drops the presents is not known.
-  - Shown-frame pacing is not settled. On warm boots in Hyrule Field, v20.3.0 showed 118 frames
-    a second with 96% within 2 ms and 12 to 27 of 1200 slots missed per 10 s; this version showed
-    102 to 110 a second, 73 to 82%, and 141 to 207 slots missed, 117 to 174 of them because the
-    present thread woke late. Another process was compiling on the machine during the later
-    runs, which is what a late wake-up looks like, but nothing separates that from a regression.
-    A quiet back-to-back decides it: the baseline twice, this version three times, with
-    `EDEN_DKB_FRAME_TRACE=1` for the GPU's busy time, which a compile disturbs far less.
+- **Open pull requests:** #195 (the Hall of fame, from the `legacy` workflow) and the four drafts
+  under "Lanes in progress".
+- **Shown-frame pacing was settled on 16 November: the upstream merge cost none.** In Hyrule
+  Field, counting only runs with no compiler running in any 5 s sample. The baseline is `main`
+  just before the merge (`7ba919b7a8`, 417 commits after v20.3.0), so the runs say what the
+  merge cost, not what changed since the v20.3.0 release:
+
+  | Build | Runs | Shown frames a second | Within 2 ms of the median | Slots missed of 1200 per 10 s |
+  |---|---|---|---|---|
+  | Before the merge | 1 | 119.8 to 119.9 | 99% | 0 to 3 |
+  | v20.4.0 (two builds of the merged code, one of them the tagged commit's) | 3 | 119.6 to 120.0 | 98 to 100% | 0 to 4 |
+  | Before the merge, with `EDEN_NX2_FLUID=2`, interpolation and a shown rate of 120 | 1 | 119.6 to 119.9 | 98 to 99% | 1 to 3 |
+  | v20.4.0 with the same switches | 1 | 119.9 to 120.0 | 99 to 100% | 0 to 1 |
+
+  The host GPU's busy time per sampled frame was 41.6 to 44.7 ms before the merge and 42.1 to
+  43.5 ms on v20.4.0, so no gain is claimed either. The 102 to 110 frames a second this file reported
+  before came from another agent session compiling on the machine: with a compiler in 14 of its
+  34 samples, the build from before the merge itself read 102.6 to 106.7 and missed up to 170
+  slots. These were lab runs,
+  not `tools/bench` rows; `tools/bench` marks such a row invalid (`background_cpu`). Before a
+  pacing run, look for `cargo`, `rustc`, `ninja` and `clang-cl` from every session on the
+  machine, not only your own.
+- **Known problems:**
+  - #199: a boot that never shows a frame, 2 of 22 boots of this version on the measurement
+    machine. In the first the host microphone open never returned. The second was the first
+    start ever from a new folder, and its log was not kept. The open's result follows the
+    folder the program runs from, not the build: a folder's first boot waits long for it (6 and
+    40 s where it then opened), and the two folders whose first boot was ended meanwhile are
+    refused at once ever since (`Error initializing cubeb stream, error: -1`, then silence).
+    Something decides per program path whether the microphone may be opened; a Windows
+    permission prompt would fit, but nobody saw one. The table is in the issue. CPU load alone
+    does not reproduce it: eight boots in a row beside sixteen busy threads all started.
+  - The replay bench has no real rows yet. `guarana-cli --replay` starts on Intel's Windows
+    driver, but the Hyrule Field trace recorded for it holds no presents: the lab script judged
+    the recording finished by the file's size and closed the game during the 3 GB snapshot. Pull
+    request #207 makes the replay refuse such a trace and the recorder report it. A new trace has
+    to be recorded: keep the game open until `trace_status` shows `requested: false`.
 - **The work queue:** the open `agent-ready` issues
   ([the list](https://github.com/karimalsalah/guarana/issues?q=is%3Aissue%20is%3Aopen%20label%3Aagent-ready%20-label%3Aneeds-triage%20no%3Aassignee)).
 
@@ -66,7 +93,16 @@ it becomes a default.
 
 ## Lanes in progress
 
-No lane is open on the public repository. To start one:
+Draft pull requests on 16 November. None has been tried in the game yet:
+
+| Lane | Branch | Pull request |
+|---|---|---|
+| A game's tweaks are listed on that game's page only (part of Eglantine #837) | `feat/per-game-fps-options` | #203 |
+| A test that fails when two built-in patches applied together touch the same bytes | `test/builtin-cave-overlap` | #205 |
+| Ask before a mod is replaced, record where it came from, warn on shared files | `feat/safer-mod-install` | #206 |
+| The replay refuses a GPU trace without presents and the recorder reports one | `fix/replay-empty-trace` | #207 |
+
+To start a lane:
 
 1. `git fetch origin`, then `git worktree add ../wt-<lane> -b <branch> origin/main`. Use one
    worktree per lane.
@@ -127,6 +163,5 @@ The full rules are in [docs/BENCHMARKING.md](docs/BENCHMARKING.md) and
 
 ## Not confirmed when this was written
 
-- Whether the v20.4.0 release run published every platform's files: check with
-  `gh run list -R karimalsalah/guarana --workflow release-binaries.yml`.
-- The three known problems above.
+- What stopped the second boot without frames (#199): the lab scripts on the measurement
+  machine now keep the log of a failed boot.
