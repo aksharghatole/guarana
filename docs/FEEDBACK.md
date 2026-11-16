@@ -119,13 +119,19 @@ rebuilds every record.
    screenshot.
 4. **Normalise.** The GPU becomes vendor and type (integrated or discrete). The driver becomes a
    version (`32.0.101.9175`, `Adrenalin 25.9.1`, `Mesa 25.2.3`), and the build becomes `v20.0.2`,
-   `nightly 2026-11-20 (1a2b3c4)` or `PR #123 test build (abc1234)`. The game gets its full title,
-   and `EDEN_NX2_*` switches and frame generation are read from the settings.
+   `nightly 2026-11-20 (1a2b3c4)` or `PR #123 test build (abc1234)`. The game gets its full title
+   and program id, and `EDEN_NX2_*` switches and frame generation are read from the settings.
+   The GPU gets the engine's GPU family (`device_class`, `tools/ingest/device_classes.py`, a copy of
+   `ClassifyGpuFamily` in `src/common/device_profile.cpp` that a test keeps in step): only an exact
+   GPU name (a `tools/bench` row's, or the launcher's `GPU: <name>.` line under "Anything else") or
+   a PCI ID gives one. The "Graphics card" answer alone gives candidates: "Intel Arc 140T / 140V"
+   is Arrow Lake-H or Lunar Lake.
 5. **Scrub.** Only named fields are kept: no free notes, game file names, screenshots, logs or mod
    names, and no reporter login. Folder paths, links, e-mail and network addresses, host names,
    `@mentions` and serial numbers (by their label: "S/N", "serial", "service tag") are replaced,
    along with the reporter's login. Model numbers, driver versions and commit hashes stay.
-6. **Write.** `site/data/community.json` holds one record per issue, keyed by its number, as one
+6. **Write.** `site/data/community.json` holds one record per issue, keyed by its number, and
+   `site/data/community-evidence.json` what they show per GPU family (below). Both go in one
    commit on top of the default branch on `bot/community-reports`, pushed with a lease. Its pull
    request is opened, updated, or closed when nothing is left to add. The pull request lists what
    changes and which reports are left out until they are fixed.
@@ -159,6 +165,26 @@ filters by GPU vendor, form factor, game and "verified scene only", and sorts by
 time, date or device. The "Verified scene" badge appears only on records with `scene_ok: true`.
 Without JavaScript, the page links the data file. The maintainers' own measurements stay in the
 tables above it (`data/benchmarks.json`).
+
+### Evidence per GPU family
+
+`site/data/community-evidence.json` (`tools/ingest/evidence.py`, a pure function of
+`community.json`; `--check` says whether the file is current) is what the reports can show for a
+per-device default ([#24](https://github.com/karimalsalah/guarana/issues/24)). Under AGENTS.md's
+rule 1 a report is one of three things:
+
+| Tier | What it is | What it shows |
+|---|---|---|
+| observed | Any listed report, manual or from the launcher | What one machine did. No scene check, no check that nothing else ran |
+| verified | A `tools/bench` row that is valid with `scene_ok: true` | Where the game was and what it ran at, on a quiet machine |
+| paired | Two verified rows of one report that differ only in switches or settings both rows set (`EDEN_NX2_GM=0` against `EDEN_NX2_GM=11`): same machine, scene, build and power source, within two hours, background CPU measured | An effect. A baseline row sets nothing (the shipped `nx2_switches.txt` may set the switch), so it pairs with nothing |
+
+The file has, per engine GPU family: reports and devices (one machine reported twice counts once);
+per family, game and build the same counts by tier and power source; per family, game, scene,
+change, shared switches, build and power source the paired effects (fps and p99 in percent, frames
+within 2 ms in points, per device and over devices), each with its issues; and the reports whose
+family is unresolved or none. Rows of different reports are never compared, absolute fps is never
+averaged, and battery stays apart from mains power. Nothing reads the file to change a default.
 
 ## 5. From data to work
 
