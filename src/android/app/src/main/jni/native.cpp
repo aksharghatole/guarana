@@ -48,6 +48,7 @@ extern "C" {
 #include "common/logging.h"
 #include "common/scm_rev.h"
 #include "common/scope_exit.h"
+#include "common/nx2_switch_file.h"
 #include "common/settings.h"
 #include "common/string_util.h"
 #include "common/thread.h"
@@ -767,7 +768,12 @@ void Java_io_github_zortos293_lichii_NativeLibrary_surfaceDestroyed(JNIEnv* env,
 
 void Java_io_github_zortos293_lichii_NativeLibrary_setAppDirectory(JNIEnv* env, jobject instance,
                                                            [[maybe_unused]] jstring j_directory) {
-    Common::FS::SetAppDirectory(Common::Android::GetJString(env, j_directory));
+    const std::string directory = Common::Android::GetJString(env, j_directory);
+    Common::FS::SetAppDirectory(directory);
+    // The EDEN_NX2_* switches (docs/switches.md) are read from the environment, which an app
+    // has no way to set: like the desktop builds, read them from nx2_switches.txt in the user
+    // folder (Open Guarana folder), before anything reads a switch.
+    Common::Nx2SwitchFile::LoadPlayerFile(std::filesystem::path{directory} / "nx2_switches.txt");
 }
 
 int Java_io_github_zortos293_lichii_NativeLibrary_installFileToNand(JNIEnv* env, jobject instance,

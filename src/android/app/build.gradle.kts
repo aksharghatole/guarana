@@ -63,7 +63,9 @@ android {
     }
 
     defaultConfig {
-        applicationId = "dev.eden.eden_emulator"
+        // Guarana's own id (the project's GitHub Pages domain), so it installs beside Eden and
+        // the other forks that kept Eden's.
+        applicationId = "io.github.karimalsalah.guarana"
         minSdk = 24
         targetSdk = 36
         versionName = getGitVersion()
@@ -134,11 +136,20 @@ android {
                 signingConfigs.getByName("default")
             }
 
+            // Without the owner's release key (docs/SIGNING.md) the APK is signed with the debug key
+            // committed here, which anyone can sign with. Such a build gets an id of its own, so the
+            // first build signed with the release key installs beside it instead of failing to
+            // update it, and nothing signed with the public key can pass for an update of that one.
+            val previewId = if (keystoreFile != null) "" else ".preview"
+            val previewName = if (keystoreFile != null) "" else " Preview"
             if (isNightly) {
-                applicationIdSuffix = ".nightly"
-                manifestPlaceholders += mapOf("appNameSuffix" to " Nightly")
+                applicationIdSuffix = ".nightly$previewId"
+                manifestPlaceholders += mapOf("appNameSuffix" to " Nightly$previewName")
             } else {
-                manifestPlaceholders += mapOf("appNameSuffix" to "")
+                if (previewId.isNotEmpty()) {
+                    applicationIdSuffix = previewId
+                }
+                manifestPlaceholders += mapOf("appNameSuffix" to previewName)
             }
 
             isMinifyEnabled = true
@@ -264,12 +275,12 @@ android {
     }
 
     productFlavors.all {
-        val currentName = manifestPlaceholders["appNameBase"] as? String ?: "Eden"
+        val currentName = manifestPlaceholders["appNameBase"] as? String ?: "Guarana"
         val suffix = if (isNightly) " Nightly" else ""
 
         // apply nightly suffix I/A
         resValue("string", "app_name_suffixed", "$currentName$suffix")
-        resValue("string", "app_name", "Eden$suffix")
+        resValue("string", "app_name", "Guarana$suffix")
     }
 
     sourceSets {
