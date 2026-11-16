@@ -186,8 +186,11 @@ jobs:
       - name: Test Linux switch discovery
         run: CXX=g++-13 python3 tools/nx2/test_switches.py
 
+      # Only pushes save: a pull request's cache could serve only that pull request, and a day of
+      # them filled the 10 GB the repository has, which evicted main's and made its next Windows
+      # build cold (65 minutes instead of 9). Pull requests restore main's newest instead.
       - name: Save dependencies and compiler objects
-        if: always()
+        if: always() && github.event_name == 'push'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: |
@@ -381,8 +384,11 @@ jobs:
         run: |
           echo "Windows test build: [$TEST_BUILD]($URL). Sign in to GitHub to download it; it is kept for 14 days." >> "$GITHUB_STEP_SUMMARY"
 
+      # Only pushes save: a pull request's cache could serve only that pull request, and a day of
+      # them filled the 10 GB the repository has, which evicted main's and made its next Windows
+      # build cold (65 minutes instead of 9). Pull requests restore main's newest instead.
       - name: Save dependencies and compiler objects
-        if: always()
+        if: always() && github.event_name == 'push'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: |

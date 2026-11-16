@@ -831,7 +831,10 @@
       const val = lerp(14.8, 22.8, eIO(cp));
       const landed = t >= EV.fps228.t;
       const numStr = (landed ? 22.8 : Math.round(val * 10) / 10).toFixed(1);
-      const wt = (s) => tw('22.8', s, 900) + 0.12 * s + tw('fps', 0.4 * s, 800);
+      // The digits are drawn in fixed-width cells (below), so size and centre the counter by those
+      // cells: measured as the string '22.8', "fps" left the vertical cut's safe area.
+      const numW = (s) => 3 * tw('0', s, 900) + tw('.', s, 900);
+      const wt = (s) => numW(s) + 0.12 * s + tw('fps', 0.4 * s, 800);
       const hs = Math.min((PORTRAIT ? 270 : SQUARE ? 215 : 280) * u, textW / (wt(1)));
       const yK = R0 + kS * 0.62;
       const yH = R0 + kS * 1.25 + hs * 0.46;
@@ -840,7 +843,7 @@
       const sc = landed ? lerp(1.18, 1, clamp(lp, 0, 1.4)) : 1;
       const dtN = t - tA;
       const ia = popA(dtN) * (1 - ex);
-      const wN = tw('22.8', hs, 900) + 0.12 * hs + tw('fps', 0.4 * hs, 800);
+      const wN = numW(hs) + 0.12 * hs + tw('fps', 0.4 * hs, 800);
       const x0 = LAND ? AX : AX - wN / 2;
       c.save();
       c.translate(0, -28 * u * ex);
@@ -978,7 +981,8 @@
       kin(c, '16.7 ms.', AX, y1, hs, t, tC, { fill: 'ember', weight: 900, sweepAt: tC + 0.1, grp: 'lh' });
       kin(c, 'Locked.', AX, y2, ls, t, tC + 0.1, { fill: PAPER, weight: 900, sweepAt: tC + 0.35, grp: 'ls' });
       const chipA = popA(dt - 0.35, 0.2);
-      const chips = ['p50 16.7 ms', 'title screen: 100% of frames within 2 ms'];
+      // The 60 Hz set's Hyrule Field result: two paired rounds on the Arc 140T (docs/switches.md, EDEN_NX2_FLUID_QUEUE).
+      const chips = ['Hyrule Field: 0 late flips', '90-99.5% of frames within 2 ms'];
       let cy = LAND ? R0 + 150 * u : y2 + ls * 0.46 + 60 * u;
       let cxL = LAND ? vis.x0 : AX;
       const cs = Math.min(31 * u, ((LAND ? safe.x1 - vis.x0 : safe.w) - 50 * u) / tw(chips[1], 1, 600, MONO));
