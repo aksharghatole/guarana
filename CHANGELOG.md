@@ -11,6 +11,65 @@ Upstream pull request numbers refer to [Lichii](https://github.com/zortos293/Lic
 
 ## [Unreleased]
 
+## [20.5.0]
+
+### Added
+
+- Tests: the built-in patch tests fail when two built-in patches that can be applied together
+  write, check or keep their state in the same bytes of a game's module: code caves, hooks and
+  state blocks. A patch and the one it replaces, and the alternatives of one group, may share
+  bytes, because only one of them is applied. The table is read through
+  `FileSys::BuiltinPatchRanges`.
+- Ocarina of Time: three new built-in add-ons, "Text Speed 2x", "Text Speed 4x" and "Text Speed
+  Instant", speed up the letters and pauses of dialogue, the fairy's hints and signs. They are
+  unchecked by default (Properties > Add-Ons), and with more than one checked the fastest
+  applies. A built-in add-on can now be off until it is checked: `[DisabledAddOns]` then holds
+  `+<name>` for it (Lichii #1422).
+
+### Changed
+
+- Add-Ons: a built-in patch is labelled "Built-in" in the Version column (it was "IPS"), with
+  "recommended" or "experimental" where that applies, and listed without "(built-in)" after its
+  name. A box under the list says in plain words what the selected built-in does and, once the
+  game has been started, whether it was applied. A ticked built-in that was not applied gets a
+  warning sign and its reason: made for another version of the game, a mod changes the same part
+  of the game, or the game's code is not what it expects. The game list shows a built-in by its
+  name alone and leaves out built-in options that nobody ticked.
+- Settings: the Mario Kart World frame-rate options (30 FPS mode, 60 FPS mode, drop to 30 FPS
+  when slow, dynamic FPS) and the Hyrule Warriors: Age of Imprisonment ones (dynamic FPS, 30 FPS
+  mode) are listed only in their own game's properties, under Adv. Graphics. They were listed in
+  Configure > Graphics > Advanced and in every other game's properties, where they do nothing. A
+  value set globally before still applies, and shows on the game's page until it is changed there.
+  The list of such settings is Eglantine's `game_tweaks` (Eglantine #837 and #844).
+- Performance overlay: the trace scrolls in real time. Each bar is one present, as wide as the
+  gap since the one before and as tall as that gap, coloured against the 120, 60 and 30 Hz
+  budgets. A 1% low sits beside the frame rate, the bars under the trace show how the gaps
+  spread, and a strip shows each guest core and the GPU threads. Readouts ease on a spring, and
+  the border flashes when a present runs past 1.2 times the median. Right-click the overlay for
+  the detailed trace (5 seconds, named cores, min, median and max fps);
+  `guarana_overlay_compact=false` is the same setting.
+- Add-Ons: importing a mod asks before it replaces a mod of the same name, which it did without
+  a word. The new mod is copied completely before the installed one goes, so a copy that fails
+  leaves the installed mod as it was. Importing from a folder no longer renames that folder, or
+  deletes a folder next to it that has the name chosen for the mod.
+- Add-Ons: each imported mod gets a `mod.json` with its name, the zip or folder it was imported
+  from and the date, shown under the list when the mod is selected. The game never reads the
+  file, and a mod that brings a `mod.json` of its own keeps it.
+- Add-Ons: an "Open Mods Folder" button opens the game's mod folder, and makes it for a game
+  that has no mods yet.
+- Add-Ons: a warning under the list names the game files that more than one ticked mod replaces
+  and the mod whose file the game gets, which is the first one in name order.
+
+### Fixed
+
+- GPU traces: `guarana-cli --replay` refuses a trace that holds no presents (`the trace has no
+  frame to replay`, exit status 1) instead of writing an empty `frames.json` and exiting 0. The
+  recorder logs an error and sets `last_error` when a recording ends before its first present,
+  which closing the game during the snapshot does, and logs a warning when it ends short of the
+  presents asked for. `trace_status` gains `last_presents`. `trace_replay.py check` runs corpus
+  entries the replay must refuse (`expect_failure`), and CI replays the sample trace written
+  without its presents (`--gpu-trace-sample <trace> --no-presents`).
+
 ## [20.4.0] - 2026-11-16
 
 ### Added
