@@ -75,6 +75,25 @@ TEST_CASE("A draw is dropped before any build only when it would be skipped with
     REQUIRE(MaySkipUnbuiltDraw(true, NativePendingMode::Bounded, true, -500));
 }
 
+TEST_CASE("Native draws into a redrawn target may skip while the pipeline builds (Eglantine #874)",
+          "[video_core][async_draw][skip_redrawn]") {
+    // A depth-tested draw writing a color target first written in an earlier frame
+    REQUIRE(Vulkan::MaySkipRedrawnNativeDraw(true, 1, true));
+    REQUIRE(Vulkan::MaySkipRedrawnNativeDraw(true, 4, true));
+    // A target the game fills once, this frame (a font atlas, a texture for later frames): waits
+    REQUIRE_FALSE(Vulkan::MaySkipRedrawnNativeDraw(true, 1, false));
+    // No depth test (Star Fox's glyphs are drawn without one): waits
+    REQUIRE_FALSE(Vulkan::MaySkipRedrawnNativeDraw(false, 1, true));
+    // Depth only, every color write masked: waits
+    REQUIRE_FALSE(Vulkan::MaySkipRedrawnNativeDraw(true, 0, true));
+    // A redrawn draw is Bounded: it waits for the build while the frame's budget lasts (a fast
+    // link of built libraries lands inside it), and is skipped once the budget is spent.
+    REQUIRE(Vulkan::DecideNativePending(Vulkan::NativePendingMode::Bounded, true, 8000) ==
+            Vulkan::NativeDrawAction::WaitTimed);
+    REQUIRE(Vulkan::DecideNativePending(Vulkan::NativePendingMode::Bounded, true, 0) ==
+            Vulkan::NativeDrawAction::Skip);
+}
+
 // Ported with EDEN_NX2_ASYNC_DISCARD=2 from Fritchii (a962f20533).
 /// EDEN_NX2_ASYNC_DISCARD=2: native draws into a target that is not recurring always wait, and
 /// the target class never makes a draw skippable that the heuristic keeps.
