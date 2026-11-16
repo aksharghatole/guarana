@@ -158,6 +158,18 @@ class BenchTest(unittest.TestCase):
         self.assertFalse(report["variants"][0]["identical_to_baseline"])
         self.assertIn("its own runs differ", trace_replay.bench_table(report)[2])
 
+    def test_a_replay_without_frames_is_not_identical(self):
+        def run(cli, trace, out, extra, switches):
+            return frames([], [])
+
+        with tempfile.TemporaryDirectory() as directory:
+            report = trace_replay.bench([{"name": "base", "cli": "cli", "switches": {}},
+                                         {"name": "other", "cli": "cli", "switches": {}}],
+                                        "scene.lxtrace", directory, repeat=1, skip=0, run=run)
+        self.assertFalse(report["variants"][0]["identical_to_baseline"])
+        self.assertFalse(report["variants"][1]["identical_to_baseline"])
+        self.assertIn("no frames", trace_replay.bench_table(report)[3])
+
     def test_older_builds_are_timed_by_ms(self):
         def run(cli, trace, out, extra, switches):
             return frames(["a", "b"], [9.0, 9.0], key="replay_ms" if cli == "new" else "other")
