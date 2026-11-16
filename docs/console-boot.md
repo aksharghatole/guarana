@@ -16,9 +16,11 @@ marks every number that does not.
 On the Arc 140T (Core Ultra 9 285H, driver 32.0.101.9175), Ocarina of Time, rows from
 `tools/bench/suites/console-boot.json`:
 
-- **Second play** (the cache the first session left): first guest frame within 10 s of the process
-  start (24.7 s today, [#46](https://github.com/karimalsalah/guarana/issues/46)). The 10 s is an
-  estimate: the sum of the savings below without their overlap.
+- **Second play** (the cache the first session left), started directly (a shortcut, the launcher,
+  `-g`) after a clean exit, as the suite starts it: first guest frame within 10 s of the process
+  start. That is an estimate, see "The boot target" below; the suite's first rows give today's
+  number on this kind of start ([#46](https://github.com/karimalsalah/guarana/issues/46)'s 24.7 s
+  was a game-list start on which the startup check ran, which pays two more costs).
 - **First play** (no emulator cache, no driver cache): no frame over 100 ms whose cause is a
   pipeline (`Nx2Stutter` causes `gfx_miss`, `compute_miss`, `pipeline_wait`) from the first frame
   to the scene, and the held-draw time to the scene (`boot_timing` `split`) under 1 s. Today's
@@ -158,13 +160,13 @@ Each is one pull request with its switch and row; "Saves" is the expected effect
 
 | Step | What | Saves | Switch | Status |
 |---|---|---|---|---|
-| M1 | `tools/bench` boot matrix: cold, second and warm caches, the baseline against each switch, one command | Makes the rest measurable | none | [#222](https://github.com/karimalsalah/guarana/pull/222) |
+| M1 | `tools/bench` boot matrix: cold, second and warm caches, the baseline against each switch, one command | Makes the rest measurable | none | Merged ([#222](https://github.com/karimalsalah/guarana/pull/222)) |
 | B1 | One Vulkan instance per boot | 3.6 s on a list launch (#46); 0.5-1 s direct (estimate) | `EDEN_NX2_VULKAN_INSTANCE_ONCE` (exists) | Measure (M1) |
 | B2 | The startup Vulkan check: make its Debug setting take effect (read it once the configuration is loaded). It stays on by default: after an unclean exit or a driver change it is what survives a crashing driver | Up to 4.1 s on a start after a killed session (#46's trace) for a player who turns it off; none after a clean exit, which skips it already | The existing setting | Next code step |
 | B3 | Map the log, decode in parallel | Part of 1.79 s (#46) | `EDEN_NX2_CACHE_MMAP` (exists) | Measure (M1) |
 | B4 | Boot builds behind the first frame, compute included | Up to 5.85 s (#46), less the builds the first frames wait for | `EDEN_NX2_BOOT_ASYNC` (exists); compute: new | Measure graphics; compute is the next code step |
 | B5 | The 4.0 s from the load to the first frame: the guest's start plus the pipelines its first frames build | Not known: the suite's `at_first_frame` (held draws and builds at the first frame) says how much is pipelines | none | Measure (M1) |
-| B6 | Save the driver pipeline cache at the end of the load on Intel (port of Lichii #1838) | The next boot finds the session's driver builds even after a crash or kill; costs 1-2 s at load end (#1838) | `EDEN_NX2_LOAD_SAVE` | [#224](https://github.com/karimalsalah/guarana/pull/224) |
+| B6 | Save the driver pipeline cache at the end of the load on Intel (port of Lichii #1838) | What the boot load built survives a crash or a kill later in the session, so the next boot's boot builds hit the driver cache. Pipelines built in play still reach the file only at exit, and a first play builds nothing at load. Costs 1-2 s at load end (#1838) | `EDEN_NX2_LOAD_SAVE` | [#224](https://github.com/karimalsalah/guarana/pull/224) |
 | B7 | Persisted SPIR-V ([X2](../ROADMAP.md#x2-persisted-spir-v)) | Translation of every cached pipeline at each boot; the share of the 5.85 s is not known (measure with `EDEN_NX2_PIPELINE_BUILD_TRACE` against the boot builds' span) | New | After B4 |
 | F1 | First-play rows: GPL on and off, async shaders, Bounded, Skip | The first-play numbers this page lacks | Settings, `EDEN_NX2_GPL=0` | Measure (M1) |
 | F2 | Library builds in parallel, waited-for builds raised, unoptimized first | Shorter stalls, not fewer | `EDEN_NX2_GPL_PARALLEL_PARTS`, `EDEN_NX2_WAIT_BOOST`, `EDEN_NX2_UNOPT_FIRST` (exist) | Measure (M1) |
@@ -173,8 +175,15 @@ Each is one pull request with its switch and row; "Saves" is the expected effect
 | F5 | Build ahead from the player's own records: queue the pipelines an earlier session first used right after the one just drawn ([A5](../ROADMAP.md#a5-shader-need-prediction)) | Builds a later area needs before it is reached, in session 2 on; not known | New | After M1 rows |
 | F6 | Build ahead from the game's files, as a background task the player starts (port of Lichii #1719) | Library driver time 220.4 s to 0.32 s after a 582 s warm-up (#1719, RX 6650 XT) | New, setting Ask/Never | Later |
 
-The boot target of 10 s is the sum of B1 (3.6 s), B2 (up to 4.1 s), B3 (part of 1.8 s) and B4 (most of
-5.9 s) taken off 24.7 s, without their overlap: an estimate, to be replaced by the suite's rows.
+**The boot target.** #46's 24.7 s is a start from the game list on which the startup check ran (the
+last session did not end cleanly, or the driver had changed): it pays the startup check (4.1 s,
+B2) and the device list's instance (3.6 s, B1). A direct start after a
+clean exit, the kind the suite measures and the launcher makes, pays neither, so it starts near
+24.7 - 7.7 = 17 s (an estimate from the same trace, not a measurement). From there, 10 s needs most
+of B4 (5.9 s of boot builds), part of B3 (1.8 s of cache reads) and some of B5; the renderer's own
+instance (3.7 s) stays unless `EDEN_NX2_BOOT_ASYNC`'s early instance overlaps it. All of this is an
+estimate, to be replaced by the suite's rows; a game-list start after a crash has the B1 and B2
+costs on top, and a first start ever pays the check (it always runs then).
 
 ## 6. Measure
 
