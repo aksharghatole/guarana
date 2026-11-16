@@ -3818,11 +3818,12 @@ void RasterizerVulkan::TracePendingCpuWrites(bool compute, std::span<const u64> 
 // The tags and reasons follow CheezyEmu's (76f03c3c03, 51eb67792f) for our upscale path.
 std::pair<const char*, const char*> RasterizerVulkan::UpscalerIdleReason() const {
     if (oot_upscaler_failed.load(std::memory_order_relaxed)) {
-        return {"UNAVAILABLE", "The upscaler could not start on this GPU or driver (the log says "
-                               "why under \"Ocarina temporal\"). The game's own upscaler draws."};
+        return {"UNAVAILABLE", "The upscaler cannot run on this GPU or driver (the log says why). "
+                               "The game's own upscaler draws."};
     }
     if (oot_upscaler_off.load(std::memory_order_relaxed)) {
-        return {"OFF", "Ocarina FSR is off (Graphics), so the game's own upscaler draws."};
+        return {"OFF", "The game's own upscaler draws: Ocarina FSR is off (Graphics), or "
+                       "EDEN_NX2_DLSS_REPLACEMENT=native asks for it."};
     }
     const char* const reason = oot_idle_reason.load(std::memory_order_relaxed);
     if (reason == nullptr) {
@@ -3854,13 +3855,17 @@ bool RasterizerVulkan::OcarinaTemporalEnabled() const {
         return *oot_backend != VideoCommon::OcarinaUpscaleBackend::Native;
     }
     oot_backend = ResolveOcarinaUpscaler(device);
-    oot_upscaler_off.store(*oot_backend == VideoCommon::OcarinaUpscaleBackend::Native,
-                           std::memory_order_relaxed);
-    if (*oot_backend == VideoCommon::OcarinaUpscaleBackend::Native &&
-        Settings::values.ocarina_fsr.GetValue() && !Fsr3Upscaler::IsSupported(device)) {
+    const bool native = *oot_backend == VideoCommon::OcarinaUpscaleBackend::Native;
+    // For the status bar: Ocarina FSR asked for but not supported here reads UNAVAILABLE, the
+    // game's own pass for any other reason OFF.
+    const bool fsr_unsupported =
+        native && Settings::values.ocarina_fsr.GetValue() && !Fsr3Upscaler::IsSupported(device);
+    oot_upscaler_off.store(native && !fsr_unsupported, std::memory_order_relaxed);
+    if (fsr_unsupported) {
+        oot_upscaler_failed.store(true, std::memory_order_relaxed);
         LOG_WARNING(Render_Vulkan, "Ocarina FSR 3.1 unsupported on this device; using native upscale");
     }
-    return *oot_backend != VideoCommon::OcarinaUpscaleBackend::Native;
+    return !native;
 }
 
 bool RasterizerVulkan::OcarinaFsrAnyStep() const {

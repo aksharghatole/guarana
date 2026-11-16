@@ -2626,6 +2626,8 @@ void MainWindow::BootGame(const QString& filename, Service::AM::FrontendAppletPa
     loading_screen->show();
 
     emulation_running = true;
+    // Hidden until the first status update says the game has the upscaler.
+    UpdateUpscaleButton();
     if (ui->action_Fullscreen->isChecked()) {
         ShowFullscreen();
     } else if (!(ui->action_Single_Window_Mode->isChecked() ? isMaximized()
@@ -5786,8 +5788,10 @@ void MainWindow::UpdateStatusBar() {
     dlss_status_label->setVisible(!dlss_status_text.isEmpty());
 
     constexpr u64 ocarina_program = 0x0400486024DEC000ULL;
-    upscale_game = QtCommon::system->GetApplicationProcessProgramID() == ocarina_program;
     const auto upscaler = QtCommon::system->GPU().Renderer().GetUpscalerStatus();
+    // A renderer without the game's upscaler (OpenGL) reports neither a name nor a reason.
+    upscale_game = QtCommon::system->GetApplicationProcessProgramID() == ocarina_program &&
+                   !(upscaler.name.empty() && upscaler.idle_tag.empty());
     upscale_running = upscaler.upscaled_frames > upscale_frames;
     upscale_frames = upscaler.upscaled_frames;
     if (!upscaler.name.empty()) {
@@ -6083,6 +6087,7 @@ void MainWindow::UpdateStatusButtons() {
     UpdateFilterText();
     UpdateAAText();
     UpdateFrameGenButton();
+    UpdateUpscaleButton();
     UpdateVolumeUI();
 }
 
