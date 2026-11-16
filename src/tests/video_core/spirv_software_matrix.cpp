@@ -944,6 +944,93 @@ TEST_CASE("The tensor log describes a program's HMMA and its path", "[video_core
     REQUIRE(Backend::SPIRV::DescribeTensorProgram(none.profile, none.program).empty());
 }
 
+namespace {
+// The component type of the accumulator matrix type: its OpTypeFloat's width.
+u32 AccumulatorWidth(const std::vector<u32>& code) {
+    const auto constants = Constants(code);
+    u32 component = 0;
+    for (const auto& words : Instructions(code, OP_TYPE_COOPERATIVE_MATRIX)) {
+        if (constants.at(words[5]) == 2) { // MatrixAccumulatorKHR
+            component = words[1];
+        }
+    }
+    for (const auto& words : Instructions(code, 22)) { // OpTypeFloat
+        if (words[0] == component) {
+            return words[1];
+        }
+    }
+    return 0;
+}
+} // namespace
+
+// EDEN_NX2_INTEL_COOP_MATRIX_8X8 (the Arc 140T lists 8x8x16 with fp32 accumulators only): each
+// HMMA is two 8x8x16 products, one per 8-row half, against the guest's own 16x8 B. A K=16 HMMA is
+// one product per half (it rounds once, as the CPU model's K16-once), so both depths emit alike.
+TEST_CASE("8x8x16 cooperative HMMA runs each HMMA as two products with fp32 accumulators",
+          "[video_core][tensor][ampere]") {
+    for (const u32 depth : {16U, 8U}) {
+        TensorProgram fixture{3, depth};
+        fixture.profile.support_cooperative_hmma_8x8x16 = true;
+        const auto code = fixture.Emit("cooperative-8x8x16-k" + std::to_string(depth));
+        RequireVulkanMemoryModel(code);
+        RequireHmmaMatrixTypes(code, 8, 8);
+        REQUIRE(AccumulatorWidth(code) == 32);
+        REQUIRE(fixture.program.info.uses_cooperative_matrix);
+        // Per HMMA: A and C for each row half, and B once.
+        REQUIRE(Instructions(code, OP_COOPERATIVE_MATRIX_LOAD).size() == 3 * 5);
+        REQUIRE(Instructions(code, OP_COOPERATIVE_MATRIX_MUL_ADD).size() == 3 * 2);
+        REQUIRE(Instructions(code, OP_COOPERATIVE_MATRIX_STORE).size() == 3 * 2);
+        // Per HMMA: after the tile stores and after the cooperative stores.
+        REQUIRE(Instructions(code, 224).size() == 3 * 2); // OpControlBarrier
+        REQUIRE(Instructions(code, 57).empty());            // OpFunctionCall
+        REQUIRE(Instructions(code, 345).empty());           // OpGroupNonUniformShuffle
+        // Two subgroups, 320 words each: A (128), B (64) and the fp32 C (128).
+        REQUIRE(fixture.program.shared_memory_size == 2 * 320 * 4);
+    }
+}
+
+TEST_CASE("8x8x16 cooperative HMMA starts a zero accumulator from one fp32 zero matrix",
+          "[video_core][tensor][ampere]") {
+    TensorProgram fixture{3, 16, true};
+    fixture.profile.support_cooperative_hmma_8x8x16 = true;
+    fixture.profile.cooperative_hmma_zero_c = true;
+    const auto code = fixture.Emit("cooperative-8x8x16-zero-c");
+    REQUIRE(AccumulatorWidth(code) == 32);
+    // The first HMMA loads no C for either row half.
+    REQUIRE(Instructions(code, OP_COOPERATIVE_MATRIX_LOAD).size() == 3 * 5 - 2);
+    u32 accumulator_type{};
+    const auto constants = Constants(code);
+    for (const auto& words : Instructions(code, OP_TYPE_COOPERATIVE_MATRIX)) {
+        if (constants.at(words[5]) == 2) {
+            accumulator_type = words[0];
+        }
+    }
+    size_t zero_matrices = 0;
+    for (const auto& words : Instructions(code, 44)) { // OpConstantComposite
+        zero_matrices += words[0] == accumulator_type ? 1 : 0;
+    }
+    REQUIRE(zero_matrices == 1);
+}
+
+TEST_CASE("Any other cooperative path wins over 8x8x16", "[video_core][tensor][ampere]") {
+    for (const bool sixteen_rows : {true, false}) {
+        TensorProgram fixture{3, 16};
+        fixture.profile.support_cooperative_hmma_8x8x16 = true;
+        fixture.profile.support_cooperative_hmma_16x16x16 = sixteen_rows;
+        fixture.profile.support_cooperative_hmma_8x16x16 = !sixteen_rows;
+        const auto code = fixture.Emit();
+        RequireHmmaMatrixTypes(code, 16, sixteen_rows ? 16 : 8);
+        REQUIRE(AccumulatorWidth(code) == 16);
+    }
+}
+
+TEST_CASE("The tensor log names the 8x8x16 path", "[video_core][tensor][ampere]") {
+    TensorProgram fixture{3, 16};
+    fixture.profile.support_cooperative_hmma_8x8x16 = true;
+    REQUIRE(Backend::SPIRV::DescribeTensorProgram(fixture.profile, fixture.program).ends_with(
+        "8x8x16 fp32-accumulator cooperative matrices through shared memory"));
+}
+
 TEST_CASE("8x16x16 cooperative HMMA falls back to the software helper",
           "[video_core][tensor][ampere]") {
     TensorProgram fixture{1, 16};

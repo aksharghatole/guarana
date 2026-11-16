@@ -14,15 +14,19 @@ It is not ready when:
 - the pull request is closed, or a draft ("not compiled yet" or "not measured yet": marking it
   ready for review is the author's signal);
 - a required check is failing, cancelled, still running or has not reported on the head commit.
-  Required are the three jobs of build-check (REQUIRED_CHECKS); the switch-registry job also counts
-  when it ran, since that workflow only runs on some changes. Pull requests that change only
-  documentation skip the two builds, and a skipped build is a pass, but only after "Detect source
-  changes" passed (a failed detection skips the builds too). --sha reads the checks of another
+  Required are the four jobs of build-check (REQUIRED_CHECKS), the changelog check among them; the
+  switch-registry job also counts when it ran, since that workflow only runs on some changes. Pull
+  requests that change only documentation skip the two builds, and a skipped build is a pass, but
+  only after "Detect source changes" passed (a failed detection skips the builds too). The changelog
+  check is skipped for the bots' branches, which is a pass too. --sha reads the checks of another
   commit, for the resolve/pr-N merge commit the resolver pushes after settling a conflict, whose
-  checks are the ones that count; --require adds a job to the required ones;
+  checks are the ones that count; the changelog check, which only a pull request's own run makes,
+  is then read from the pull request's head if that commit has none. --require adds a job to the
+  required ones;
 - the base branch (normally main) is red and the pull request lacks the `fixes-main` label. Red is
-  read from the newest commit on the base branch whose required checks have settled: a documentation
-  only commit that skipped the builds, or one still building, does not hide an earlier red;
+  read from the newest commit on the base branch whose checks (BASE_CHECKS: the required ones but the
+  changelog check, which the base branch's own commits never run) have settled: a documentation only
+  commit that skipped the builds, or one still building, does not hide an earlier red;
 - GitHub reports a merge conflict in a file other than the union files (CHANGELOG.md,
   docs/switches.md, dist/nx2_switches.txt), whose conflicts the resolver settles by keeping both
   sides. The conflicting files come from `git merge-tree` in the current repository, after fetching
@@ -46,11 +50,15 @@ FIXES_LABEL = "fixes-main"
 
 # Job names of .github/workflows/build-check.yml and switch-registry.yml (a test reads them back).
 CHANGES_JOB = "Detect source changes"
+# Runs for pull_request events only, and is skipped for the bots' branches (build-check.yml).
+CHANGELOG_JOB = "Check the changelog entry"
 BUILD_JOBS = (
     "Linux GCC 13 production build and tests",
     "Windows clang-cl production build and tests",
 )
-REQUIRED_CHECKS = (CHANGES_JOB,) + BUILD_JOBS
+REQUIRED_CHECKS = (CHANGES_JOB, CHANGELOG_JOB) + BUILD_JOBS
+# What every commit of the base branch runs, so what makes it red or green.
+BASE_CHECKS = (CHANGES_JOB,) + BUILD_JOBS
 CONDITIONAL_CHECKS = ("Check the switch registry",)
 
 BASE_COMMITS = 8  # How far back the base branch is searched for settled checks.
@@ -166,7 +174,7 @@ def judge_checks(runs, required=REQUIRED_CHECKS, conditional=CONDITIONAL_CHECKS)
     elif pending or missing:
         state = "pending"
     else:
-        builds = [name for name in required if name != CHANGES_JOB]
+        builds = [name for name in required if name not in (CHANGES_JOB, CHANGELOG_JOB)]
         state = "skipped" if builds and all(results[name] == "skipped" for name in builds) else "green"
     return {"state": state, "failing": failing, "pending": pending, "missing": missing}
 
@@ -291,10 +299,16 @@ def gate(client, number, sha=None, required=REQUIRED_CHECKS):
     pr = client.pull_request(number)
     head_sha = sha or pr["headRefOid"]
     runs, total = client.check_runs(head_sha)
+    if (head_sha != pr["headRefOid"] and CHANGELOG_JOB in required
+            and not any(run.get("name") == CHANGELOG_JOB for run in runs)):
+        # The entry is the pull request's own, and only its pull_request run checks it: a resolve/pr-N
+        # merge commit, built by another event, takes the verdict of the pull request's head.
+        head_runs, _ = client.check_runs(pr["headRefOid"])
+        runs = list(runs) + [run for run in head_runs if run.get("name") == CHANGELOG_JOB]
     head_checks = judge_checks(runs, required, CONDITIONAL_CHECKS)
-    # A job added with --require is asked of the pull request, not of the base branch: main is red or
-    # green by the checks that every commit on it runs.
-    base = base_state(client, pr["baseRefName"], REQUIRED_CHECKS)
+    # A job added with --require, and the changelog check, are asked of the pull request, not of the
+    # base branch: main is red or green by the checks that every commit on it runs.
+    base = base_state(client, pr["baseRefName"], BASE_CHECKS)
     conflicts = None
     if (pr.get("state") or "").upper() == "OPEN" and (pr.get("mergeable") or "").upper() == "CONFLICTING":
         conflicts = conflicting_files(client, pr["baseRefName"], number)

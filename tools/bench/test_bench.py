@@ -1729,6 +1729,29 @@ class SuiteTest(RunCase):
         self.assertIn("variant vrs-2x2-trace:", output.getvalue())
         self.assertEqual((self.launches, self.host.commands), ([], []))
 
+    def test_shipped_game_network_a1b_suite(self):
+        args, defaults = self.suite_args(os.path.join(HERE, "suites", "game-network-a1b.json"))
+        plans, compare_to = bench.load_suite(args.suite, args, defaults)
+        self.assertEqual(len(plans), 1)
+        plan = plans[0]
+        self.assertEqual((plan.suite, plan.scene["name"]), ("game-network-a1b", "oot-hyrule-field"))
+        base = {"EDEN_NX2_NO_PRESETS": "1", "EDEN_NX2_COST_SAMPLING": "1", "EDEN_NX2_TENSOR_LOG": "1"}
+        coop = {**base, "EDEN_NX2_INTEL_COOP_MATRIX_8X8": "1"}
+        env = {variant["name"]: variant.get("env") or {} for variant in plan.variants}
+        self.assertEqual(env, {
+            "software": base,
+            "coop-8x8": coop,
+            "coop-8x8-zero-c": {**coop, "EDEN_NX2_HMMA_ZERO_C": "1"}})
+        self.assertEqual(list(env)[0], "software")
+        for variant in plan.variants:
+            self.assertEqual(variant["settings"]["Renderer"], {"oot_anti_aliasing": 0, "frame_gen": False})
+        self.assertTrue(all(compare_to[("oot-hyrule-field", name)] == "software" for name in env))
+        with open(os.path.join(HERE, "..", "..", "docs", "switches.md"), encoding="utf-8") as file:
+            documented = file.read()
+        for switches in env.values():
+            for name in switches:
+                self.assertIn(f"`{name}`", documented)
+
     def test_shipped_game_motion_fg_suite(self):
         args, defaults = self.suite_args(os.path.join(HERE, "suites", "game-motion-fg.json"))
         plans, compare_to = bench.load_suite(args.suite, args, defaults)

@@ -124,7 +124,7 @@ barriers and products per `HMMA`), as the existing 8x16x16 tests do, and a CPU m
 arithmetic checks the rounding (2.4). The first pull request (#226) built `EDEN_NX2_TENSOR_LOG`,
 `EDEN_NX2_HMMA_ZERO_C` and `EDEN_NX2_HMMA_K16_ONCE`; `SHARE_A` and `PAIR_N` are the second.
 
-**A1b. The Arc 140T's own path (`EDEN_NX2_INTEL_COOP_MATRIX_8X8`, not built).** The guest's 16x8x16 HMMA as two 8x8x16 products (one per 8-row half) with fp32 accumulators: the B tile is the guest's 16x8 exactly, no zero columns. The accumulator rounds to fp16 where the guest's does by converting the matrix (fp32 to fp16 and back) after each K=8 half, or once per output for the fp32 variant of 2.4, whose error the CPU model already bounds. The A1 ideas (zero accumulators, a shared A) apply unchanged. Tests as for 8x16x16, on the emitted SPIR-V.
+**A1b. The Arc 140T's own path (`EDEN_NX2_INTEL_COOP_MATRIX_8X8`).** The guest's 16x8x16 HMMA as two 8x8x16 products (one per 8-row half) with fp32 accumulators: the B tile is the guest's 16x8 exactly, no zero columns, and C goes to shared memory as fp32. Each lane rounds its D values to fp16 once per HMMA: as the guest for K=8, once instead of twice for K=16 (`K16_ONCE`'s rounding, which the CPU model bounds). Exact midpoint rounding would need an fp16 accumulator type the driver does not list. `EDEN_NX2_HMMA_ZERO_C` applies; a shared A is the next step, as for A1. Built with SPIR-V tests; unverified on the hardware.
 
 **A2. Fewer passes (ports).** Lichii #864 and #1985 skip a game's network passes whose output only
 feeds a pass a replacement overwrites (measured upstream: Duskbloods on a Steam Deck 56.6 -> 40.4 ms
