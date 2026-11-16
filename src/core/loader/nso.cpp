@@ -490,4 +490,15 @@ ResultStatus AppLoader_NSO::ReadNSOModules(Modules& out_modules) {
     return ResultStatus::Success;
 }
 
+ResultStatus AppLoader_NSO::ReadMainBuildId(Core::System& system,
+                                            std::array<u8, 0x20>& build_id) {
+    NSOHeader header{};
+    if (!file || file->ReadObject(&header) != sizeof(header) ||
+        header.magic != Common::MakeMagic('N', 'S', 'O', '0')) {
+        return ResultStatus::ErrorLoadingNSO;
+    }
+    build_id = header.build_id;
+    return ResultStatus::Success;
+}
+
 } // namespace Loader
