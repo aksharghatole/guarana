@@ -168,6 +168,14 @@ to save its caches and exit; the suite sets `[UI] confirmStop=2` so no confirmat
 calls the debug server's `boot_timing` at the first frames, with the mark `scene` after the scene
 check and `end` after the measurement, and reads the copied log with `tools/nx2/cache_metrics.py`.
 
+Before the first full run: record the scene's reference with `bench.py run ... --record-reference`
+(not with the suite: there every run would record and be invalid), then a two-run smoke test,
+`--repeats 1 --only-variants baseline --cache-states cold,second`. Both rows must be valid with
+`boot.first_frame_ms` set; if the second is `second_source_incomplete`, the emulator did not save its
+driver cache on the way out (look at how its cold run ended). Start the emulator from the folder
+the suite uses once by hand first, so a first-start prompt (Windows asks once per program folder
+for the microphone, issue #199) does not hang the first boot.
+
 `--cache-states cold,warm`, `--repeats 1` and `--only-variants a,b` (the baseline always runs) run
 part of the matrix; `--dry-run` lists the runs in order with a rough length. The full
 `console-boot.json` is 78 runs, about 5 hours. A suite run's `variants_dir` adds every `.json` in a
@@ -177,7 +185,8 @@ A boot row is invalid, besides the usual reasons, when its cache was not in the 
 `cache_not_cold` (a cold run's log says records were loaded), `boot_guard` (the crash guard of the
 last boot cut this boot's builds), `cache_dir_mismatch` (the emulator used another shader cache
 folder: fix `--user-dir`), `second_source_incomplete` (its cold run was invalid or did not save the
-driver pipeline cache after its first frame), `no_boot_timing` (a build without the debug server's
+driver pipeline cache after its first frame; on a driver that keeps its own cache, NVIDIA's and
+AMD's, the emulator saves none and this is not asked), `no_boot_timing` (a build without the debug server's
 `boot_timing`), `no_log`. The suite prints one table per cache state: first frame and game shown
 (seconds since the process started), Vulkan instances created, held draws and their wait from the
 first frame to the scene, frames over 100 ms, fps.

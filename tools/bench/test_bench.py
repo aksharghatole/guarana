@@ -2657,6 +2657,35 @@ class BootSuiteTest(RunCase):
                          [("cold", ["cache_not_cold"]), ("second", ["second_source_incomplete"])])
         self.assert_caches_back()
 
+    def test_a_driver_with_its_own_cache_needs_no_saved_one(self):
+        def own_cache(env):
+            self.emulator_runs(env)
+            path = os.path.join(self.user, "log", "eden_log.txt")
+            with open(path, encoding="utf-8") as file:
+                text = file.read()
+            text = "\n".join(line for line in text.splitlines() if "pipelines cached at" not in line)
+            with open(path, "w", encoding="utf-8") as file:
+                file.write(text + "\n[   1.500000] Render_Vulkan <Info> Driver keeps its own pipeline cache, "
+                                  "not saving a Vulkan one\n")
+        self.on_launch = own_cache
+        code, rows, _ = self.run_suite(None, "--only-variants", "baseline", "--cache-states", "cold,second")
+        self.assertEqual(code, 0, self.log)
+        self.assertEqual([(row["cache_state"], row["boot"]["driver_cache_saved_at_exit"]) for row in rows],
+                         [("cold", None), ("second", None)])
+        self.assert_caches_back()
+
+    def test_a_cold_run_no_second_run_copies_leaves_no_caches(self):
+        suite = json.loads(json.dumps(BOOT_SUITE))
+        suite["runs"][0]["variants"][1]["cache_states"] = ["cold"]
+        code, rows, _ = self.run_suite(suite, "--cache-states", "cold,second")
+        self.assertEqual(code, 0, self.log)
+        self.assertEqual([(row["variant"], row["cache_state"]) for row in rows],
+                         [("baseline", "cold"), ("x", "cold"), ("baseline", "second")])
+        session = os.path.join(self.work, os.listdir(self.work)[0])
+        self.assertEqual(os.listdir(os.path.join(session, "runs")) if os.path.isdir(os.path.join(session, "runs"))
+                         else [], [])
+        self.assert_caches_back()
+
     def test_a_guard_cut_boot_is_invalid(self):
         def guarded(env):
             self.emulator_runs(env)

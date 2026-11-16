@@ -68,6 +68,8 @@ BOOT_CLOSE_GRACE_S = 90
 BOOT_GUARD_TEXT = "building none at boot this time"
 # vk_pipeline_cache.cpp SerializeVulkanPipelineCache: a save of the driver pipeline cache.
 DRIVER_CACHE_SAVED_TEXT = "Vulkan driver pipelines cached at"
+# vk_pipeline_cache.cpp: the driver keeps its own cache (NVIDIA, AMD), so the emulator saves none.
+DRIVER_KEEPS_OWN_CACHE_TEXT = "Driver keeps its own pipeline cache, not saving a Vulkan one"
 FIRST_FRAME_PHASE = "frontend: first guest frame presented"
 GAME_SHOWN_PHASE = "frontend: loading screen hidden, game shown"
 GUEST_RELEASED_PHASE = "guest: GPU started, guest cores released"
@@ -2481,6 +2483,10 @@ class BootSession:
         self.dirs += [self.cache_bench.CacheDir(f"driver-{index}", path, backup, roots, strict=False)
                       for index, path in enumerate(driver_dirs)]
         self.cold = {}
+        # The cold runs whose caches a second run of the same variant and repeat copies; the
+        # others' are deleted at once unless --keep-caches.
+        self.seconds = {(variant["name"], variant["repeat"]) for variant in plan.variants
+                        if variant.get("cache_state") == "second"}
         self.prepared = []
         self.after = None
 
@@ -2543,12 +2549,13 @@ class BootSession:
                 failure = failure or error
         self.prepared = []
         key = (variant["name"], variant["repeat"])
-        if variant["cache_state"] == "cold":
+        if variant["cache_state"] == "cold" and (key in self.seconds or self.keep):
             self.cold[key] = {"after": self.after if os.path.isdir(self.after) else None, "usable": None}
         elif not self.keep:
-            shutil.rmtree(self.after, ignore_errors=True)
+            # The run's own folder goes with what it held.
+            shutil.rmtree(os.path.dirname(self.after), ignore_errors=True)
             if variant["cache_state"] == "second" and (self.cold.get(key) or {}).get("after"):
-                shutil.rmtree(self.cold[key]["after"], ignore_errors=True)
+                shutil.rmtree(os.path.dirname(self.cold[key]["after"]), ignore_errors=True)
                 self.cold[key]["after"] = None
         if failure is not None:
             raise BenchError(f"the caches were not all put back ({failure}); run the suite again, which puts "
@@ -2636,7 +2643,8 @@ def finish_boot_row(row, variant, log_copy, session):
         read_boot_log(row, variant, log_copy, session)
     finally:
         if state == "cold":
-            session.note_cold(variant, bool(boot["driver_cache_saved_at_exit"]) and not reasons)
+            # None: the emulator saves no driver cache of its own on this driver (nothing to wait for)
+            session.note_cold(variant, boot["driver_cache_saved_at_exit"] is not False and not reasons)
 
 
 def read_boot_log(row, variant, log_copy, session):
@@ -2659,8 +2667,11 @@ def read_boot_log(row, variant, log_copy, session):
     boot["log"]["stutter_by_group"] = (metrics.get("stutter") or {}).get("by_group")
     first = next((index for index, line in enumerate(lines) if FIRST_FRAME_PHASE in line), None)
     boot["guard_tripped"] = any(BOOT_GUARD_TEXT in line for line in lines)
-    boot["driver_cache_saved_at_exit"] = first is not None and any(
-        DRIVER_CACHE_SAVED_TEXT in line for line in lines[first:])
+    if any(DRIVER_KEEPS_OWN_CACHE_TEXT in line for line in lines):
+        boot["driver_cache_saved_at_exit"] = None
+    else:
+        boot["driver_cache_saved_at_exit"] = first is not None and any(
+            DRIVER_CACHE_SAVED_TEXT in line for line in lines[first:])
     boot["cache_dir_ok"] = session.cache_bench.check_cache_dir(log_copy, session.dirs[0].path)
     if boot["guard_tripped"]:
         reasons.append("boot_guard")
