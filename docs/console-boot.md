@@ -142,7 +142,7 @@ when depth is on.
 |---|---|---|---|
 | New pipeline, both libraries built (`EDEN_NX2_GPL`) | Fast link on the spot | Same | Correct; fast-linked code until the optimized link replaces it |
 | New pipeline, a library to build | The frame waits for the build | Bounded: waits up to what is left of 8 ms this frame, then skips; Skip: skips at once | Skipped: the object is missing until it is built, one frame or more |
-| Cached pipeline still queued in the background prebuild | Built inline on the GPU thread (#103) | Same; `EDEN_NX2_PREBUILD_NO_INLINE` skips instead | As above |
+| Cached pipeline still queued in the background prebuild | The queued job is cancelled and the pipeline built from the live state, translated on the GPU thread; the draw waits. A job already running is waited for | Same; `EDEN_NX2_PREBUILD_NO_INLINE` skips the draw and raises the job instead | As above |
 | New compute pipeline | The dispatch waits | Waits: a dispatch is never skipped | Correct, late |
 
 No path draws with a substitute pipeline (code reading): a draw waits for its own pipeline or is
