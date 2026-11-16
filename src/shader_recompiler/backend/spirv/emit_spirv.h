@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include <string>
 #include <vector>
 
 #include "common/common_types.h"
@@ -57,6 +58,13 @@ constexpr u32 GM_NARROW_NO_FALLBACK = 8; ///< with GM_NARROW: zero, not the full
 /// SPIR-V exists. Call it on a program EmitSPIRV has not touched: the 16x16x16 path grows
 /// IR::Program::shared_memory_size, which this reads.
 [[nodiscard]] bool UsesCooperativeMatrix(const Profile& profile, const IR::Program& program);
+
+/// EDEN_NX2_TENSOR_LOG: the program's guest tensor operations (HMMA count by depth, how many start
+/// from a zero accumulator, how many reuse the previous HMMA's A) and the path EmitSPIRV takes for
+/// them, with the reason when it is software on a device with matrices. Empty without tensor
+/// operations. Call it, like UsesCooperativeMatrix, before EmitSPIRV grows the shared memory.
+[[nodiscard]] std::string DescribeTensorProgram(const Profile& profile,
+                                                const IR::Program& program);
 
 /// Words per lane in the buffer of EmitCooperativeHmmaTest: the guest registers a0 a1 a2 a3 b0 b1
 /// c0 c1 as input, then d0 d1 as output.
