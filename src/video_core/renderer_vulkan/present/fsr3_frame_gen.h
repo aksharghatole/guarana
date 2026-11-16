@@ -95,6 +95,20 @@ public:
         return m_initialized && m_has_history && m_flow_valid;
     }
 
+    /// The chain's copies of the newest and the previous real frame, as Generate reads them, for
+    /// a pass that interpolates without the optical flow (EDEN_NX2_FG_GAME_MOTION). Null until
+    /// both hold a frame.
+    struct FrameViews {
+        VkImageView newest{};
+        VkImageView previous{};
+    };
+    [[nodiscard]] FrameViews Frames() const {
+        if (!m_has_history || !m_flow_valid) {
+            return {};
+        }
+        return {*m_current_view, *m_history_view};
+    }
+
 private:
     void CreateResources(const Device& device);
     void CreateShaders(const Device& device);

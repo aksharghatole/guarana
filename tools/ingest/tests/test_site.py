@@ -95,7 +95,7 @@ class DataFileTests(unittest.TestCase):
         for key, record in doc["reports"].items():
             self.assertEqual(record["issue"], int(key))
             self.assertIn(record["scene_ok"], (True, None))
-            self.assertIn(record["gpu_vendor"], ("intel", "amd", "nvidia", "other"))
+            self.assertIn(record["gpu_vendor"], ("intel", "amd", "nvidia", "qualcomm", "other"))
             self.assertTrue(record["fps"] is None or isinstance(record["fps"], (int, float)))
 
 

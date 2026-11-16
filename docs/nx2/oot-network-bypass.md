@@ -19,6 +19,10 @@ patch. Sampled frame dumps, constant-buffer traces and pixel statistics showed:
   (`da6df3e54c716df2`). The output pass samples one texture, the tonemapped image (texture handle
   at cb0+0xc0), and writes the B10G11R11 image the rest of the frame uses (texture handle at
   cb0+0xd0). Keys are native program keys.
+- The tensor instructions are in the output pass: 192 `HMMA.16816` per invocation of
+  `da6df3e54c716df2`, counted in a native dump. The prepass, the heavy dispatch and the pass called
+  the network here have none, so No sharpening, which replaces the output pass, is what removes the
+  tensor math ([design](../design/game-reconstruction-and-motion.md)).
 - The network keeps no history: it is a single-frame spatial smoother (mean |Laplacian| of green
   0.0042 -> 0.0037). The output pass then sharpens hard: 2.2x the input's edge contrast, with
   overshoot up to 1.72 on bright edges. That is the halo users see.

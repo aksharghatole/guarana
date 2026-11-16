@@ -320,8 +320,8 @@ th[aria-sort="descending"] .lb-sort::after { content: "\2193"; opacity: 1; }
   if (!app || !window.fetch || !Array.prototype.forEach || !Object.keys) return;
   var issueBase = app.getAttribute("data-issues");
   var dataUrl = app.getAttribute("data-src");
-  var VENDORS = [["", "All"], ["intel", "Intel"], ["amd", "AMD"], ["nvidia", "NVIDIA"], ["other", "Other"]];
-  var FORMS = ["Laptop", "Handheld", "Mini PC", "Desktop"];
+  var VENDORS = [["", "All"], ["intel", "Intel"], ["amd", "AMD"], ["nvidia", "NVIDIA"], ["qualcomm", "Qualcomm"], ["other", "Other"]];
+  var FORMS = ["Laptop", "Handheld", "Mini PC", "Desktop", "Phone or tablet"];
   var SORTS = [
     ["fps:desc", "Game fps, high to low"], ["fps:asc", "Game fps, low to high"],
     ["p99:asc", "p99 frame time, low to high"], ["p99:desc", "p99 frame time, high to low"],

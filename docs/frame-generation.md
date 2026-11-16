@@ -21,6 +21,10 @@ Ocarina of Time only. Switches are in `docs/switches.md`.
 - Below 10 frames per second the interval is clamped to 0.1 s and the advance is overstated.
 - The pool is 7 frames: a real frame, the previous batch's predictions still waiting for their slots and the frame on screen can leave nothing for the new predictions (`cut short`).
 
+## In-between frames from the game's motion (`EDEN_NX2_FG_GAME_MOTION`, experimental)
+
+With `EDEN_NX2_FLUID_INTERP`, the in-between frames normally come from the optical flow between the two real frames. `EDEN_NX2_FG_GAME_MOTION=1` warps them with the guide instead: the newest frame's pixels are traced back along their motion to time `t` and mixed with the same surface point in the previous frame where that frame saw it; where the frames disagree the nearer surface wins, and what the newest frame no longer shows comes from the previous one, so the edges of near objects are filled from the frame that saw behind them. The arithmetic is `present/game_motion_warp.h`, tested on synthetic guides in `src/tests/video_core/game_motion_warp.cpp`; the plan and its measurement are in [the design](design/game-reconstruction-and-motion.md), section 3. It moves only what the guide knows (the camera, Link): other characters, particles and water move with the camera.
+
 ## How to test
 
 Run with `EDEN_NX2_EXTRAPOLATE=1 EDEN_NX2_FLUID=1 EDEN_NX2_SHOWN_STATS=1` in Hyrule Field at the same spot and time as earlier runs.

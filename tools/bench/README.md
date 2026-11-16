@@ -135,6 +135,53 @@ and adds one switch at a time (`EDEN_NX2_FG_PINGPONG`, `EDEN_NX2_FG_MEDIAN_ONCE`
 Where the compositor's gates are not met (see its row in `docs/switches.md`) it stays off and its
 rows equal the baseline.
 
+### Boot suites
+
+A suite with a `boot` block measures launch to gameplay and the hitches of a first visit, with the
+caches in a chosen state ([docs/console-boot.md](../../docs/console-boot.md)). One command runs the
+whole matrix: every variant against the baseline, each in the cache states it names, three times,
+alternating which goes first:
+
+```
+python -I tools/bench/bench.py suite tools/bench/suites/console-boot.json --exe <guarana.exe> --game <game file> --user-dir <user folder> --save-backup <saves for the scene> [--driver-cache-dir <the GPU driver's shader cache folder>] [--dry-run]
+```
+
+- **cold**: the title's shader cache folder (`<user folder>/cache/shader/<title id>`) is absent, as
+  on a first play. With `--driver-cache-dir` (repeatable) the GPU driver's own shader cache folder is
+  absent too; without it a cold run is cold for the emulator only and the driver still holds the
+  pipelines of earlier sessions. The folder is never guessed: give the one your driver uses (its
+  name must say cache).
+- **second**: what the same variant's cold run of the same repeat left: the second play of a game.
+- **warm**: a copy of your own cache as the suite found it.
+
+Before the first run the folders are copied with a sha256 manifest to `--cache-work` (default:
+`lichii-bench\boot-caches` beside the power restore file). Before every run each one is renamed to
+`<folder>.bench-aside` and replaced by the run's start state; after the emulator has exited, what
+the run wrote is moved into the work folder and the original is renamed back and compared with its
+manifest (the driver's folder is not compared: other programs on the same GPU write it too). A suite
+that stops halfway leaves the originals aside: the next start of any boot suite puts them back
+first. The backups are deleted at the end unless `--keep-caches`. Saves are never touched beyond
+`--save-backup`, as in every run.
+
+A boot run closes the emulator through its window and waits up to `close_grace_s` (90 s) for it
+to save its caches and exit; the suite sets `[UI] confirmStop=2` so no confirmation stops it. It
+calls the debug server's `boot_timing` at the first frames, with the mark `scene` after the scene
+check and `end` after the measurement, and reads the copied log with `tools/nx2/cache_metrics.py`.
+
+`--cache-states cold,warm`, `--repeats 1` and `--only-variants a,b` (the baseline always runs) run
+part of the matrix; `--dry-run` lists the runs in order with a rough length. The full
+`console-boot.json` is 78 runs, about 5 hours. A suite run's `variants_dir` adds every `.json` in a
+folder: each file in `variants/boot` is one switch, with the `cache_states` it runs in.
+
+A boot row is invalid, besides the usual reasons, when its cache was not in the state it claims:
+`cache_not_cold` (a cold run's log says records were loaded), `boot_guard` (the crash guard of the
+last boot cut this boot's builds), `cache_dir_mismatch` (the emulator used another shader cache
+folder: fix `--user-dir`), `second_source_incomplete` (its cold run was invalid or did not save the
+driver pipeline cache after its first frame), `no_boot_timing` (a build without the debug server's
+`boot_timing`), `no_log`. The suite prints one table per cache state: first frame and game shown
+(seconds since the process started), Vulkan instances created, held draws and their wait from the
+first frame to the scene, frames over 100 ms, fps.
+
 ### Power
 
 `--power-policy NAME=VALUE` (repeatable) and a variant's `power_policy` set processor power
@@ -326,6 +373,8 @@ and are optional, so older rows stay valid.
 | `output` | object or null | `size` (`WxH`), `size_from` (`swapchain` or `window`), `present_mode`, `images` (swapchain), `fullscreen_mode` and `fullscreen_mode_from` (`default` or `settings`; fullscreen only). A valid fullscreen row has a `size` |
 | `pacing` | object or null | from the log (see "Pacing"): `head_at_s`, `shown_at_s` (emulator time of the reports used), `clock`, `display_hz`, `slot_refreshes`, `slots`, `on_slot`, `missed`, `real_received`, `dropped_unshown` (`EDEN_NX2_FLUID` only); `shown_fps`, `interval_p5_ms`, `interval_p50_ms`, `interval_p95_ms`, `interval_p99_ms`, `interval_max_ms`, `within_2ms_pct`. Each key only when its line was logged |
 | `picture` | object or null | `limits` (`dark_level`, `dark_pct`, `mean`), `shots` (`[{mean, spread, dark_pct, center_dark_pct, center_mean}]` per checked screenshot), `black`. `black` true requires the `black_picture` reason |
+| `cache_state`, `repeat` | string, int | boot suites only: `cold`, `second` or `warm`, and the repeat (from 0) |
+| `boot` | object | boot suites only: `caches` (each folder `present` or `absent` as the run started), `first_frame_ms`, `game_shown_ms`, `guest_released_ms` (since the process started), `instances_created`, `phases` (`[phase, at_ms, took_ms]`), `at_first_frame`, `to_scene`, `to_end` (`boot_timing` `split` totals: held draws and dispatches with their ms, builds by kind, file reads; `to_*` since the first frame), `switch_defaults` (`[name, value, decision]` of the game's switch defaults), `log` (from `cache_metrics.py`: `boot_to_first_frame_s`, `loading_shaders_s`, `records_loaded`, `pipelines_queued_at_boot`, `runtime_builds`, `runtime_build_gpu_thread_ms`, `frame_ms`, `frames_over_33ms`, `frames_over_100ms`, `stutter_by_group`), `guard_tripped`, `driver_cache_saved_at_exit`, `cache_dir_ok`. A valid boot row has `first_frame_ms` |
 
 `python -I tools/bench/bench.py validate <file.jsonl or folder> ...` checks rows against this schema
 (types, consistency of `valid` and `probe`, the median, the machine id, no home directory paths)

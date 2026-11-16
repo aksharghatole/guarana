@@ -65,7 +65,7 @@ python -I tools/bench/bench.py table tools/bench/results --out tools/bench/RESUL
 <maker and model>
 
 ### Form factor
-<Laptop | Handheld | Mini PC | Desktop>
+<Laptop | Handheld | Mini PC | Desktop | Phone or tablet>
 
 ### CPU
 <hardware.cpu>

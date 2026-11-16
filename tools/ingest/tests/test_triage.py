@@ -108,21 +108,26 @@ class HardwareTests(unittest.TestCase):
         self.assertEqual(self.labels("Other AMD integrated"), {"amd-igpu"})
         self.assertEqual(self.labels("NVIDIA RTX 40 series"), set())
         self.assertEqual(self.labels("AMD RX 7000 series"), set())
+        self.assertEqual(self.labels("Qualcomm Adreno X1 / X2 (Snapdragon X laptops)"), {"arm64"})
+        self.assertEqual(self.labels("Qualcomm Adreno 7xx (Snapdragon 8 Gen 1 to 8 Gen 3)"), {"arm64"})
         self.assertEqual(self.labels("Laptop GPU", form_factor="Handheld") & {"handheld"}, {"handheld"})
 
     def test_keywords_only_when_the_form_names_no_gpu(self):
         self.assertEqual(self.labels("Other", "Runs on my Steam Deck at 15 W"), {"amd-igpu", "handheld"})
         self.assertEqual(self.labels("Other", "MSI Claw 8 AI+ with Arc 140V"), {"intel-arc", "handheld"})
+        self.assertEqual(self.labels("Other", "Surface Laptop 7 with a Snapdragon X Elite"), {"arm64"})
+        self.assertEqual(self.labels("Other", "AYN Odin 2 on Turnip"), {"arm64"})
         self.assertEqual(self.labels("NVIDIA RTX 40 series", "faster than my Steam Deck"), set())
         no_form = run(make_issue(1, "### Issue\n\nOcarina stutters on a Radeon 780M", labels=()))[0]
         self.assertEqual(set(no_form), {"amd-igpu", "stutter"})
 
     def test_gpu_tests_match_label_issues_yml(self):
-        # gpu_labels() ports these three tests of label-issues.yml; keep them in step.
+        # gpu_labels() ports these four tests of label-issues.yml; keep them in step.
         text = read(".github", "workflows", "label-issues.yml")
         for test in ("/intel/i.test(gpu) && /arc/i.test(gpu)",
                      "/amd/i.test(gpu) && /integrated|[0-9]{3}M\\b|Z[12]\\b/i.test(gpu)",
-                     "/handheld/i.test(gpu)"):
+                     "/handheld/i.test(gpu)",
+                     "/qualcomm|adreno|snapdragon|android/i.test(gpu)"):
             self.assertIn(test, text)
 
 

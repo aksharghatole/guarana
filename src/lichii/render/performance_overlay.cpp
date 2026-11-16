@@ -19,6 +19,7 @@
 #include <QTimer>
 #include <QWindow>
 
+#include "common/memory_detect.h"
 #include "common/settings.h"
 #include "core/core.h"
 #include "main_window.h"
@@ -168,6 +169,7 @@ PerformanceOverlay::Layout PerformanceOverlay::makeLayout() const {
     const qreal raster_h = layout.detailed ? 124 : 74;
     const qreal spread_h = layout.detailed ? 52 : 36;
     const qreal threads_h = layout.detailed ? 76 : 24;
+    const qreal memory_h = 16;
     const qreal footer_h = 16;
     const qreal inner = layout.width - 2 * layout.pad;
     qreal y = layout.pad;
@@ -183,6 +185,7 @@ PerformanceOverlay::Layout PerformanceOverlay::makeLayout() const {
     layout.raster = take(raster_h, true);
     layout.spread = take(spread_h, true);
     layout.threads = take(threads_h, true);
+    layout.memory = take(memory_h, true);
     layout.footer = take(footer_h, false);
     layout.height = static_cast<int>(std::ceil(y + layout.pad));
     return layout;
@@ -300,6 +303,13 @@ void PerformanceOverlay::updateStats(const Core::PerfStatsResults& results,
     renderer.RequestGpuBusySample();
     m_gpuBusyMs = renderer.GetGpuBusyMs();
 
+    // Every 2 s: on Windows the process query also reads the whole system's counters.
+    const auto now = std::chrono::steady_clock::now();
+    if (!m_memorySampled || now - *m_memorySampled >= std::chrono::seconds{2}) {
+        m_memorySampled = now;
+        sampleMemory();
+    }
+
     if (m_compact != UISettings::values.guarana_overlay_compact.GetValue()) {
         applyLayout();
     }
@@ -310,6 +320,20 @@ void PerformanceOverlay::updateStats(const Core::PerfStatsResults& results,
         m_shownSpring.Step(shown, 0);
     }
     update();
+}
+
+void PerformanceOverlay::sampleMemory() {
+    const auto available = Common::GetAvailablePhysicalMemory();
+    m_ram = Guarana::Overlay::RamFigure(Common::GetProcessMemoryUsage().working_set, available);
+    m_vram.reset();
+    m_vramShared = false;
+    if (!QtCommon::system || !QtCommon::system->IsPoweredOn()) {
+        return;
+    }
+    if (const auto usage = QtCommon::system->GPU().Renderer().GetVideoMemoryUsage()) {
+        m_vram = Guarana::Overlay::VramFigure(usage->used, usage->budget, usage->shared, available);
+        m_vramShared = usage->shared;
+    }
 }
 
 void PerformanceOverlay::sampleLive(double window_s, bool force) {
@@ -892,6 +916,45 @@ void PerformanceOverlay::paintThreads(QPainter& painter, const Layout& layout) c
     }
 }
 
+void PerformanceOverlay::paintMemory(QPainter& painter, const Layout& layout) const {
+    const QRectF area = layout.memory;
+    const QFont font = MonoFont(layout.detailed ? 11 : 10);
+    const QFont bold = MonoFont(layout.detailed ? 11 : 10, QFont::DemiBold);
+    const QColor text{238, 241, 246};
+    const QColor muted{143, 153, 173};
+    const QColor dim{107, 117, 137};
+    const QColor amber{251, 191, 36};
+    // What this process uses, then the room left, amber when nearly out (Fritchii's rows).
+    const auto runs_of = [&](const QString& label,
+                             const std::optional<Guarana::Overlay::MemoryFigure>& figure,
+                             bool shared, bool with_room) {
+        std::vector<Run> runs{{label + QStringLiteral(" "), font, muted}};
+        if (!figure) {
+            runs.push_back({Dash(), font, dim});
+            return runs;
+        }
+        runs.push_back({tr("%1 GB").arg(figure->used_gib, 0, 'f', 1), bold, text});
+        if (shared && layout.detailed) {
+            runs.push_back({tr(" shared"), font, dim});
+        }
+        if (with_room && figure->free_gib) {
+            runs.push_back({QStringLiteral("  "), font, muted});
+            runs.push_back({tr("%1 free").arg(*figure->free_gib, 0, 'f', 1), font,
+                            figure->low ? amber : muted});
+        }
+        return runs;
+    };
+    std::vector<Run> ram = runs_of(QStringLiteral("RAM"), m_ram, false, true);
+    std::vector<Run> vram = runs_of(QStringLiteral("VRAM"), m_vram, m_vramShared, true);
+    if (Width(ram) + Width(vram) + 12 > area.width()) {
+        ram = runs_of(QStringLiteral("RAM"), m_ram, false, false);
+        vram = runs_of(QStringLiteral("VRAM"), m_vram, m_vramShared, false);
+    }
+    const qreal baseline = Baseline(font, area.top(), area.height());
+    DrawRuns(painter, area.left(), baseline, ram);
+    DrawRuns(painter, area.right() - Width(vram), baseline, vram);
+}
+
 void PerformanceOverlay::paintFooter(QPainter& painter, const Layout& layout) const {
     const QFont font = MonoFont(11);
     const QColor muted{143, 153, 173};
@@ -936,6 +999,7 @@ void PerformanceOverlay::paintEvent(QPaintEvent*) {
     paintRaster(painter, layout);
     paintSpread(painter, layout);
     paintThreads(painter, layout);
+    paintMemory(painter, layout);
     paintFooter(painter, layout);
 }
 
@@ -977,6 +1041,10 @@ void PerformanceOverlay::hideEvent(QHideEvent* event) {
     m_lowFps.reset();
     m_lowMs.reset();
     m_gpuBusyMs.reset();
+    m_ram.reset();
+    m_vram.reset();
+    m_vramShared = false;
+    m_memorySampled.reset();
     m_cpuSnapshot.reset();
     m_frames.clear();
     m_msScratch.clear();

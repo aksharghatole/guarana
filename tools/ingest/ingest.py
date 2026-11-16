@@ -58,7 +58,7 @@ GAMES = {
     "Welcome Tour": ("welcome-tour", "Nintendo Switch 2 Welcome Tour"),
     "Other / not listed": ("other", None),
 }
-FORM_FACTORS = ("Laptop", "Handheld", "Mini PC", "Desktop")
+FORM_FACTORS = ("Laptop", "Handheld", "Mini PC", "Desktop", "Phone or tablet")
 POWER_SOURCES = ("Plugged in", "On battery")
 # The "Before submitting" boxes, by the start of their text.
 REQUIRED_CHECKS = (
@@ -87,8 +87,8 @@ FIELD_DOCS = {
     "scene_ok": "true only when the numbers come from a tools/bench row that is valid and passed its scene "
                 "check against the tester's reference screenshot; null otherwise.",
     "source": "tools/bench or manual.",
-    "gpu_vendor, gpu_type": "intel, amd, nvidia or other; integrated, discrete or unknown, from the form's "
-                            "Graphics card answer.",
+    "gpu_vendor, gpu_type": "intel, amd, nvidia, qualcomm or other; integrated, discrete or unknown, from the "
+                            "form's Graphics card answer.",
     "runs": "Every valid tools/bench row of the report (variant, scene, fps, p50_ms, p99_ms, switches).",
     "notes": "Caveats a reader should see next to the numbers.",
     "credit": "The reporter's GitHub handle when they filled in \"Credit me as\" with the account that opened the "
