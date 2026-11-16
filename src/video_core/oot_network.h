@@ -25,6 +25,8 @@ constexpr u64 ProgramId = 0x0400486024DEC000ULL;
 
 // Native program keys of the network's compute passes.
 constexpr u64 PrepassProgramKey = 0x8475d671e6967428ULL;
+// Match the native key, not this pass's lowered shader hash (d9ee412f00ce399a).
+constexpr u64 UnusedDispatchProgramKey = 0x9387db798781f081ULL;
 constexpr u64 NetworkProgramKey = 0x42593194bb0b2b32ULL;
 constexpr u64 OutputProgramKey = 0xda6df3e54c716df2ULL;
 
@@ -44,6 +46,10 @@ constexpr std::array BaseOutputPrograms{
     BaseOutputProgram{0x003c7919, 0x66f0, 0x83deec1743ddee73ULL},
     BaseOutputProgram{0x00017919, 0x6250, 0x58bdd5733e364169ULL},
 };
+
+/// Constant buffer 0 offset of the output pass's texture handle for the tonemapped image it
+/// samples (the network's input).
+constexpr u32 InputImageHandleOffset = 0xc0;
 
 /// Constant buffer 0 offset of the output pass's texture handle for the B10G11R11 image it writes
 /// (the scene image the rest of the frame uses).
@@ -137,6 +143,8 @@ inline Area DrawArea(const Tegra::Engines::Maxwell3D::Regs& regs) {
 struct BypassState {
     std::mutex mutex;
     /// Render target 0 of the latest tonemap draw (address 0 until one is seen), under mutex.
+    /// Only EDEN_NX2_OOT_BYPASS_ANY copies from it; without the switch the copy reads the image
+    /// the output pass samples (InputImageHandleOffset).
     Tegra::Engines::Maxwell3D::Regs::RenderTargetConfig tonemapped{};
     /// What that draw could reach of it (DrawArea), under mutex.
     Area tonemapped_area{};
@@ -145,6 +153,10 @@ struct BypassState {
     /// successful replacement, under mutex (written only with the switch).
     u64 replaced_address{};
     Area replaced_area{};
+    /// The prepass was skipped and no output pass has been replaced since.
+    std::atomic<bool> output_pending{};
+    /// The first native program dispatched after the network, 0 until one is seen.
+    std::atomic<u64> after_network{};
 };
 
 /// EDEN_NX2_OOT_BYPASS_STEP_GUARD: the prepass and the network may be skipped only while the
@@ -189,6 +201,11 @@ struct OutputShapeInput {
         return difference * 32 <= drawn_size;
     };
     return close_to(scene_w, drawn.x1 - drawn.x0) && close_to(scene_h, drawn.y1 - drawn.y0);
+}
+
+/// This program feeds only the bypassed network. Do not skip it outside its prepass window.
+inline bool ShouldSkipUnusedDispatch(u64 native_key, bool output_replaced, bool output_pending) {
+    return native_key == UnusedDispatchProgramKey && output_replaced && output_pending;
 }
 
 inline bool BypassEnabled(u64 program_id) {

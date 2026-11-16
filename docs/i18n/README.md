@@ -1,4 +1,4 @@
-**Languages:** [English](../../README.md) · [简体中文](README.zh-CN.md) · [Español](README.es.md) · [Português (Brasil)](README.pt-BR.md) · [日本語](README.ja.md) · [한국어](README.ko.md) · [Français](README.fr.md) · [Deutsch](README.de.md) · [Русский](README.ru.md) · [العربية](README.ar.md) · [Index](README.md)
+**Languages:** [English](../../README.md) · [简体中文](README.zh-CN.md) · [Español](README.es.md) · [Português (Brasil)](README.pt-BR.md) · [日本語](README.ja.md) · [한국어](README.ko.md) · [Français](README.fr.md) · [Deutsch](README.de.md) · [Русский](README.ru.md) · [العربية](README.ar.md) · [Suomi](README.fi.md) · [Index](README.md)
 
 **Discord:** [discord.gg/urz7vMdRM](https://discord.gg/urz7vMdRM)
 
@@ -20,6 +20,7 @@ The English README is the reference. If a translation and the English text disag
 | German (Deutsch) | [README.de.md](README.de.md) | Draft, needs native-speaker review |
 | Russian (Русский) | [README.ru.md](README.ru.md) | Draft, needs native-speaker review |
 | Arabic (العربية) | [README.ar.md](README.ar.md) | Draft, needs native-speaker review (right-to-left) |
+| Finnish (Suomi) | [README.fi.md](README.fi.md) | Draft, needs native-speaker review | 
 
 ## What stays in English
 

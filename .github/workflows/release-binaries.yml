@@ -23,6 +23,10 @@ on:
         description: Publish the tag's binaries as its GitHub release (branches are never published)
         type: boolean
         default: true
+      nsight_aftermath:
+        description: Build Windows with Nsight Aftermath GPU crash dumps (test builds only, no NVIDIA files shipped)
+        type: boolean
+        default: false
   workflow_call:
     inputs:
       channel:
@@ -119,6 +123,15 @@ jobs:
             echo "prerelease=$prerelease"
           } >> "$GITHUB_OUTPUT"
           echo "Building $channel $version from $sha (publish: $publish)"
+
+      # Upstream's Nsight Aftermath test builds are never published. Upstream refuses them with
+      # publish_release set; here a branch is never published whatever that box says, so only a
+      # build that would publish (a tag) is refused.
+      - name: Refuse to publish an Aftermath build
+        if: inputs.nsight_aftermath && steps.plan.outputs.publish == 'true'
+        run: |
+          echo "nsight_aftermath builds are test builds; run them on a branch, or with publish_release=false"
+          exit 1
 
       # Root files (CHANGELOG.md) and tools/ci at the tagged commit; tools/ingest is what
       # tools/ci/thanks.py imports (github_api.py).
@@ -409,6 +422,26 @@ jobs:
         shell: pwsh
         run: glslangValidator --version
 
+      # Only the SDK's headers are kept: the tracker loads GFSDK_Aftermath_Lib.x64.dll at run time,
+      # so the tester supplies his own copy and the artifact holds no NVIDIA files.
+      - name: Fetch Nsight Aftermath SDK headers
+        if: startsWith(matrix.platform, 'windows') && inputs.nsight_aftermath
+        shell: pwsh
+        run: |
+          $zip = Join-Path $env:RUNNER_TEMP 'aftermath-sdk.zip'
+          Invoke-WebRequest -OutFile $zip https://developer.nvidia.com/downloads/assets/tools/secure/nsight-aftermath-sdk/2026_3_0/windows_x64/NVIDIA_Nsight_Aftermath_SDK_2026.3.0.26197-windows_x64.zip
+          $hash = (Get-FileHash -Algorithm SHA256 $zip).Hash.ToLowerInvariant()
+          if ($hash -ne 'e38136a60110199559b7365d3ea4ec0cb5588dc2b0f593877d864e0299659a3f') {
+            throw "Nsight Aftermath SDK hash $hash does not match the pinned release"
+          }
+          $extracted = Join-Path $env:RUNNER_TEMP 'aftermath-sdk-zip'
+          Expand-Archive $zip -DestinationPath $extracted
+          $sdk = Join-Path $env:RUNNER_TEMP 'aftermath-sdk'
+          New-Item -ItemType Directory -Force $sdk | Out-Null
+          Move-Item (Join-Path $extracted 'include') $sdk
+          Remove-Item -Recurse -Force $extracted, $zip
+          "NSIGHT_AFTERMATH_SDK=$($sdk -replace '\\', '/')" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+
       - name: Restore CPM downloads
         id: cpm-cache
         uses: actions/cache/restore@v6
@@ -494,7 +527,11 @@ jobs:
             flags+=" -Wno-error=profile-instr-out-of-date -Wno-error=profile-instr-unprofiled"
             flags+=" -Wno-error=backend-plugin"
           fi
-          cmake -S . -B build/release -G Ninja \
+          aftermath=()
+          if [ '${{ inputs.nsight_aftermath }}' = true ]; then
+            aftermath=(-DENABLE_NSIGHT_AFTERMATH=ON)
+          fi
+          cmake -S . -B build/release -G Ninja "${aftermath[@]}" \
             -DCMAKE_BUILD_TYPE=Release \
             -DBUILD_TESTING=OFF \
             -DLICHII_TESTS=OFF \
@@ -705,6 +742,9 @@ jobs:
           windeployqt --release --no-translations "build/release/bin/$gui"
           New-Item -ItemType Directory -Force build/release/symbols | Out-Null
           Get-ChildItem build/release/bin -Filter *.pdb | Move-Item -Destination build/release/symbols
+          if (Get-ChildItem -Recurse build/release/bin -Filter 'GFSDK_*') {
+            throw 'build/release/bin holds Nsight Aftermath files, which must not ship'
+          }
 
       # Authenticode signing of the two programs (docs/SIGNING.md) in builds that are published,
       # before they are uploaded, zipped and checksummed. It needs all six signing secrets: with
@@ -854,7 +894,7 @@ jobs:
         if: startsWith(matrix.platform, 'windows')
         uses: actions/upload-artifact@v7
         with:
-          name: guarana-${{ matrix.platform }}-${{ github.sha }}
+          name: guarana-${{ matrix.platform }}${{ inputs.nsight_aftermath && '-aftermath' || '' }}-${{ github.sha }}
           path: build/release/bin/
           if-no-files-found: error
           retention-days: 7
@@ -865,7 +905,7 @@ jobs:
         if: startsWith(matrix.platform, 'windows')
         uses: actions/upload-artifact@v7
         with:
-          name: guarana-${{ matrix.platform }}-symbols-${{ github.sha }}
+          name: guarana-${{ matrix.platform }}${{ inputs.nsight_aftermath && '-aftermath' || '' }}-symbols-${{ github.sha }}
           path: build/release/symbols/
           if-no-files-found: warn
           retention-days: 7

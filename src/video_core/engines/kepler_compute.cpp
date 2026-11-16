@@ -1360,8 +1360,9 @@ bool KeplerCompute::BypassOotBaseNetwork() {
     return false;
 }
 
-/// Replace a known output pass with the latest tonemap, using scaling for the base game.
-/// The update's prepass and network may be skipped after a successful replacement.
+/// Replace a known output pass with a copy of the tonemapped image it samples, using scaling for
+/// the base game. The update's network passes may be skipped after a successful replacement.
+/// With EDEN_NX2_OOT_BYPASS_ANY the copy reads the tonemap the rasterizer tracked instead.
 bool KeplerCompute::BypassOotNetwork(u64 program_id, u64 native_key, u64 unique_hash) {
     using namespace VideoCommon::OotNetwork;
     if (!BypassEnabled(program_id)) {
@@ -1371,40 +1372,43 @@ bool KeplerCompute::BypassOotNetwork(u64 program_id, u64 native_key, u64 unique_
     if (!bypass) {
         return false;
     }
-    // The tonemap pass draws before the network every frame; until it has been seen (menus, the
-    // first frame) the network runs as usual. Its first passes are skipped only while the output
-    // pass is being replaced, so a failed replacement brings the whole network back next frame.
-    Maxwell3D::Regs::RenderTargetConfig tonemapped;
-    Area area{};
+    const OotBypassSwitches& extra = OotBypassEnvironment();
+    // EDEN_NX2_OOT_BYPASS_ANY copies render target 0 of the latest tonemap draw, which knows the
+    // drawn area. The tonemap pass draws before the network every frame; until it has been seen
+    // (menus, the first frame) the network runs as usual.
+    Maxwell3D::Regs::RenderTargetConfig tracked{};
+    Area tracked_area{};
     u64 replaced_address = 0;
     Area replaced_area{};
-    {
-        std::scoped_lock lock{bypass->mutex};
-        tonemapped = bypass->tonemapped;
-        area = bypass->tonemapped_area;
-        replaced_address = bypass->replaced_address;
-        replaced_area = bypass->replaced_area;
-    }
-    if (tonemapped.Address() == 0) {
-        return false;
-    }
-    // What the tonemap drew, as tracked: the step guard and the shape test compare this one.
-    const Area raw_area = area;
-    const OotBypassSwitches& extra = OotBypassEnvironment();
-    // Without the switch the copy takes the whole target, as before.
-    if (!extra.any || area.x0 >= area.x1 || area.y0 >= area.y1 || area.x1 > tonemapped.width ||
-        area.y1 > tonemapped.height) {
-        area = {0, 0, tonemapped.width, tonemapped.height};
+    if (extra.any) {
+        {
+            std::scoped_lock lock{bypass->mutex};
+            tracked = bypass->tonemapped;
+            tracked_area = bypass->tonemapped_area;
+            replaced_address = bypass->replaced_address;
+            replaced_area = bypass->replaced_area;
+        }
+        if (tracked.Address() == 0) {
+            return false;
+        }
     }
     const bool base_output = std::ranges::find(BaseOutputPrograms, native_key,
                                               &BaseOutputProgram::key) != BaseOutputPrograms.end();
-    // The base game tonemaps the whole image at its own resolution, below the output's:
-    // the copy takes the full tonemapped image, never the experimental crop.
-    if (base_output) {
-        area = {0, 0, tonemapped.width, tonemapped.height};
+    // What the tonemap drew, as tracked: the step guard and the shape test compare this one.
+    const Area raw_area = tracked_area;
+    // The part of the tonemapped image the copy takes. With the switch, what the tonemap drew;
+    // the base game tonemaps the whole image at its own resolution, below the output's, so its
+    // copy takes the full image, never the experimental crop. Without the switch the image the
+    // output pass samples is read below, whole.
+    Area area{0, 0, tracked.width, tracked.height};
+    if (extra.any && !base_output && raw_area.x0 < raw_area.x1 && raw_area.y0 < raw_area.y1 &&
+        raw_area.x1 <= tracked.width && raw_area.y1 <= tracked.height) {
+        area = raw_area;
     }
-    const u32 source_width = area.x1 - area.x0;
-    const u32 source_height = area.y1 - area.y0;
+    u32 image_width = tracked.width;
+    u32 image_height = tracked.height;
+    u32 source_width = area.x1 - area.x0;
+    u32 source_height = area.y1 - area.y0;
     // A program whose dispatch is left to the game is logged once per reason, with the images
     // its handles select: one run in a mode with other programs shows which ones to name.
     const auto kept = [&](std::string_view reason) {
@@ -1425,15 +1429,19 @@ bool KeplerCompute::BypassOotNetwork(u64 program_id, u64 native_key, u64 unique_
             }
             return text;
         };
+        const std::string source_text =
+            image_width != 0 ? fmt::format("tonemapped {}x{} drawn {}x{}", image_width,
+                                           image_height, source_width, source_height)
+                             : std::string{"tonemapped image not read"};
         const auto handles = NativeImageHandles(regs.code_loc.Address());
         LOG_INFO(HW_GPU,
                  "Ocarina of Time: dispatch not bypassed ({}): key {:016x} hash {:016x} grid "
-                 "{}x{}x{} block {}x{}x{}, tonemapped {}x{} drawn {}x{}, reads{}, stores{}",
+                 "{}x{}x{} block {}x{}x{}, {}, reads{}, stores{}",
                  reason, native_key, unique_hash, launch_description.grid_dim_x.Value(),
                  launch_description.grid_dim_y.Value(), launch_description.grid_dim_z.Value(),
                  launch_description.block_dim_x.Value(), launch_description.block_dim_y.Value(),
-                 launch_description.block_dim_z.Value(), tonemapped.width, tonemapped.height,
-                 source_width, source_height, images(handles.first), images(handles.second));
+                 launch_description.block_dim_z.Value(), source_text, images(handles.first),
+                 images(handles.second));
     };
     // With the switch, passes are also known by shader hash or from the environment (the list of
     // skipped passes is empty without it).
@@ -1444,27 +1452,28 @@ bool KeplerCompute::BypassOotNetwork(u64 program_id, u64 native_key, u64 unique_
     bool output_pass =
         native_key == OutputProgramKey || base_output ||
         (extra.any && IsListedOotOutputPass(extra, native_key, unique_hash));
-    if (native_key == PrepassProgramKey || native_key == NetworkProgramKey ||
-        (!output_pass && listed(extra.skip))) {
+    // Whether a pass of the network is skipped: only while the output pass is being replaced, so
+    // a failed replacement brings the whole network back next frame.
+    const auto skip_network = [&] {
         bool skipped = bypass->output_replaced.load(std::memory_order_relaxed);
         // EDEN_NX2_OOT_BYPASS_STEP_GUARD: a replacement made for another image or drawn area (a
         // resolution step ago) does not count: this frame's output pass may be one nobody takes.
         if (skipped && extra.step_guard) {
-            skipped = SkipAllowed(skipped, replaced_address, replaced_area, tonemapped.Address(),
+            skipped = SkipAllowed(skipped, replaced_address, replaced_area, tracked.Address(),
                                   raw_area);
             // Once per drawn area and image: a tonemap that moves to another image at the same
             // step (not a step change) shows up here too, with both addresses.
             static std::unordered_set<u64> steps;
             const u64 step_id = ((u64{raw_area.x0} << 48) | (u64{raw_area.y0} << 32) |
                                  (u64{raw_area.x1} << 16) | u64{raw_area.y1}) ^
-                                (tonemapped.Address() * 0x9e3779b97f4a7c15ULL);
+                                (tracked.Address() * 0x9e3779b97f4a7c15ULL);
             if (!skipped && steps.size() < 64 && steps.insert(step_id).second) {
                 LOG_INFO(HW_GPU,
                          "Ocarina of Time: step changed to {}x{}: the network runs this frame "
                          "(drawn {},{} to {},{} of {:#x}, last replaced {},{} to {},{} of {:#x})",
                          raw_area.x1 > raw_area.x0 ? raw_area.x1 - raw_area.x0 : 0U,
                          raw_area.y1 > raw_area.y0 ? raw_area.y1 - raw_area.y0 : 0U, raw_area.x0,
-                         raw_area.y0, raw_area.x1, raw_area.y1, tonemapped.Address(),
+                         raw_area.y0, raw_area.x1, raw_area.y1, tracked.Address(),
                          replaced_area.x0, replaced_area.y0, replaced_area.x1, replaced_area.y1,
                          replaced_address);
             }
@@ -1473,6 +1482,41 @@ bool KeplerCompute::BypassOotNetwork(u64 program_id, u64 native_key, u64 unique_
             kept("network pass, output pass not replaced");
         }
         return skipped;
+    };
+    // The game can also finish a frame with an output program this does not replace (#1688),
+    // which would read the skipped network's stale result every frame: a skip that no
+    // replacement followed brings the network back too.
+    if (native_key == PrepassProgramKey) {
+        if (bypass->output_pending.exchange(false, std::memory_order_relaxed) &&
+            bypass->output_replaced.exchange(false, std::memory_order_relaxed)) {
+            static bool logged = false;
+            if (!std::exchange(logged, true)) {
+                LOG_INFO(HW_GPU,
+                         "Ocarina of Time: the network's output pass was not replaced; running "
+                         "the network (first program after it: {:016x})",
+                         bypass->after_network.load(std::memory_order_relaxed));
+            }
+        }
+        const bool skip = skip_network();
+        bypass->output_pending.store(skip, std::memory_order_relaxed);
+        return skip;
+    }
+    if (ShouldSkipUnusedDispatch(native_key,
+                                 bypass->output_replaced.load(std::memory_order_relaxed),
+                                 bypass->output_pending.load(std::memory_order_relaxed))) {
+        static bool logged = false;
+        if (!std::exchange(logged, true)) {
+            LOG_INFO(HW_GPU, "Skipping unused AA dispatch {:016x} after output replacement",
+                     native_key);
+        }
+        return true;
+    }
+    if (native_key == NetworkProgramKey) {
+        bypass->after_network.store(0, std::memory_order_relaxed);
+        return skip_network();
+    }
+    if (!output_pass && listed(extra.skip)) {
+        return skip_network();
     }
     // EDEN_NX2_OOT_BYPASS_SHAPE and EDEN_NX2_OOT_BYPASS_STEP_GUARD: a pass that reads one
     // E5B9G9R9 image and stores one B10G11R11 image elsewhere, no smaller, has the output pass's
@@ -1514,6 +1558,9 @@ bool KeplerCompute::BypassOotNetwork(u64 program_id, u64 native_key, u64 unique_
         }
     }
     if (!output_pass) {
+        // The first program after the network, named when its output pass was not replaced.
+        u64 none = 0;
+        bypass->after_network.compare_exchange_strong(none, native_key, std::memory_order_relaxed);
         if (output_shape && extra.step_guard) {
             // An output pass the bypass does not take: the next frame runs the whole network.
             bypass->output_replaced.store(false, std::memory_order_relaxed);
@@ -1528,6 +1575,30 @@ bool KeplerCompute::BypassOotNetwork(u64 program_id, u64 native_key, u64 unique_
         if (handles.second.size() == 1) {
             handle_offset = handles.second.front();
         }
+    }
+    // The tonemapped image the copy reads, as a B10G11R11 block-linear image.
+    std::optional<Texture::TICEntry> sampled;
+    u64 source_address = tracked.Address();
+    bool source_block_linear = tracked.tile_mode.is_pitch_linear.Value() == 0U;
+    bool source_format_ok = tracked.format == Tegra::RenderTargetFormat::B10G11R11_FLOAT;
+    u32 source_format = static_cast<u32>(tracked.format);
+    if (!extra.any) {
+        // What the output pass samples (cb0+0xc0), whichever shader drew it (#1688). The update's
+        // output pass samples the B10G11R11 tonemap through an E5B9G9R9 descriptor (see
+        // TryOcarinaUpscale); the copy reads it as the tonemap rendered it.
+        sampled = ConstBuffer0Image(InputImageHandleOffset);
+        const Texture::TextureFormat sampled_format =
+            sampled ? sampled->format.Value() : Texture::TextureFormat{};
+        source_address = sampled ? sampled->Address() : 0;
+        source_block_linear = sampled && sampled->IsBlockLinear();
+        source_format_ok = sampled_format == Texture::TextureFormat::B10G11R11 ||
+                           sampled_format == Texture::TextureFormat::E5B9G9R9;
+        source_format = static_cast<u32>(sampled_format);
+        image_width = sampled ? sampled->Width() : 0;
+        image_height = sampled ? sampled->Height() : 0;
+        area = {0, 0, image_width, image_height};
+        source_width = image_width;
+        source_height = image_height;
     }
     // The copy needs the tonemapped image to be a B10G11R11 block-linear image of the output's
     // size. With the switch the output can also be larger, up to 4x and of the same shape (the
@@ -1549,19 +1620,23 @@ bool KeplerCompute::BypassOotNetwork(u64 program_id, u64 native_key, u64 unique_
     };
     const auto output = ConstBuffer0Image(handle_offset);
     const char* unexpected = nullptr;
-    if (!output) {
+    if (!extra.any && !sampled) {
+        unexpected = "tonemapped descriptor unreadable";
+    } else if (!output) {
         unexpected = "output descriptor unreadable";
     } else if (output->format != Texture::TextureFormat::B10G11R11) {
         unexpected = "output not B10G11R11";
-    } else if (output->Address() == 0 || output->Address() == tonemapped.Address()) {
+    } else if (output->Address() == 0 || output->Address() == source_address) {
         unexpected = "output address";
     } else if (!output->IsBlockLinear()) {
         unexpected = "output not block-linear";
-    } else if (tonemapped.format != Tegra::RenderTargetFormat::B10G11R11_FLOAT) {
-        unexpected = "tonemapped image not B10G11R11";
-    } else if (tonemapped.tile_mode.is_pitch_linear) {
+    } else if (source_address == 0) {
+        unexpected = "tonemapped image address";
+    } else if (!source_format_ok) {
+        unexpected = "tonemapped image format";
+    } else if (!source_block_linear) {
         unexpected = "tonemapped image not block-linear";
-    } else if (tonemapped.width == 0 || tonemapped.height == 0) {
+    } else if (image_width == 0 || image_height == 0) {
         unexpected = "tonemapped image empty";
     } else if (!fits(output->Width(), output->Height())) {
         unexpected = "sizes differ";
@@ -1577,8 +1652,9 @@ bool KeplerCompute::BypassOotNetwork(u64 program_id, u64 native_key, u64 unique_
         if (changed(unexpected)) {
             LOG_WARNING(HW_GPU,
                         "Ocarina of Time: unexpected network images; not replaced ({}: tonemapped "
-                        "{}x{} drawn {}x{}, output {} at +{:#x}, key {:016x} hash {:016x})",
-                        unexpected, tonemapped.width, tonemapped.height, source_width,
+                        "{}x{} format {:#x} drawn {}x{}, output {} at +{:#x}, key {:016x} hash "
+                        "{:016x})",
+                        unexpected, image_width, image_height, source_format, source_width,
                         source_height,
                         output ? fmt::format("{}x{}", output->Width(), output->Height())
                                : std::string{"unreadable"},
@@ -1599,13 +1675,19 @@ bool KeplerCompute::BypassOotNetwork(u64 program_id, u64 native_key, u64 unique_
     destination.addr_upper = static_cast<u32>(output->Address() >> 32);
     destination.addr_lower = static_cast<u32>(output->Address());
     Fermi2D::Surface source = destination;
-    source.block_width.Assign(tonemapped.tile_mode.block_width);
-    source.block_height.Assign(tonemapped.tile_mode.block_height);
-    source.block_depth.Assign(tonemapped.tile_mode.block_depth);
-    source.width = tonemapped.width;
-    source.height = tonemapped.height;
-    source.addr_upper = tonemapped.address_high;
-    source.addr_lower = tonemapped.address_low;
+    if (sampled) {
+        source.block_width.Assign(sampled->block_width);
+        source.block_height.Assign(sampled->block_height);
+        source.block_depth.Assign(sampled->block_depth);
+    } else {
+        source.block_width.Assign(tracked.tile_mode.block_width);
+        source.block_height.Assign(tracked.tile_mode.block_height);
+        source.block_depth.Assign(tracked.tile_mode.block_depth);
+    }
+    source.width = image_width;
+    source.height = image_height;
+    source.addr_upper = static_cast<u32>(source_address >> 32);
+    source.addr_lower = static_cast<u32>(source_address);
     const s32 width = static_cast<s32>(output->Width());
     const s32 height = static_cast<s32>(output->Height());
     // What the tonemap pass drew, scaled when the output is larger.
@@ -1627,10 +1709,11 @@ bool KeplerCompute::BypassOotNetwork(u64 program_id, u64 native_key, u64 unique_
     if (copied && extra.step_guard) {
         // What this replacement was made for; a failed copy leaves the last one.
         std::scoped_lock lock{bypass->mutex};
-        bypass->replaced_address = tonemapped.Address();
+        bypass->replaced_address = tracked.Address();
         bypass->replaced_area = raw_area;
     }
     bypass->output_replaced.store(copied, std::memory_order_relaxed);
+    bypass->output_pending.store(false, std::memory_order_relaxed);
     const char* const result = copied ? "copy of the tonemapped image" : "copy failed";
     // Also logged for the first 16 pairs of sizes: dynamic resolution changes the source's.
     static std::unordered_set<u64> sizes;
@@ -1640,10 +1723,11 @@ bool KeplerCompute::BypassOotNetwork(u64 program_id, u64 native_key, u64 unique_
     if (changed(result) || new_sizes) {
         LOG_INFO(HW_GPU,
                  "Ocarina of Time: anti-aliasing network bypassed ({}): {:#x} -> {:#x} {}x{}, "
-                 "from {}x{} at {},{} of {}x{}, key {:016x} hash {:016x} handle +{:#x}",
-                 result, tonemapped.Address(), output->Address(), width, height, source_width,
-                 source_height, area.x0, area.y0, tonemapped.width, tonemapped.height, native_key,
-                 unique_hash, handle_offset);
+                 "from {}x{} at {},{} of {}x{} format {:#x}, key {:016x} hash {:016x} handle "
+                 "+{:#x}",
+                 result, source_address, output->Address(), width, height, source_width,
+                 source_height, area.x0, area.y0, image_width, image_height, source_format,
+                 native_key, unique_hash, handle_offset);
     }
     if (!copied) {
         kept(result);

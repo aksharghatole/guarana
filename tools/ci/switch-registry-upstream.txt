@@ -1,4 +1,4 @@
-# Switches upstream Lichii (zortos293/Lichii, branch nx2) uses in src/ at commit 99e89096cb401fda17480b6bcb496dd0070a5eca.
+# Switches upstream Lichii (zortos293/Lichii, branch nx2) uses in src/ at commit 7c7f723b6895f806f45629444904414f8d373fbc.
 # tools/ci/switch_registry.py does not ask for a docs/switches.md row for these; every other
 # EDEN_NX2_* or EDEN_DKB_* name used in src/ or launcher/ needs one, unless --upstream-ref has it.
 #

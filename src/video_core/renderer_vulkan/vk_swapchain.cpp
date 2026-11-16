@@ -353,7 +353,6 @@ PresentPolicy::Acquire Swapchain::AcquireNextImage(bool may_flush, bool pace, Pr
         return action;
     case PresentPolicy::Acquire::DeviceLost:
         device.ReportLoss();
-        [[fallthrough]];
     case PresentPolicy::Acquire::Error:
         throw vk::Exception(result);
     }
