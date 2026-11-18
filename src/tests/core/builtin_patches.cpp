@@ -1448,6 +1448,78 @@ TEST_CASE("The patch list says what became of each built-in at the last start",
     }
 }
 
+TEST_CASE("The patch list says whether each built-in is made for the game's build",
+          "[patch_manager]") {
+    using Build = FileSys::BuiltinPatchBuild;
+    using Result = FileSys::BuiltinPatchResult;
+    using BuildID = FileSys::PatchManager::BuildID;
+    PatchManagerTestContext context;
+    const auto manager = context.Manager();
+    // Each listed built-in's answer for a build id of the game's main module.
+    const auto builds = [&](const std::optional<BuildID>& main_build_id) {
+        std::vector<std::pair<std::string, Build>> out;
+        for (const auto& patch : manager.GetPatches(nullptr, main_build_id)) {
+            if (patch.builtin) {
+                out.emplace_back(patch.name, patch.build);
+            }
+        }
+        REQUIRE(out.size() >= 4);
+        return out;
+    };
+    auto other = OcarinaBuildId;
+    other[0] ^= 1;
+
+    SECTION("Without a build id, as for the game list, nothing is known") {
+        for (const auto& [name, build] : builds(std::nullopt)) {
+            CAPTURE(name);
+            CHECK(build == Build::Unknown);
+        }
+    }
+
+    SECTION("Checked or not, each is made for its build and no other") {
+        // The text speeds are off until checked and get an answer too.
+        for (const auto& [name, build] : builds(OcarinaBuildId)) {
+            CAPTURE(name);
+            CHECK(build == Build::Matches);
+        }
+        for (const auto& [name, build] : builds(other)) {
+            CAPTURE(name);
+            CHECK(build == Build::Other);
+        }
+    }
+
+    SECTION("The answer is the one PatchNSO gives when the game starts") {
+        auto padded = OcarinaBuildId;
+        padded[0x1F] = 1; // Past the 20 bytes the built-ins name
+        for (const auto& build_id : {OcarinaBuildId, other, padded, BuildID{}}) {
+            CAPTURE(Common::HexToString(build_id));
+            void(manager.PatchNSO(MakeMain(build_id, TbzInstruction), "main"));
+            size_t checked = 0;
+            for (const auto& patch : manager.GetPatches(nullptr, build_id)) {
+                // PatchNSO compares the build of the checked ones only.
+                if (!patch.builtin || !patch.enabled) {
+                    continue;
+                }
+                CAPTURE(patch.name);
+                CHECK(patch.last_result != Result::NotLoaded);
+                CHECK((patch.build == Build::Other) == (patch.last_result == Result::WrongBuild));
+                ++checked;
+            }
+            CHECK(checked >= 4);
+        }
+        // Leaves no result of these starts to the tests after this one.
+        void(manager.PatchNSO(std::vector<u8>(4), "main"));
+    }
+
+    SECTION("Only a title with listed built-ins needs the read") {
+        CHECK(FileSys::HasListedBuiltinPatches(OcarinaTitleId));
+        CHECK_FALSE(FileSys::HasListedBuiltinPatches(OtherTitleId));
+        for (const auto& patch : context.Manager(OtherTitleId).GetPatches(nullptr, OcarinaBuildId)) {
+            CHECK_FALSE(patch.builtin);
+        }
+    }
+}
+
 namespace {
 
 // A made-up game's main for the pack tests: text up to 0x1080 (its executable padding runs to
