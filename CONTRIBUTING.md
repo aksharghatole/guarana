@@ -85,3 +85,15 @@ Guarana is a fork of [zortos293/Lichii](https://github.com/zortos293/Lichii). Be
 Every merged pull request is credited for good: your name goes on the [Hall of fame](https://karimalsalah.github.io/guarana/legacy.html) and in [CONTRIBUTORS.md](CONTRIBUTORS.md), rebuilt daily from the git history. Your first merged pull request and your first device report each get one thank-you comment from the `welcome` workflow, with a next step; your name appears once a maintainer merges the next Hall of fame update. Authors of `Co-authored-by:` trailers count too, and so do ported fixes (credit the original author). AI tools you used are listed as tools, not as people; the person who owns the pull request is the contributor.
 
 Everyone here follows the [Code of Conduct](CODE_OF_CONDUCT.md), on Discord too.
+
+Submit only code and assets you have permission to share. Do not include games, firmware,
+decryption keys, console credentials, extracted shaders or other proprietary data in commits,
+issues or pull requests. Use synthetic test fixtures and document their provenance. Game-specific
+patches need a clear account of which bytes are original work and which came from another source.
+
+Keep reports focused on reproducible behavior. Do not link to unauthorized downloads or promote
+leaked or pre-release copies. Do not attach bug bundles, GPU traces, shader or pipeline caches,
+or memory dumps publicly; ask a maintainer for handling instructions first. Review plain-text
+logs for personal information and credentials before posting.
+
+Keep applicable copyright notices and third-party license notices when modifying or porting code.

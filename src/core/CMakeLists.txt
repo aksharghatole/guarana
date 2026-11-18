@@ -580,6 +580,8 @@ add_library(core STATIC
     hle/service/audio/hardware_opus_decoder.h
     hle/service/bcat/backend/backend.cpp
     hle/service/bcat/backend/backend.h
+    hle/service/bcat/backend/nextendo.cpp
+    hle/service/bcat/backend/nextendo.h
     hle/service/bcat/bcat.cpp
     hle/service/bcat/bcat.h
     hle/service/bcat/bcat_result.h
@@ -679,6 +681,7 @@ add_library(core STATIC
     hle/service/filesystem/fsp/fs_i_save_data_info_reader.h
     hle/service/filesystem/fsp/fs_i_storage.cpp
     hle/service/filesystem/fsp/fs_i_storage.h
+    hle/service/filesystem/fsp/fs_read_throttle.h
     hle/service/filesystem/fsp/fs_read_trace.cpp
     hle/service/filesystem/fsp/fs_read_trace.h
     hle/service/filesystem/fsp/fsp_ldr.cpp
@@ -1094,6 +1097,7 @@ add_library(core STATIC
     hle/service/nx2_video_ready.h
     hle/service/services.cpp
     hle/service/services.h
+    hle/service/system_data_view.h
     hle/service/set/factory_settings_server.cpp
     hle/service/set/factory_settings_server.h
     hle/service/set/firmware_debug_settings_server.cpp

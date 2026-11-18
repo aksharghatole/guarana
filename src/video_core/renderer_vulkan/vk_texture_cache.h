@@ -254,6 +254,8 @@ public:
 
     void BarrierFeedbackLoop();
 
+    VkImageView ResolveColorFeedback(const ImageView& sampled, const ImageView& attachment);
+
     VkFormat GetSupportedFormat(VkFormat requested_format, VkFormatFeatureFlags required_features) const;
 
     const Device& device;
@@ -372,6 +374,17 @@ public:
         vk::Buffer bridge;
     };
     std::deque<PendingByteAddressedShadow> pending_byte_addressed_shadows;
+
+    struct ColorFeedbackSnapshot {
+        vk::Image image;
+        vk::ImageView view;
+        VideoCommon::Extent3D size;
+        VkComponentMapping swizzle;
+        u64 tick{};
+        u32 unused_frames{};
+        bool used_this_frame{};
+    };
+    std::vector<ColorFeedbackSnapshot> color_feedback_snapshots;
 };
 
 class Framebuffer {
@@ -509,6 +522,11 @@ public:
     Image& operator=(Image&&) = default;
 
     u32 HostMipLevels() const noexcept;
+
+    /// The format a copy out of the host image yields: the guest format, or what a converted one
+    /// (ASTC re-compressed to BC1/BC3 or decoded to RGBA8, BCn decoded without host support) is
+    /// kept as.
+    [[nodiscard]] VideoCore::Surface::PixelFormat HostFormat() const;
 
     /// No memory was left to make it: the texture cache drops it instead of using it.
     [[nodiscard]] bool OutOfMemory() const noexcept {
