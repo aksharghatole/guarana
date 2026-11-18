@@ -5,8 +5,8 @@
   <img alt="Guarana: Switch 2 emulation, tuned for the GPU you actually have" src="assets/readme/hero-light.svg" width="100%">
 </picture>
 
-**An open-source Nintendo Switch 2 emulator, tuned for the integrated GPU in your laptop or handheld.**<br>
-A fork of [Lichii](https://github.com/zortos293/Lichii) (the yuzu, Eden, Eglantine line), GPL-3.0-or-later. Intel Arc first, AMD handhelds next. Every number names its machine.
+**The open-source Nintendo Switch 2 emulator that runs everywhere — tuned first for the GPU you actually have.**<br>
+Intel Arc iGPUs and Radeon handhelds are the measured home ground; NVIDIA and AMD discrete cards, Windows, Linux, macOS and Android, x64 and ARM64 all run the same build. A fork of [Lichii](https://github.com/zortos293/Lichii) (the yuzu, Eden, Eglantine line), GPL-3.0-or-later. Every number names its machine.
 
 <a href="https://github.com/karimalsalah/guarana/releases/latest"><img alt="Download Guarana" src="https://img.shields.io/badge/Download-latest_release-F2851A?style=for-the-badge&labelColor=16181D"></a>
 
@@ -68,6 +68,50 @@ Guarana is tuned for integrated GPUs: **Intel Arc first, AMD handhelds next, and
 | NVIDIA and other discrete GPUs | | Not a target and not tested here; reports welcome |
 
 *Community reports* are third-party numbers from other builds and scenes. For context, a survey of other Switch 2 forks, as of 2026-11-13, found none claiming more than 26 fps in Hyrule Field on an Intel integrated GPU. Requirements, vendor notes and the device profile line: [docs/DEVICES.md](docs/DEVICES.md). Reports feed the leaderboard on the [benchmarks page](https://karimalsalah.github.io/guarana/benchmarks.html).
+
+## New in v20.6
+
+The biggest sync since the fork: **226 upstream Lichii commits** merged with every Guarana tuning
+kept, plus the fleet's own fixes. Highlights:
+
+- **Frame pacing for unlocked games.** Present ids and present waits let the host display start
+  the frames of games with an unlocked frame rate (FPS Unlock, Dynamic FPS); frame generation
+  never waits for a present frame, and pacing targets count game frames, not generated presents.
+  Guarana's fluid presenter and locked cadence compose with all of it.
+- **Ocarina of Time text speeds, built in.** 2x, 4x and Instant text as opt-in add-ons (port of
+  NotRexed/Hookshot#402), next to the patch-pack versions; the FPS Unlock built-in now flags the
+  game's frame rate as unlocked so the presenter can pace it. Cheats that write over a built-in's
+  code or state are named in the log before they surprise you.
+- **Smarter async shaders.** The pending-draw policy gains upstream's color-write-history
+  heuristic (a draw is skipped only when every target it writes was drawn in an earlier frame —
+  Mario Kart World's baked terrain, Eglantine #874) and a bounded wait budget with 10 s logging;
+  `EDEN_NX2_ASYNC_DISCARD=2` (Fritchii) and `EDEN_NX2_SKIP_REDRAWN` keep their measured behavior.
+- **Switch 2 rendering fixes.** Mesh vertex-input lending, color-feedback-loop checks, mesh
+  compute builds with guest-warp subgroup sizing, texture-cache write-back fixes, and the
+  clear-covers depth optimization (Fritchii EXP56) that stops OoT re-uploading 7.5 MiB a frame.
+- **OoT network bypass, more robust.** The tonemap copy keeps Guarana's design and gains
+  upstream's candidate detection: the latest draw of the output pass's input size stands in for
+  the tonemap when no known tonemap shader has drawn yet.
+- **Launcher.** Built-in add-ons say before the first start whether they fit the game's build;
+  launcher sessions hide the desktop window while the game plays and bring it back on stop;
+  session report cards summarize every run.
+- **Platform hardening.** Native HOME isolation, fail-closed NCA header signatures, RADV hang
+  report wait, Joy-Con 2 IR mouse support, and the ingest triage parses every current issue form.
+
+## The launcher
+
+Guarana ships a launcher, not just an emulator window:
+
+- **Launcher sessions** — start a game from the list and the desktop window steps aside; it
+  returns when the game stops, with a session report card (fps, pacing, stutters, switches).
+- **Add-ons in one place** — built-ins (Max Resolution, render scales, text speeds, FPS Unlock)
+  and patch packs with per-game enable/disable, off-by-default options, and a build-fit check
+  before the first start.
+- **One place per setting** — the mode is set once, not beside the settings page; device
+  profiles apply the measured switch set for your GPU.
+- **Stable install path and update handoff** — installs land where the updater expects them.
+
+<!-- Screenshot: assets/readme/launcher.png — capture plan in the v20.6 marketing kit. -->
 
 ## New in v20.4
 
