@@ -613,6 +613,7 @@ public:
 private:
     std::vector<PatchPack> packs;
     std::vector<std::vector<BuiltinPatchRecord>> pack_records;
+    std::vector<std::vector<BuiltinPatchState>> pack_states;
 };
 
 BuiltinPatchSet::BuiltinPatchSet(std::vector<PatchPack> candidates,
@@ -650,9 +651,14 @@ BuiltinPatchSet::BuiltinPatchSet(std::vector<PatchPack> candidates,
     patches.assign(BUILTIN_PATCHES.begin(), BUILTIN_PATCHES.end());
     // Reserved up front: the patches view the record lists while they are being added.
     pack_records.reserve(pack_patch_count);
+    pack_states.reserve(pack_patch_count);
     for (const auto& pack : packs) {
         for (const auto& pack_patch : pack.patches) {
             auto& records = pack_records.emplace_back();
+            auto& states = pack_states.emplace_back();
+            if (pack_patch.state_size != 0) {
+                states.push_back(BuiltinPatchState{pack_patch.state_offset, pack_patch.state_size});
+            }
             records.reserve(pack_patch.records.size());
             for (const auto& record : pack_patch.records) {
                 records.push_back(BuiltinPatchRecord{
@@ -671,8 +677,7 @@ BuiltinPatchSet::BuiltinPatchSet(std::vector<PatchPack> candidates,
                 .module = pack.module,
                 .build_id = pack.build_id,
                 .records = records,
-                .state_offset = pack_patch.state_offset,
-                .state_size = pack_patch.state_size,
+                .states = states,
                 .replaces = pack_patch.replaces,
                 .off_by_default = pack_patch.off_by_default,
                 .group = pack_patch.group,
@@ -957,8 +962,8 @@ std::vector<BuiltinPatchRange> BuiltinPatchRanges() {
                                           : BuiltinPatchRange::Kind::Code,
                 record.module_offset, (std::max)(record.bytes.size(), OriginalSize(record)));
         }
-        if (patch.state_size != 0) {
-            add(BuiltinPatchRange::Kind::State, patch.state_offset, patch.state_size);
+        for (const auto& state : patch.states) {
+            add(BuiltinPatchRange::Kind::State, state.offset, state.size);
         }
     }
     return out;
