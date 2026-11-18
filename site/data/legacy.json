@@ -3,7 +3,7 @@
   "repo": "karimalsalah/guarana",
   "since": "2026-11-13",
   "as_of": "2026-11-16",
-  "commits": 773,
+  "commits": 919,
   "people": [
     {
       "login": "mushymeow",
@@ -15,15 +15,15 @@
     {
       "login": "zortos293",
       "name": null,
-      "commits": 135,
-      "coauthored": 3,
+      "commits": 164,
+      "coauthored": 4,
       "first": "2026-11-04"
     },
     {
       "login": "kraibse",
       "name": null,
       "commits": 2,
-      "coauthored": 0,
+      "coauthored": 1,
       "first": "2026-11-05"
     },
     {
@@ -100,7 +100,7 @@
       "login": "cerroverb",
       "name": null,
       "commits": 4,
-      "coauthored": 1,
+      "coauthored": 2,
       "first": "2026-11-13"
     },
     {
@@ -120,7 +120,7 @@
     {
       "login": "danieljesus",
       "name": null,
-      "commits": 23,
+      "commits": 38,
       "coauthored": 1,
       "first": "2026-11-13"
     },
@@ -190,7 +190,7 @@
     {
       "login": "karimalsalah",
       "name": null,
-      "commits": 223,
+      "commits": 317,
       "coauthored": 0,
       "first": "2026-11-13"
     },
@@ -345,7 +345,7 @@
       "login": "CheezerWheezer",
       "name": null,
       "commits": 0,
-      "coauthored": 1,
+      "coauthored": 2,
       "first": "2026-11-14"
     },
     {
@@ -421,7 +421,7 @@
     {
       "login": "jschert",
       "name": null,
-      "commits": 0,
+      "commits": 1,
       "coauthored": 1,
       "first": "2026-11-14"
     },
@@ -429,7 +429,7 @@
       "login": "kurebeyashi-noah",
       "name": null,
       "commits": 2,
-      "coauthored": 2,
+      "coauthored": 4,
       "first": "2026-11-14"
     },
     {
@@ -443,7 +443,7 @@
       "login": "liomaroliveira",
       "name": null,
       "commits": 2,
-      "coauthored": 0,
+      "coauthored": 1,
       "first": "2026-11-14"
     },
     {
@@ -506,7 +506,7 @@
       "login": null,
       "name": "Temirlan J",
       "commits": 0,
-      "coauthored": 1,
+      "coauthored": 3,
       "first": "2026-11-14"
     },
     {
@@ -561,7 +561,7 @@
     {
       "login": "lethevimlet",
       "name": null,
-      "commits": 1,
+      "commits": 2,
       "coauthored": 0,
       "first": "2026-11-15"
     },
@@ -571,16 +571,100 @@
       "commits": 1,
       "coauthored": 0,
       "first": "2026-11-15"
+    },
+    {
+      "login": null,
+      "name": "AManWithAPlan",
+      "commits": 0,
+      "coauthored": 1,
+      "first": "2026-11-16"
+    },
+    {
+      "login": "byronlai99",
+      "name": null,
+      "commits": 0,
+      "coauthored": 1,
+      "first": "2026-11-16"
+    },
+    {
+      "login": "dzervas",
+      "name": null,
+      "commits": 2,
+      "coauthored": 0,
+      "first": "2026-11-16"
+    },
+    {
+      "login": "Frizti",
+      "name": null,
+      "commits": 0,
+      "coauthored": 3,
+      "first": "2026-11-16"
+    },
+    {
+      "login": null,
+      "name": "Hydro74000",
+      "commits": 0,
+      "coauthored": 1,
+      "first": "2026-11-16"
+    },
+    {
+      "login": "intellq",
+      "name": null,
+      "commits": 0,
+      "coauthored": 1,
+      "first": "2026-11-16"
+    },
+    {
+      "login": "LukachuPro88",
+      "name": null,
+      "commits": 1,
+      "coauthored": 0,
+      "first": "2026-11-16"
+    },
+    {
+      "login": null,
+      "name": "Rhys Denno",
+      "commits": 0,
+      "coauthored": 2,
+      "first": "2026-11-16"
+    },
+    {
+      "login": "RsMan-Dev",
+      "name": null,
+      "commits": 0,
+      "coauthored": 1,
+      "first": "2026-11-16"
+    },
+    {
+      "login": "Terobyte",
+      "name": null,
+      "commits": 2,
+      "coauthored": 0,
+      "first": "2026-11-16"
+    },
+    {
+      "login": "the-cashman",
+      "name": null,
+      "commits": 0,
+      "coauthored": 1,
+      "first": "2026-11-16"
+    },
+    {
+      "login": null,
+      "name": "ZeroOneTV",
+      "commits": 0,
+      "coauthored": 1,
+      "first": "2026-11-16"
     }
   ],
   "tools": [
     {
       "name": "Claude",
-      "commits": 506
+      "commits": 617
     },
     {
       "name": "Capy",
-      "commits": 111
+      "commits": 127
     },
     {
       "name": "OpenAI Codex / ChatGPT",
@@ -600,11 +684,11 @@
     },
     {
       "name": "Gemini",
-      "commits": 5
+      "commits": 6
     },
     {
       "name": "GitHub Actions",
-      "commits": 1
+      "commits": 2
     },
     {
       "name": "Instinct",

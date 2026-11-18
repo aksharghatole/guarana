@@ -265,7 +265,7 @@ listed apart as tools. Rebuilt daily by [`tools/ci/legacy.py`](tools/ci/legacy.p
   <a href="https://github.com/Velken"><img src="https://github.com/Velken.png?size=96" width="48" height="48" alt="Velken" title="Velken"></a>
 </p>
 
-**81 people credited for good**, 21 of them not shown here. Everyone: [CONTRIBUTORS.md](CONTRIBUTORS.md) and the [Hall of fame](https://karimalsalah.github.io/guarana/legacy.html).
+**93 people credited for good**, 33 of them not shown here. Everyone: [CONTRIBUTORS.md](CONTRIBUTORS.md) and the [Hall of fame](https://karimalsalah.github.io/guarana/legacy.html).
 
 <!-- legacy:end -->
 
