@@ -88,6 +88,7 @@ add_executable(tests
     core/memory_span.cpp
     core/kip_blz.cpp
     core/builtin_patches.cpp
+    core/main_build_id.cpp
     core/oot_render_scale.cpp
     core/cheat_parser.cpp
     core/builtin_font_glyphs.cpp
