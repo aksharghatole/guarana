@@ -15,6 +15,7 @@
 #include "common/settings.h"
 #include "frontend_common/config.h"
 #include "frontend_common/recommended_settings.h"
+#include "tests/common/restore_eden_path.h"
 
 namespace {
 
@@ -73,7 +74,7 @@ public:
     }
 
     ~ConfigDirectory() {
-        Common::FS::SetEdenPath(Common::FS::EdenPath::ConfigDir, original);
+        Tests::RestoreEdenPath(Common::FS::EdenPath::ConfigDir, original);
         std::error_code error;
         std::filesystem::remove_all(path, error);
     }
@@ -135,7 +136,8 @@ void CheckLegacyProfile() {
     CHECK(values.gpu_accuracy.GetValue() == Settings::GpuAccuracy::High);
     CHECK(values.nvdec_emulation.GetValue() == Settings::NvdecEmulation::Cpu);
     CHECK_FALSE(values.async_presentation.GetValue());
-    CHECK_FALSE(values.use_asynchronous_shaders.GetValue());
+    // Not waiting for shaders became every config's default, not only a seeded one.
+    CHECK(values.use_asynchronous_shaders.GetValue());
 }
 
 void CheckUnchangedProfile() {
@@ -211,8 +213,8 @@ TEST_CASE("Absent global config receives the first-run profile and persists it",
                                std::istreambuf_iterator<char>{}};
     REQUIRE(saved.LoadData(contents) >= 0);
     file.close();
-    for (const char* key : {"scaling_filter", "gpu_accuracy", "nvdec_emulation",
-                            "async_presentation", "use_asynchronous_shaders"}) {
+    for (const char* key :
+         {"scaling_filter", "gpu_accuracy", "nvdec_emulation", "async_presentation"}) {
         CHECK_FALSE(saved.GetBoolValue("Renderer", (std::string{key} + "\\default").c_str(), true));
     }
     const auto filename = config->GetConfigFilePath();
@@ -265,10 +267,10 @@ TEST_CASE("EDEN_NX2_SEED_FILTER keeps the scaling filter out of the first-run se
                                std::istreambuf_iterator<char>{}};
     REQUIRE(saved.LoadData(contents) >= 0);
     // A seeded key is written with \default=false, which a game preset reads as the player's
-    // choice; an unseeded one is absent or still at its default.
+    // choice; an unseeded one is absent or still at its default. use_asynchronous_shaders is not
+    // seeded: async shaders are every config's default now, so its value is checked above instead.
     CHECK(saved.GetBoolValue("Renderer", "scaling_filter\\default", true) == !filter_seeded);
-    for (const char* key : {"gpu_accuracy", "nvdec_emulation", "async_presentation",
-                            "use_asynchronous_shaders"}) {
+    for (const char* key : {"gpu_accuracy", "nvdec_emulation", "async_presentation"}) {
         CHECK_FALSE(saved.GetBoolValue("Renderer", (std::string{key} + "\\default").c_str(), true));
     }
 }
