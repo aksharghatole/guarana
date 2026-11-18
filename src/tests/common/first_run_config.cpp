@@ -267,10 +267,10 @@ TEST_CASE("EDEN_NX2_SEED_FILTER keeps the scaling filter out of the first-run se
                                std::istreambuf_iterator<char>{}};
     REQUIRE(saved.LoadData(contents) >= 0);
     // A seeded key is written with \default=false, which a game preset reads as the player's
-    // choice; an unseeded one is absent or still at its default.
+    // choice; an unseeded one is absent or still at its default. use_asynchronous_shaders is not
+    // seeded: async shaders are every config's default now, so its value is checked above instead.
     CHECK(saved.GetBoolValue("Renderer", "scaling_filter\\default", true) == !filter_seeded);
-    for (const char* key : {"gpu_accuracy", "nvdec_emulation", "async_presentation",
-                            "use_asynchronous_shaders"}) {
+    for (const char* key : {"gpu_accuracy", "nvdec_emulation", "async_presentation"}) {
         CHECK_FALSE(saved.GetBoolValue("Renderer", (std::string{key} + "\\default").c_str(), true));
     }
 }
