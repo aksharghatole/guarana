@@ -515,6 +515,73 @@ void TextureCache<P>::RunGarbageCollector(bool out_of_memory) {
         Configure(true);
         Collect();
     }
+    if (!overlap_downloads.empty() && async_downloads) {
+        std::stable_sort(overlap_downloads.begin(), overlap_downloads.end(),
+                         [](const auto& a, const auto& b) { return a.tick < b.tick; });
+        if constexpr (requires { runtime.CurrentTick(); }) {
+            const u64 gpu_tick = runtime.CurrentTick();
+            for (auto& download : overlap_downloads) {
+                device_memory.UpdatePagesCachedCount(download.cpu_addr, download.size, 1);
+                overlap_download_bytes += download.map.mapped_span.size();
+                async_overlap_downloads.push_back(AsyncOverlapDownload{
+                    .gpu_tick = gpu_tick,
+                    .gpu_addr = download.gpu_addr,
+                    .cpu_addr = download.cpu_addr,
+                    .size = download.size,
+                    .info = download.info,
+                    .copies = std::move(download.copies),
+                    .map = download.map,
+                    .cancelled = false,
+                    .keep = download.keep,
+                    .keep_ticks = download.keep_ticks,
+                    .tick = download.tick,
+                    .address_space = download.address_space,
+                });
+            }
+        }
+        ++overlap_download_batches;
+        overlap_download_images += overlap_downloads.size();
+        overlap_downloads.clear();
+    }
+    if (!overlap_downloads.empty()) {
+        const auto wait_start = std::chrono::steady_clock::now();
+        runtime.Finish();
+        overlap_download_wait_us += static_cast<u64>(
+            std::chrono::duration_cast<std::chrono::microseconds>(
+                std::chrono::steady_clock::now() - wait_start)
+                .count());
+        ++overlap_download_batches;
+        overlap_download_images += overlap_downloads.size();
+        std::stable_sort(overlap_downloads.begin(), overlap_downloads.end(),
+                         [](const auto& a, const auto& b) { return a.tick < b.tick; });
+        u64 bytes = 0;
+        for (auto& download : overlap_downloads) {
+            if (const auto memory = AddressSpaceMemory(download.address_space)) {
+                SwizzleKeeping(*memory, download.gpu_addr, download.info, download.copies,
+                               download.map.mapped_span, download.keep);
+                ReloadUnderLanded(download.cpu_addr, download.size, download.tick);
+            } else {
+                NoteWritebackLost(download.cpu_addr, download.size, download.tick);
+            }
+            bytes += download.map.mapped_span.size();
+            runtime.FreeDeferredStagingBuffer(download.map);
+        }
+        overlap_download_bytes += bytes;
+        if (Common::DkbFrameTrace::Enabled()) {
+            static u64 batches{};
+            static u64 images{};
+            images += overlap_downloads.size();
+            if (batches++ % 32 == 0) {
+                LOG_INFO(HW_GPU,
+                         "DKB gc overlap download batch #{} images={} bytes={:#x} total_images={} "
+                         "first gpu={:#x} {}x{}",
+                         batches, overlap_downloads.size(), bytes, images,
+                         overlap_downloads.front().gpu_addr,
+                         overlap_downloads.front().info.size.width,
+                         overlap_downloads.front().info.size.height);
+            }
+        }
+    }
     flush_evictions();
 }
 
@@ -706,75 +773,6 @@ void TextureCache<P>::ClearStaleImage(const ImageBase& image) {
         return;
     }
     ClearStaleGpu(*gpu_memory, image.gpu_addr, image.guest_size_bytes);
-}
-
-    if (!overlap_downloads.empty() && async_downloads) {
-        std::stable_sort(overlap_downloads.begin(), overlap_downloads.end(),
-                         [](const auto& a, const auto& b) { return a.tick < b.tick; });
-        if constexpr (requires { runtime.CurrentTick(); }) {
-            const u64 gpu_tick = runtime.CurrentTick();
-            for (auto& download : overlap_downloads) {
-                device_memory.UpdatePagesCachedCount(download.cpu_addr, download.size, 1);
-                overlap_download_bytes += download.map.mapped_span.size();
-                async_overlap_downloads.push_back(AsyncOverlapDownload{
-                    .gpu_tick = gpu_tick,
-                    .gpu_addr = download.gpu_addr,
-                    .cpu_addr = download.cpu_addr,
-                    .size = download.size,
-                    .info = download.info,
-                    .copies = std::move(download.copies),
-                    .map = download.map,
-                    .cancelled = false,
-                    .keep = download.keep,
-                    .keep_ticks = download.keep_ticks,
-                    .tick = download.tick,
-                    .address_space = download.address_space,
-                });
-            }
-        }
-        ++overlap_download_batches;
-        overlap_download_images += overlap_downloads.size();
-        overlap_downloads.clear();
-    }
-    if (!overlap_downloads.empty()) {
-        const auto wait_start = std::chrono::steady_clock::now();
-        runtime.Finish();
-        overlap_download_wait_us += static_cast<u64>(
-            std::chrono::duration_cast<std::chrono::microseconds>(
-                std::chrono::steady_clock::now() - wait_start)
-                .count());
-        ++overlap_download_batches;
-        overlap_download_images += overlap_downloads.size();
-        std::stable_sort(overlap_downloads.begin(), overlap_downloads.end(),
-                         [](const auto& a, const auto& b) { return a.tick < b.tick; });
-        u64 bytes = 0;
-        for (auto& download : overlap_downloads) {
-            if (const auto memory = AddressSpaceMemory(download.address_space)) {
-                SwizzleKeeping(*memory, download.gpu_addr, download.info, download.copies,
-                               download.map.mapped_span, download.keep);
-                ReloadUnderLanded(download.cpu_addr, download.size, download.tick);
-            } else {
-                NoteWritebackLost(download.cpu_addr, download.size, download.tick);
-            }
-            bytes += download.map.mapped_span.size();
-            runtime.FreeDeferredStagingBuffer(download.map);
-        }
-        overlap_download_bytes += bytes;
-        if (Common::DkbFrameTrace::Enabled()) {
-            static u64 batches{};
-            static u64 images{};
-            images += overlap_downloads.size();
-            if (batches++ % 32 == 0) {
-                LOG_INFO(HW_GPU,
-                         "DKB gc overlap download batch #{} images={} bytes={:#x} total_images={} "
-                         "first gpu={:#x} {}x{}",
-                         batches, overlap_downloads.size(), bytes, images,
-                         overlap_downloads.front().gpu_addr,
-                         overlap_downloads.front().info.size.width,
-                         overlap_downloads.front().info.size.height);
-            }
-        }
-    }
 }
 
 template <class P>
@@ -6648,6 +6646,9 @@ DrawTargets TextureCache<P>::ClassifyDrawTargets() {
         result.kind = DrawTargetClass::Persistent;
     }
     return result;
+}
+
+template <class P>
 bool TextureCache<P>::ClearWritesWhole(const ImageInfo& info, GPUVAddr gpu_addr) const {
     if (info.type != ImageType::e2D || info.resources.levels != 1 ||
         info.resources.layers != 1 || info.num_samples != 1) {
