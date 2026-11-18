@@ -1105,6 +1105,8 @@ TEST_CASE("A take after a pending try-take drops the queued prebuild, which coun
     scheduler.RunOrWait(blocker);
     REQUIRE(builds == 0);
     REQUIRE(ended == 1);
+}
+
 TEST_CASE("Driver build times are counted in the ranges of a cache hit and a compile",
           "[video_core][shader_jobs]") {
     Vulkan::DriverBuildTimes times;
