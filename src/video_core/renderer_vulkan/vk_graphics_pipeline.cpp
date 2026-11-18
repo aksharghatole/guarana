@@ -1950,18 +1950,18 @@ bool GraphicsPipeline::ConfigureDraw(const RescalingPushConstant& rescaling,
             const auto bind_program_state = [&] {
                 constexpr VkShaderStageFlags push_stages{VK_SHADER_STAGE_ALL_GRAPHICS |
                                                          VK_SHADER_STAGE_COMPUTE_BIT};
-                cmdbuf.PushConstants(pipeline_layout, push_stages, RESCALING_LAYOUT_WORDS_OFFSET,
+                cmdbuf.PushConstants(*pipeline_layout, push_stages, RESCALING_LAYOUT_WORDS_OFFSET,
                                      sizeof(rescaling_data), rescaling_data.data());
                 const f32 config_down_factor{Settings::values.resolution_info.down_factor};
                 const f32 down_factor{is_rescaling ? config_down_factor : 1.0f};
-                cmdbuf.PushConstants(pipeline_layout, push_stages,
+                cmdbuf.PushConstants(*pipeline_layout, push_stages,
                                      RESCALING_LAYOUT_DOWN_FACTOR_OFFSET, sizeof(down_factor),
                                      &down_factor);
                 if (uses_render_area) {
-                    cmdbuf.PushConstants(pipeline_layout, push_stages, RENDERAREA_LAYOUT_OFFSET,
+                    cmdbuf.PushConstants(*pipeline_layout, push_stages, RENDERAREA_LAYOUT_OFFSET,
                                          sizeof(render_area_data), &render_area_data);
                 }
-                cmdbuf.BindDescriptorSets(VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_layout, 0,
+                cmdbuf.BindDescriptorSets(VK_PIPELINE_BIND_POINT_COMPUTE, *pipeline_layout, 0,
                                           descriptor_set, nullptr);
             };
             const auto memory_barrier = [&](VkAccessFlags src_access, VkAccessFlags dst_access,
@@ -2210,17 +2210,17 @@ bool GraphicsPipeline::ConfigureDraw(const RescalingPushConstant& rescaling,
                 ? VK_SHADER_STAGE_ALL_GRAPHICS | VK_SHADER_STAGE_TASK_BIT_EXT |
                       VK_SHADER_STAGE_MESH_BIT_EXT
                 : VK_SHADER_STAGE_ALL_GRAPHICS;
-        cmdbuf.PushConstants(pipeline_layout, push_stages, RESCALING_LAYOUT_WORDS_OFFSET,
+        cmdbuf.PushConstants(*pipeline_layout, push_stages, RESCALING_LAYOUT_WORDS_OFFSET,
                              sizeof(rescaling_data), rescaling_data.data());
         if (update_rescaling || mesh_emulation) {
             const f32 config_down_factor{Settings::values.resolution_info.down_factor};
             const f32 scale_down_factor{is_rescaling ? config_down_factor : 1.0f};
-            cmdbuf.PushConstants(pipeline_layout, push_stages,
+            cmdbuf.PushConstants(*pipeline_layout, push_stages,
                                  RESCALING_LAYOUT_DOWN_FACTOR_OFFSET, sizeof(scale_down_factor),
                                  &scale_down_factor);
         }
         if (uses_render_area) {
-            cmdbuf.PushConstants(pipeline_layout, push_stages, RENDERAREA_LAYOUT_OFFSET,
+            cmdbuf.PushConstants(*pipeline_layout, push_stages, RENDERAREA_LAYOUT_OFFSET,
                                  sizeof(render_area_data), &render_area_data);
         }
         if (has_stage_sets) {
@@ -2255,16 +2255,16 @@ bool GraphicsPipeline::ConfigureDraw(const RescalingPushConstant& rescaling,
         }
         if (uses_descriptor_buffer) {
             const u32 buffer_index{};
-            cmdbuf.SetDescriptorBufferOffsetsEXT(VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout,
+            cmdbuf.SetDescriptorBufferOffsetsEXT(VK_PIPELINE_BIND_POINT_GRAPHICS, *pipeline_layout,
                                                  0, buffer_index, descriptor_buffer_offset);
         } else if (uses_push_descriptor) {
-            cmdbuf.PushDescriptorSetWithTemplateKHR(*descriptor_update_template, pipeline_layout,
+            cmdbuf.PushDescriptorSetWithTemplateKHR(*descriptor_update_template, *pipeline_layout,
                                                     0, descriptor_data);
         } else if (update_descriptors) {
             const VkDescriptorSet descriptor_set{descriptor_allocator.Commit()};
             const vk::Device& dev{device.GetLogical()};
             dev.UpdateDescriptorSet(descriptor_set, *descriptor_update_template, descriptor_data);
-            cmdbuf.BindDescriptorSets(VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 0,
+            cmdbuf.BindDescriptorSets(VK_PIPELINE_BIND_POINT_GRAPHICS, *pipeline_layout, 0,
                                       descriptor_set, nullptr);
         }
     });
@@ -2321,11 +2321,11 @@ void GraphicsPipeline::MakePrepassPipelines(VkRenderPass render_pass) {
         };
         mesh_vertex_module = BuildShader(device, mesh_emulation->vertex_spirv);
         mesh_compute_pipeline = make_compute(*spv_modules[mesh_emulation->mesh_stage],
-                                             pipeline_layout,
+                                             *pipeline_layout,
                                              &stage_infos[mesh_emulation->mesh_stage], 1);
         if (mesh_emulation->has_task) {
             task_compute_pipeline =
-                make_compute(*spv_modules[0], pipeline_layout, &stage_infos[0], 2);
+                make_compute(*spv_modules[0], *pipeline_layout, &stage_infos[0], 2);
             distribution_module = BuildShader(device, mesh_emulation->distribution_spirv);
             distribution_pipeline =
                 make_compute(*distribution_module, *distribution_layout, nullptr, 3);
