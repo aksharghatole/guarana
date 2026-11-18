@@ -1270,7 +1270,6 @@ void EmitContext::DefineGlobalMemoryFunctions(const IR::Program& program) {
         Id route_base;
     };
     const auto search{[&](Id addr) {
-        const u64 ssbo_align_mask{~(profile.min_ssbo_alignment - 1U)};
         const auto base_address{[&](size_t index) {
             if (hoist && Sirit::ValidId(global_bases[index])) {
                 return OpLoad(U64, global_bases[index]);
