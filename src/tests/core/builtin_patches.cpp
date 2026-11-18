@@ -341,7 +341,8 @@ TEST_CASE("Built-in patches that can be applied together never touch the same by
     CHECK(has(MaxResolution, Kind::Code, 0x805BD0, 4));
     CHECK(has(FpsUnlock, Kind::CodeCave, 0x3C46200, UnlockRoutineSize));
     CHECK(has(DynamicFps, Kind::CodeCave, 0x3C46200, DynamicRoutineSize));
-    CHECK(has(FpsUnlock, Kind::State, 0x4E9FE00, StepStateSize));
+    CHECK(has(FpsUnlock, Kind::State, 0x4E9FE00, UnlockStateSize));
+    CHECK(has(FpsUnlock, Kind::State, 0x4E9EE00, StepStateSize));
     CHECK(has(DynamicFps, Kind::State, 0x4E9FE00, DynamicStateSize));
     // The hitstop hook writes 44 bytes and the turn speed hook 8.
     CHECK(has(FpsUnlock, Kind::Code, 0x2F53268, 44));
