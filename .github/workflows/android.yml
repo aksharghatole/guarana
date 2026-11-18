@@ -132,6 +132,19 @@ jobs:
           restore-keys: |
             android-arm64-ccache-
 
+      # Maven Central rate-limits the runners (HTTP 429) and a cold Gradle resolution then fails
+      # the whole APK. Cache the resolved dependencies and the wrapper between runs.
+      - name: Restore Gradle dependencies
+        id: gradle-cache
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: android-gradle-${{ hashFiles('src/android/**/*.gradle*', 'src/android/**/gradle-wrapper.properties', '.ci/android/**') }}
+          restore-keys: |
+            android-gradle-
+
       # The update checker stays off, as in every build of this fork (docs/LANES.md): -r and -n
       # would turn it on.
       - name: Build
@@ -160,6 +173,15 @@ jobs:
         with:
           path: .ccache
           key: ${{ steps.ccache.outputs.cache-primary-key }}
+
+      - name: Save Gradle dependencies
+        if: always() && inputs.save_caches && steps.gradle-cache.outcome == 'success'
+        uses: actions/cache/save@v6
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ steps.gradle-cache.outputs.cache-primary-key }}
 
       - name: Name the APK
         id: apk
