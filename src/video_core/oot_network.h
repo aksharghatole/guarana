@@ -209,6 +209,8 @@ struct OutputShapeInput {
         return difference * 32 <= drawn_size;
     };
     return close_to(scene_w, drawn.x1 - drawn.x0) && close_to(scene_h, drawn.y1 - drawn.y0);
+}
+
 /// Whether a B10G11R11 draw can hold the image the output pass shows: it has the size of the
 /// output pass's input and is not its output. The latest such draw before the output pass is the
 /// tonemap, whichever shader draws it, because it comes after the scene draws into the input.
