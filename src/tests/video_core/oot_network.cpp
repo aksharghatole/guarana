@@ -38,6 +38,8 @@ TEST_CASE("Ocarina of Time output passes of the dynamic resolution steps are rec
     STATIC_REQUIRE(IsOutputShader(0x03bf0ffc7d2d0bedULL));
     STATIC_REQUIRE_FALSE(IsOutputShader(0));
     STATIC_REQUIRE_FALSE(IsOutputShader(NetworkProgramKey));
+}
+
 TEST_CASE("The tonemap candidate is a draw of the output pass's input size, not its output",
           "[video_core][oot_network]") {
     // 1.1.1 at 1080p: the HDR scene (the input), the tonemapped image and the output.

@@ -952,7 +952,6 @@ private:
     /// True while a clear binds its render targets (UpdateRenderTargets(true)), so JoinImages can
     /// skip the upload of a new target the clear overwrites whole.
     bool clearing_render_targets = false;
-<<<<<<< HEAD
 
     struct AliasTracePair {
         ImageId dst;

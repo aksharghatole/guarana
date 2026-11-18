@@ -2110,6 +2110,8 @@ TEST_CASE("A patch pack gives a game built-ins without any C++", "[patch_manager
         CHECK(std::ranges::count(patches, MaxResolution, &FileSys::Patch::name) == 1);
         CHECK(std::ranges::find(patches, PackFix, &FileSys::Patch::name) == patches.end());
     }
+}
+
 TEST_CASE("Built-in text speed is off until checked in Add-Ons", "[patch_manager]") {
     constexpr size_t SiteOffset = sizeof(Loader::NSOHeader) + 0xAFE1B4;
     constexpr size_t CaveOffset = sizeof(Loader::NSOHeader) + 0x3C46F00;

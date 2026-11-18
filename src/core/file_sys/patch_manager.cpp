@@ -992,6 +992,8 @@ std::vector<std::string> FindBuiltinPatchOverlaps(std::span<const BuiltinPatchRa
         }
     }
     return out;
+}
+
 std::vector<BuiltinCheatOverlap> FindBuiltinCheatOverlaps(
     u64 title_id, std::span<const std::string_view> applied_patches,
     std::span<const Core::Memory::CheatEntry> cheats) {

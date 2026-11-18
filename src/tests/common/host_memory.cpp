@@ -340,6 +340,8 @@ TEST_CASE("HostMemory: A stopped zero-page pass leaves the pages as they are", "
     REQUIRE(looked_at == 0);
     REQUIRE(trimmed == 0);
     REQUIRE(resident(view));
+}
+
 // Latency of protect calls that take the placeholder lock (across two views) while a zero-page
 // pass runs at the ZeroTrim thread's low priority and every core is busy, as on a loaded PC.
 // tests "[.zero_trim_lock_benchmark]" runs it.
