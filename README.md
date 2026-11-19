@@ -253,6 +253,7 @@ listed apart as tools. Rebuilt daily by [`tools/ci/legacy.py`](tools/ci/legacy.p
   <a href="https://github.com/MythosOfs"><img src="https://github.com/MythosOfs.png?size=96" width="48" height="48" alt="MythosOfs" title="MythosOfs"></a>
   <a href="https://github.com/sethsethsethsethsethsethseth"><img src="https://github.com/sethsethsethsethsethsethseth.png?size=96" width="48" height="48" alt="sethsethsethsethsethsethseth" title="sethsethsethsethsethsethseth"></a>
   <a href="https://github.com/justin-wq1337"><img src="https://github.com/justin-wq1337.png?size=96" width="48" height="48" alt="justin-wq1337" title="justin-wq1337"></a>
+  <a href="https://github.com/Maufeat"><img src="https://github.com/Maufeat.png?size=96" width="48" height="48" alt="Maufeat" title="Maufeat"></a>
   <a href="https://github.com/PantACRO4life"><img src="https://github.com/PantACRO4life.png?size=96" width="48" height="48" alt="PantACRO4life" title="PantACRO4life"></a>
   <a href="https://github.com/BrunoSilvestre00"><img src="https://github.com/BrunoSilvestre00.png?size=96" width="48" height="48" alt="BrunoSilvestre00" title="BrunoSilvestre00"></a>
   <a href="https://github.com/jpkto"><img src="https://github.com/jpkto.png?size=96" width="48" height="48" alt="jpkto" title="jpkto"></a>
@@ -275,6 +276,7 @@ listed apart as tools. Rebuilt daily by [`tools/ci/legacy.py`](tools/ci/legacy.p
   <a href="https://github.com/kdegonia-star"><img src="https://github.com/kdegonia-star.png?size=96" width="48" height="48" alt="kdegonia-star" title="kdegonia-star"></a>
   <a href="https://github.com/kimoalsalah"><img src="https://github.com/kimoalsalah.png?size=96" width="48" height="48" alt="kimoalsalah" title="kimoalsalah"></a>
   <a href="https://github.com/krim404"><img src="https://github.com/krim404.png?size=96" width="48" height="48" alt="krim404" title="krim404"></a>
+  <a href="https://github.com/kurebeyashi-noah"><img src="https://github.com/kurebeyashi-noah.png?size=96" width="48" height="48" alt="kurebeyashi-noah" title="kurebeyashi-noah"></a>
   <a href="https://github.com/Molier"><img src="https://github.com/Molier.png?size=96" width="48" height="48" alt="Molier" title="Molier"></a>
   <a href="https://github.com/myshadowww"><img src="https://github.com/myshadowww.png?size=96" width="48" height="48" alt="myshadowww" title="myshadowww"></a>
   <a href="https://github.com/Nanoc6"><img src="https://github.com/Nanoc6.png?size=96" width="48" height="48" alt="Nanoc6" title="Nanoc6"></a>
@@ -294,7 +296,6 @@ listed apart as tools. Rebuilt daily by [`tools/ci/legacy.py`](tools/ci/legacy.p
   <a href="https://github.com/DuskDarf1"><img src="https://github.com/DuskDarf1.png?size=96" width="48" height="48" alt="DuskDarf1" title="DuskDarf1"></a>
   <a href="https://github.com/GoatTech-42"><img src="https://github.com/GoatTech-42.png?size=96" width="48" height="48" alt="GoatTech-42" title="GoatTech-42"></a>
   <a href="https://github.com/jschert"><img src="https://github.com/jschert.png?size=96" width="48" height="48" alt="jschert" title="jschert"></a>
-  <a href="https://github.com/kurebeyashi-noah"><img src="https://github.com/kurebeyashi-noah.png?size=96" width="48" height="48" alt="kurebeyashi-noah" title="kurebeyashi-noah"></a>
   <a href="https://github.com/Lancito01"><img src="https://github.com/Lancito01.png?size=96" width="48" height="48" alt="Lancito01" title="Lancito01"></a>
   <a href="https://github.com/liomaroliveira"><img src="https://github.com/liomaroliveira.png?size=96" width="48" height="48" alt="liomaroliveira" title="liomaroliveira"></a>
   <a href="https://github.com/marcochiusso-lgtm"><img src="https://github.com/marcochiusso-lgtm.png?size=96" width="48" height="48" alt="marcochiusso-lgtm" title="marcochiusso-lgtm"></a>
@@ -306,10 +307,9 @@ listed apart as tools. Rebuilt daily by [`tools/ci/legacy.py`](tools/ci/legacy.p
   <a href="https://github.com/simonMettler2000"><img src="https://github.com/simonMettler2000.png?size=96" width="48" height="48" alt="simonMettler2000" title="simonMettler2000"></a>
   <a href="https://github.com/StiensWout"><img src="https://github.com/StiensWout.png?size=96" width="48" height="48" alt="StiensWout" title="StiensWout"></a>
   <a href="https://github.com/thatrandomalt"><img src="https://github.com/thatrandomalt.png?size=96" width="48" height="48" alt="thatrandomalt" title="thatrandomalt"></a>
-  <a href="https://github.com/Velken"><img src="https://github.com/Velken.png?size=96" width="48" height="48" alt="Velken" title="Velken"></a>
 </p>
 
-**93 people credited for good**, 33 of them not shown here. Everyone: [CONTRIBUTORS.md](CONTRIBUTORS.md) and the [Hall of fame](https://karimalsalah.github.io/guarana/legacy.html).
+**99 people credited for good**, 39 of them not shown here. Everyone: [CONTRIBUTORS.md](CONTRIBUTORS.md) and the [Hall of fame](https://karimalsalah.github.io/guarana/legacy.html).
 
 <!-- legacy:end -->
 
