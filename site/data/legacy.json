@@ -2,8 +2,8 @@
   "schema_version": 1,
   "repo": "karimalsalah/guarana",
   "since": "2026-11-13",
-  "as_of": "2026-11-18",
-  "commits": 1104,
+  "as_of": "2026-11-20",
+  "commits": 1166,
   "people": [
     {
       "login": "mushymeow",
@@ -15,7 +15,7 @@
     {
       "login": "zortos293",
       "name": null,
-      "commits": 290,
+      "commits": 318,
       "coauthored": 5,
       "first": "2026-11-04"
     },
@@ -197,7 +197,7 @@
     {
       "login": "karimalsalah",
       "name": null,
-      "commits": 340,
+      "commits": 365,
       "coauthored": 0,
       "first": "2026-11-13"
     },
@@ -394,7 +394,7 @@
       "login": null,
       "name": "Frizti",
       "commits": 0,
-      "coauthored": 1,
+      "coauthored": 6,
       "first": "2026-11-14"
     },
     {
@@ -587,6 +587,13 @@
       "first": "2026-11-16"
     },
     {
+      "login": null,
+      "name": "Aydar Kamaltdinov",
+      "commits": 0,
+      "coauthored": 1,
+      "first": "2026-11-16"
+    },
+    {
       "login": "byronlai99",
       "name": null,
       "commits": 0,
@@ -629,10 +636,24 @@
       "first": "2026-11-16"
     },
     {
+      "login": null,
+      "name": "John",
+      "commits": 0,
+      "coauthored": 1,
+      "first": "2026-11-16"
+    },
+    {
       "login": "LukachuPro88",
       "name": null,
       "commits": 1,
       "coauthored": 0,
+      "first": "2026-11-16"
+    },
+    {
+      "login": null,
+      "name": "PavelBARABANOV",
+      "commits": 0,
+      "coauthored": 1,
       "first": "2026-11-16"
     },
     {
@@ -697,16 +718,30 @@
       "commits": 1,
       "coauthored": 0,
       "first": "2026-11-17"
+    },
+    {
+      "login": "tomvita",
+      "name": null,
+      "commits": 1,
+      "coauthored": 0,
+      "first": "2026-11-20"
+    },
+    {
+      "login": "wahhbuffet",
+      "name": null,
+      "commits": 2,
+      "coauthored": 0,
+      "first": "2026-11-20"
     }
   ],
   "tools": [
     {
       "name": "Claude",
-      "commits": 648
+      "commits": 656
     },
     {
       "name": "Capy",
-      "commits": 234
+      "commits": 261
     },
     {
       "name": "OpenAI Codex / ChatGPT",
@@ -714,7 +749,7 @@
     },
     {
       "name": "Dependabot",
-      "commits": 14
+      "commits": 19
     },
     {
       "name": "Cursor",
@@ -730,7 +765,7 @@
     },
     {
       "name": "GitHub Actions",
-      "commits": 4
+      "commits": 5
     },
     {
       "name": "Instinct",
