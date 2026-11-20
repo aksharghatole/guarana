@@ -510,6 +510,26 @@ bool NumberSwitchOn(const char* name) {
     return value != nullptr && std::strtoul(value, nullptr, 10) != 0;
 }
 
+/// EDEN_NX2_ASYNC_GUARD=1, read once (Eden 6a767ac43a): with asynchronous shaders, a draw whose
+/// pipeline is still building waits instead of being skipped when skipping it can break later
+/// draws for the session, not for one frame.
+bool AsyncGuardEnabled() {
+    static const bool enabled = NumberSwitchOn("EDEN_NX2_ASYNC_GUARD");
+    return enabled;
+}
+
+/// The guard's register side: transform feedback, no rasterization (the draw's effect is what it
+/// writes), or a first colour target under 640x360 (a lookup table or other small pass that later
+/// draws read).
+bool AsyncGuardKeepsDraw(const Tegra::Engines::Maxwell3D::Regs& regs) {
+    if (regs.transform_feedback_enabled != 0 || regs.rasterize_enable == 0) {
+        return true;
+    }
+    const auto& rt0 = regs.rt[0];
+    const u64 area = u64{rt0.width} * u64{rt0.height};
+    return rt0.width != 0 && area < u64{640} * 360;
+}
+
 /// EDEN_NX2_TENSOR_LOG=1, read once: one line per compute program with guest tensor operations,
 /// saying how they run (Shader::Backend::SPIRV::DescribeTensorProgram).
 bool TensorLogEnabled() {
@@ -4010,6 +4030,9 @@ bool PipelineCache::MaySkipPendingDraw() const noexcept {
     if (!use_asynchronous_shaders) {
         return false;
     }
+    if (AsyncGuardEnabled() && AsyncGuardKeepsDraw(maxwell3d->regs)) {
+        return false;
+    }
     const PendingDrawPolicy policy{CurrentPendingDrawPolicy()};
     return MaySkipUnbuiltDraw(policy.native, policy.mode, policy.can_discard, native_wait_budget_us);
 }
@@ -4045,6 +4068,13 @@ GraphicsPipeline* PipelineCache::BuiltPipeline(GraphicsPipeline* pipeline) noexc
         return pipeline;
     }
     if (!use_asynchronous_shaders) {
+        return pipeline;
+    }
+    // EDEN_NX2_ASYNC_GUARD: a draw that writes memory (storage buffers, images, global memory)
+    // feeds later draws; skipping it breaks them for the session (Eden: Super Mario Party
+    // Jamboree's characters, Super Mario Odyssey's fog after a fresh shader cache).
+    if (AsyncGuardEnabled() &&
+        (pipeline->WritesStorage() || AsyncGuardKeepsDraw(maxwell3d->regs))) {
         return pipeline;
     }
     const PendingDrawPolicy policy{CurrentPendingDrawPolicy()};
