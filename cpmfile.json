@@ -163,11 +163,11 @@
         "version": "20250828"
     },
     "lz4": {
-        "hash": "35c21a5d9cfb5bbf314a5321d02b36819491d2ee3cf8007030ca09d13ca4dae672247b7aeab553e973093604fc48221cb03dc92197c6efe8fc3746891363fdab",
+        "hash": "1b9ecf6b5d0b53be6a7e28f85c63daeecfbf55dee2759dab5eb4647675975ccfe426152e382c30b8a8adb4038d40b312cceac4c56f348fb0977919869aa24669",
         "name": "lz4",
         "repo": "lz4/lz4",
         "source_subdir": "build/cmake",
-        "version": "ebb370ca83"
+        "version": "v1.11.1"
     },
     "moltenvk": {
         "artifact": "MoltenVK-macOS.tar",
@@ -238,7 +238,7 @@
         "version": "a3f0ec02b3"
     },
     "quazip": {
-        "hash": "609c240c7f029ac26a37d8fbab51bc16284e05e128b78b9b9c0e95d083538c36047a67d682759ac990e4adb0eeb90f04f1ea7fe2253bbda7e7e3bcce32e53dd8",
+        "hash": "423e38def8f93c4c3e7d261227ce0d38f9048d84e2aca029e21b5d0b71915a7ab14d3836a7ed3081cf9f6d3369aaf4eec44ffe2d652cc1a011c211bb940b7e91",
         "min_version": "1.3",
         "options": [
             "QUAZIP_QT_MAJOR_VERSION 6",
@@ -248,7 +248,7 @@
         ],
         "package": "QuaZip-Qt6",
         "repo": "stachenov/quazip",
-        "version": "2e95c9001b"
+        "version": "v1.7.2"
     },
     "reshade": {
         "hash": "6fc9b39821ca6e2d91160f05846b3a42159fec759f5d6fba91d1a57801a1bdaf6047740578c136f0b1a60a9c29ad160d87dbfe0dbfbcdf6ea879a8a078377b8c",
@@ -259,11 +259,17 @@
         "version": "v6.8.0"
     },
     "sdl3": {
-        "hash": "df5a323af7ac366661a3c0e887969c72584d232f3cc211419d59b0487b620b6b2859d4549c9e8df002ee489290062e466fcfddf7edc0872a37b1f2845e81c0f3",
+        "hash": "8b2c4596f51a2e49e0b54629f440b17952562ec0d403e7852b0148487c89a0f2a28cfe0e700a6bb3278b0191d3eff30b5e0cddc2498783180c16806d4b943173",
         "min_version": "3.2.10",
         "package": "SDL3",
+        "patches": [
+            "0001-use-parent-libusb.patch",
+            "0002-switch2-sensor-counter-wrap.patch",
+            "0003-switch2-sensor-enabled.patch",
+            "0004-no-static-export-without-install.patch"
+        ],
         "repo": "libsdl-org/SDL",
-        "version": "release-3.4.8"
+        "version": "release-3.4.20"
     },
     "sdl3-ci": {
         "ci": true,
@@ -364,7 +370,7 @@
         "version": "11b08f2712264bbed731545085cbd9702096ceb7"
     },
     "zlib": {
-        "hash": "16fea4df307a68cf0035858abe2fd550250618a97590e202037acd18a666f57afc10f8836cbbd472d54a0e76539d0e558cb26f059d53de52ff90634bbf4f47d4",
+        "hash": "67f3ce120210a69aa05cece6f76d5f45b50d947c095169f0d699732d0182d7d04aec1af56a3fc6bbcc2af91a57e099cd73980b17f7d96ad90aeabbeaafbf1cbc",
         "min_version": "1.2",
         "options": [
             "ZLIB_BUILD_SHARED OFF",
@@ -373,7 +379,7 @@
         ],
         "package": "ZLIB",
         "repo": "madler/zlib",
-        "version": "v1.3.2"
+        "version": "v1.4"
     },
     "zstd": {
         "find_args": "MODULE",

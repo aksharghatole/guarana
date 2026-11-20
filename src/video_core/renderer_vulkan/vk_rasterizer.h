@@ -6,16 +6,19 @@
 #pragma once
 
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <optional>
 #include <string_view>
 #include <unordered_set>
+#include <utility>
 
 #include <boost/container/static_vector.hpp>
 
 #include "common/common_types.h"
 #include "common/dkb_cpu_trace.h"
 #include "common/dkb_frame_trace.h"
+#include "common/shutdown_progress.h"
 #include "video_core/control/channel_state_cache.h"
 #include "video_core/engines/maxwell_dma.h"
 #include "video_core/host1x/gpu_device_memory_manager.h"
@@ -199,6 +202,23 @@ public:
     /// after AccelerateDisplay.
     std::optional<ExtrapolationSource> OcarinaExtrapolationSource() const;
 
+    /// Ocarina of Time's temporal upscaler, for the status bar (read on the UI thread): frames it
+    /// drew in place of the game's upscale so far.
+    [[nodiscard]] u64 UpscaledFrames() const noexcept {
+        return oot_upscaled_frames.load(std::memory_order_relaxed);
+    }
+    /// The last upscaled frame's sizes: render width, height, output width, height (16 bits
+    /// each, from the top).
+    [[nodiscard]] u64 UpscaleSizes() const noexcept {
+        return oot_upscale_sizes.load(std::memory_order_relaxed);
+    }
+    /// "FSR 3.1", "FSR 4" or "DLSS": what drew the last upscaled frame; null before one.
+    [[nodiscard]] const char* UpscalerName() const noexcept {
+        return oot_upscaler_name.load(std::memory_order_relaxed);
+    }
+    /// Why the game's own upscale draws: a short tag and the full reason.
+    [[nodiscard]] std::pair<const char*, const char*> UpscalerIdleReason() const;
+
 private:
     static constexpr const u64 NEEDS_D24[] = {
         0x01006A800016E000ULL, // SSBU
@@ -222,6 +242,9 @@ private:
     void TraceDrawFailure(std::string_view reason);
     /// Remembers render target 0 of a draw with one of Ocarina of Time's tonemap shaders.
     void TrackOotTonemappedImage(const GraphicsPipeline& pipeline);
+
+    /// Remembers render target 0 of a draw that can hold Ocarina of Time's tonemapped image.
+    void TrackOotTonemappedImage();
     bool TryNx2IndirectReset(bool is_indexed, u32 instance_count);
 
     void FlushWork();
@@ -322,6 +345,10 @@ private:
     s32 bound_channel_id = -1;
     Scheduler& scheduler;
 
+    // Each marker ends the teardown step (#239) of the members declared after it, up to the next
+    // marker: members are destroyed in reverse order.
+    Common::ShutdownStepMarker staging_destroyed{
+        "GPU: render passes, blits, descriptors and staging buffers"};
     StagingBufferPool staging_pool;
     DescriptorPool descriptor_pool;
     GuestDescriptorQueue guest_descriptor_queue;
@@ -330,13 +357,20 @@ private:
     BlitImageHelper blit_image;
     RenderPassCache render_pass_cache;
 
+    Common::ShutdownStepMarker texture_cache_destroyed{"GPU: texture cache"};
     TextureCacheRuntime texture_cache_runtime;
     TextureCache texture_cache;
+    Common::ShutdownStepMarker buffer_cache_destroyed{"GPU: buffer cache"};
     BufferCacheRuntime buffer_cache_runtime;
     BufferCache buffer_cache;
+    Common::ShutdownStepMarker query_cache_destroyed{"GPU: query cache"};
     QueryCacheRuntime query_cache_runtime;
     QueryCache query_cache;
+    Common::ShutdownStepMarker pipeline_cache_destroyed{
+        "GPU: pipeline cache: pipeline libraries, pools and workers"};
     PipelineCache pipeline_cache;
+    Common::ShutdownStepMarker rasterizer_state_destroyed{
+        "GPU: rasterizer's fences, frame dump, upscalers and draw state"};
     AccelerateDMA accelerate_dma;
     FenceManager fence_manager;
     FrameDump frame_dump;
@@ -347,6 +381,14 @@ private:
 
     u32 draw_counter = 0;
     std::optional<u64> oot_camera_sample_frame;
+    /// Why this frame's largest scene-target draw with a camera buffer gave no camera.
+    struct OcarinaCameraRefusal {
+        u64 frame{};
+        const char* reason{};
+        f32 camera_width{}, camera_height{};
+        u32 target_width{}, target_height{};
+    };
+    std::optional<OcarinaCameraRefusal> oot_camera_refusal;
     mutable std::optional<VideoCommon::OcarinaUpscaleBackend> oot_backend;
     /// The game started at the DLSS Performance render scale (1920x1080).
     bool oot_performance_scale{};
@@ -374,6 +416,13 @@ private:
     bool oot_live_failed{};
     const char* oot_fallback_reason{};
     u32 oot_fallback_repeats{};
+    /// For the status bar, read on the UI thread. The names and reasons are string literals.
+    std::atomic<u64> oot_upscaled_frames{};
+    std::atomic<u64> oot_upscale_sizes{};
+    std::atomic<const char*> oot_upscaler_name{};
+    std::atomic<const char*> oot_idle_reason{};
+    mutable std::atomic<bool> oot_upscaler_off{};
+    mutable std::atomic<bool> oot_upscaler_failed{};
     std::optional<u64> oot_dlss_frame;
     std::array<f32, 2> oot_jitter_applied{}; ///< in the viewport state now (render pixels)
     std::array<f32, 2> oot_jitter_offset{};  ///< what oot_jitter_frame's scene draws used
@@ -597,6 +646,11 @@ private:
     /// EDEN_NX2_FAST_DRAW_VERIFY: this draw passed DeltaStillHolds, so UpdateVertexInput compares
     /// the vertex input recorded last with what the registers give now.
     bool verify_vertex_input{};
+    /// The draw's pipeline puts every vertex on the far plane and the game set no polygon offset
+    /// for it: it gets a depth bias towards the far value and depth clamping (see
+    /// UpdateDynamicStates).
+    bool far_plane_draw{};
+    float depth_bias_slope_scale = 1.0f;
     VertexInputState recorded_vertex_input;
     bool vertex_input_recorded{};
 

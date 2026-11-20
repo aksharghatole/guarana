@@ -13,8 +13,18 @@
 #include "common/thread.h"
 #endif
 
-#include "common/logging.h"
-#include "common/memory_detect.h"
+#include "common/power_policy.h"
+
+#include <algorithm>
+#include <cstdint>
+
+#ifndef _WIN32
+#include <sys/mman.h>
+#else
+#include <synchapi.h>
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#endif
 #include "core/device_memory.h"
 #include "hle/kernel/board/nintendo/nx/k_system_control.h"
 
@@ -38,6 +48,11 @@ DeviceMemory::DeviceMemory()
 }
 
 DeviceMemory::~DeviceMemory() = default;
+
+    if (Settings::IsFastmemEnabled()) {
+        return base_pointer + virtual_addr;
+    }
+    return 0;
 
 #ifdef _WIN32
 // Windows can't punch holes in the guest memory section, so pages holding only zeros (games clear
@@ -84,7 +99,7 @@ void DeviceMemory::TrimZeroPages(std::stop_token stop) {
         const auto start = std::chrono::steady_clock::now();
         std::pair<size_t, size_t> result;
         try {
-            result = buffer.TrimZeroPages();
+            result = buffer.TrimZeroPages(stop);
         } catch (const std::bad_alloc&) {
             // A pass needs 32 MiB and more of scratch. When Windows runs out of commit, the
             // exception leaving this thread ended the emulator (#1346); the pass is only a saving.
@@ -96,6 +111,9 @@ void DeviceMemory::TrimZeroPages(std::stop_token stop) {
                         usage.system_commit >> 20, usage.system_commit_limit >> 20,
                         usage.commit >> 20);
             continue;
+        }
+        if (stop.stop_requested()) {
+            return;
         }
         const auto [resident, trimmed] = result;
         auto& counters = Common::g_memory_counters;

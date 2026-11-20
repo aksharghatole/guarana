@@ -26,6 +26,7 @@
 #include "common/nextendo.h"
 #include "common/nextendo_game_catalog.h"
 #include "common/settings_enums.h"
+#include "common/shutdown_progress.h"
 #include "core/file_sys/nup_writer.h"
 #include "frontend_common/content_manager.h"
 #include "input_common/drivers/tas_input.h"
@@ -208,6 +209,10 @@ public:
         return dlss_status_text;
     }
 
+    /// The game-specific upscaler's status bar text while a game that has one runs (Ocarina of
+    /// Time's FSR or DLSS), else empty
+    [[nodiscard]] QString UpscaleStatusText() const;
+
     /// Started with --launcher-session and a game: the window is never shown in its desktop form.
     [[nodiscard]] bool IsLauncherSession() const {
         return launcher_session;
@@ -264,6 +269,7 @@ signals:
 public slots:
     void OnLoadComplete();
     void OnExecuteProgram(std::size_t program_index);
+    void OnLaunchInNewSession(u64 program_id);
     void OnExit();
     void OnSaveConfig();
     void AmiiboSettingsShowDialog(const Core::Frontend::CabinetParameters& parameters,
@@ -411,7 +417,7 @@ private slots:
     void OnGameListOpenDirectory(const QString& directory);
     void OnGameListAddDirectory();
     void OnGameListShowList(bool show);
-    void OnGameListOpenPerGameProperties(const std::string& file);
+    void OnGameListOpenPerGameProperties(u64 title_id, const std::string& file);
     void OnLinkToRyujinx(const u64& program_id);
     void OnMenuLoadFile();
     void OnMenuLoadFolder();
@@ -491,7 +497,8 @@ private slots:
     void OnEmulationStopTimeExpired();
     void OnEmulationStopTimeout();
     /// True while the emulation thread's teardown still makes progress (Common::ShutdownProgress
-    /// moved since the last call), for at most MaxEmuThreadShutdownMs after it was asked to stop.
+    /// moved since the last call, or the thread was busy on the CPU meanwhile), for at most
+    /// MaxEmuThreadShutdownMs after it was asked to stop.
     bool EmulationShutdownProgressing();
 
 #ifdef ENABLE_UPDATE_CHECKER
@@ -505,6 +512,11 @@ private slots:
     // When a game boots with online play on: says when the signed game catalogue doesn't accept
     // its version.
     void CheckNextendoGameVersion(u64 title_id, std::string version);
+    // While a game runs: refreshes the friend list the friend service reads and sends presence.
+    void UpdateNextendoSocial();
+    // Pulls the Nextendo nickname and picture into the current user. Not while a game runs, as
+    // the guest reads the profile.
+    void SyncNextendoProfile(bool force);
 
 private:
     void OnGameListNxTool(const std::string& game_path, void (NxTools::*tool)(const std::string&));
@@ -522,6 +534,7 @@ private:
     void UpdateAAText();
     void UpdatePostShaderText();
     void UpdateFrameGenButton();
+    void UpdateUpscaleButton();
     void UpdateVolumeUI();
     void UpdateStatusBar();
     void UpdateGPUAccuracyButton();
@@ -600,12 +613,20 @@ private:
     QTimer shutdown_timer;
     QTimer emu_terminate_timer;
     QElapsedTimer emu_force_stop_clock;
-    u64 shutdown_progress_seen{};
+    Common::ShutdownWatch shutdown_watch;
     QTimer nextendo_session_timer;
     QFutureWatcher<Common::Nextendo::SignOutReason> nextendo_session_watcher;
     QFutureWatcher<std::optional<Common::Nextendo::OnlineStatus>> nextendo_status_watcher;
+    // The profile nextendo_status_watcher checks.
+    Common::UUID nextendo_status_profile;
     QFutureWatcher<std::optional<Common::Nextendo::GameCatalog>> nextendo_catalog_watcher;
     std::optional<std::pair<u64, std::string>> nextendo_version_check;
+    QTimer nextendo_social_timer;
+    QFutureWatcher<void> nextendo_social_watcher;
+    QFutureWatcher<std::optional<Common::Nextendo::ProfilePull>> nextendo_profile_watcher;
+    Common::UUID nextendo_profile_user;
+    // A forced pull that has to wait for the game to stop or for the running pull.
+    bool nextendo_profile_force{};
     OverlayDialog* shutdown_dialog{};
     BugReportDialog* bug_report_dialog{};
     PerformanceOverlay* perf_overlay = nullptr;
@@ -636,6 +657,15 @@ private:
     QPushButton* aa_status_button = nullptr;
     QPushButton* post_shader_status_button = nullptr;
     QPushButton* frame_gen_status_button = nullptr;
+    QPushButton* upscale_status_button = nullptr;
+    u64 upscale_frames = 0;
+    bool upscale_running = false;
+    bool upscale_game = false; ///< The running game has a game-specific upscaler
+    QString upscale_name;
+    QString upscale_sizes;       ///< "720p → 1080p"
+    QString upscale_size_detail; ///< "1280x720 to 1920x1080"
+    QString upscale_idle_tag;
+    QString upscale_idle_reason;
     VideoCore::FrameGenState frame_gen_state{};
     u64 frame_gen_frames = 0;
     u64 dlss_evaluations = 0;

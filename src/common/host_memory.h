@@ -8,6 +8,7 @@
 #include <atomic>
 #include <memory>
 #include <optional>
+#include <stop_token>
 #include <utility>
 #include "common/common_funcs.h"
 #include "common/common_types.h"
@@ -51,7 +52,13 @@ public:
 
     void Protect(size_t virtual_offset, size_t length, MemoryPermission perms);
 
-    void EnableDirectMappedAddress();
+#ifdef HAS_NCE
+    [[nodiscard]] bool EnableDirectMappedAddress();
+    [[nodiscard]] bool IsDirectMapped() const noexcept {
+        return direct_mapped;
+    }
+#endif
+    void ResetVirtualMappings();
 
     /// Clears guest memory being handed out. Memory still zero since it was created (or since its
     /// last full clear) is skipped: clearing it only made the host give every page real memory.
@@ -63,8 +70,10 @@ public:
     void HintCold(size_t physical_offset, size_t length,
                   std::optional<size_t> virtual_offset) const;
     /// Windows: resident pages of guest memory (backing and its views) that hold only zeros leave
-    /// the working set, like HintCold. Returns {resident bytes looked at, bytes trimmed}.
-    std::pair<size_t, size_t> TrimZeroPages() const;
+    /// the working set, like HintCold. Returns {resident bytes looked at, bytes trimmed}. A stop
+    /// request ends the pass early with {0, 0}, its pages left as they are: at a stop, the guest
+    /// memory it reads is released, and the teardown waited for a whole pass.
+    std::pair<size_t, size_t> TrimZeroPages(std::stop_token stop = {}) const;
 
     /// Bytes ClearBackingRegion has filled with zeros (memset) since start.
     static u64 ZeroFilledBytes() noexcept;
@@ -109,6 +118,11 @@ public:
 
 private:
     void Swap(HostMemory& other) noexcept;
+
+#ifdef HAS_NCE
+    [[nodiscard]] bool NormalizeVirtualOffset(size_t& address, size_t length) const noexcept;
+    bool direct_mapped{};
+#endif
 
     friend class HostMemoryTestAccess;
     struct AllocationTestControl {

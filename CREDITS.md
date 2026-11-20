@@ -16,7 +16,7 @@ Their copyright notices stay in the source files, and the history in git keeps e
 
 ## Intel fixes
 
-[Fritchii-Intel-Fixes](https://github.com/LuckyLuckLucky/Fritchii-Intel-Fixes): patches 0001 (dynamic primitive topology follows the pipeline's tessellation stages), 0003 (shuffles stay in bounds on host subgroups narrower than the guest warp), 0007 (guest HMMA on 8x16x16 cooperative matrices) and 0008 (Intel's 8x16x16 HMMA rounds after each K=8 half, as the guest), both behind `EDEN_NX2_INTEL_COOP_MATRIX` and built on the Lichii pull request #779 below, and 0010 (native float32 storage atomic add with `VK_EXT_shader_atomic_float`), ported to Lichii `nx2` in this fork, and the experiment EXP56 (a cleared depth target larger than its colour targets follows the clear instead of an upload: `EDEN_NX2_DEPTH_CLEAR_COVERS`). The patches name their author only as "Fritchii Intel fixes"; their authors tested them on an Arc B580 and an Arc 140V.
+[Fritchii-Intel-Fixes](https://github.com/LuckyLuckLucky/Fritchii-Intel-Fixes): patches 0001 (dynamic primitive topology follows the pipeline's tessellation stages), 0003 (shuffles stay in bounds on host subgroups narrower than the guest warp), 0007 (guest HMMA on 8x16x16 cooperative matrices) and 0008 (Intel's 8x16x16 HMMA rounds after each K=8 half, as the guest), both behind `EDEN_NX2_INTEL_COOP_MATRIX` and built on the Lichii pull request #779 below, and 0010 (native float32 storage atomic add with `VK_EXT_shader_atomic_float`), and 0011 (16-lane compute shaders on Intel, off: `EDEN_NX2_INTEL_COMPUTE_SIMD16`), ported to Lichii `nx2` in this fork, and the experiment EXP56 (a cleared depth target larger than its colour targets follows the clear instead of an upload: `EDEN_NX2_DEPTH_CLEAR_COVERS`). The patches name their author only as "Fritchii Intel fixes"; their authors tested them on an Arc B580 and an Arc 140V.
 
 ## Upstream pull requests we carry
 
@@ -72,6 +72,7 @@ Work taken from other forks of Lichii. Their authors as recorded in git; each fo
 |---|---|---|---|
 | [Fritchii](https://github.com/Frizti/Fritchii) (v5.8.4) | [58f55cb7d9](https://github.com/Frizti/Fritchii/commit/58f55cb7d9ee912931ce060ea8683694796e6ac3), [8627ff4233](https://github.com/Frizti/Fritchii/commit/8627ff4233323977fd5ead274867e4dd2ce66d5c) | [Frizti](https://github.com/Frizti) | The performance overlay's RAM and VRAM readouts: what the emulator holds and the room left, amber under 2 GB of RAM or 1 GB of video memory (hand port onto our overlay; the room of an integrated GPU's shared memory is also bounded by the free RAM) |
 | [Fritchii](https://github.com/Frizti/Fritchii) (v5.8.4) | [c99790b878](https://github.com/Frizti/Fritchii/commit/c99790b8786cb6a5abc6a564a7115e2b8d15d937) | [Frizti](https://github.com/Frizti) | `EDEN_NX2_IR_POOL_CAP_MIB`: the shader recompiler's object pools free memory above a cap instead of keeping their largest shader's worth |
+| [CheezyEmu](https://github.com/CheezerWheezer/CheezyEmu) | [76f03c3c03](https://github.com/CheezerWheezer/CheezyEmu/commit/76f03c3c034b9be972b6a0129a83a90aa1fc9da2), [51eb67792f](https://github.com/CheezerWheezer/CheezyEmu/commit/51eb67792f3367f40bfb07c25bf7df3c43943fa9) | [CheezerWheezer](https://github.com/CheezerWheezer) | The status bar chip for Ocarina of Time's upscaler: which one draws and at what sizes, or why the game's own upscaler draws; a click turns Ocarina FSR on or off between games (hand port onto our upscale path) |
 | [Fritchii](https://github.com/Frizti/Fritchii) (v5.8.4) | [a962f20533](https://github.com/Frizti/Fritchii/commit/a962f20533a1733375cadd0ec59ecf6f82d8ddaf) | [Frizti](https://github.com/Frizti) | `EDEN_NX2_ASYNC_DISCARD=2`: native draws with an unbuilt pipeline are skipped only into render targets cleared every frame; the others wait (hand port onto our pending-draw policy and texture cache) |
 
 ## Artwork
@@ -85,3 +86,5 @@ The libraries the emulator uses keep their own licences: see [LICENSES](LICENSES
 ## Guarana
 
 The fork's own changes are listed in [CHANGELOG.md](CHANGELOG.md) and in git history, with their authors.
+- ProfessorTee: the Ocarina of Time render scales (Lichii #903) the Max Resolution
+  built-in's fixed-scale path uses, carried into Guarana's built-in add-ons.
