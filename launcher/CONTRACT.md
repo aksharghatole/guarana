@@ -248,7 +248,12 @@ below still follow the original worker process; a crash does not automatically r
 - shows its dialogs (load errors, confirmations, applets such as the software keyboard) as before,
   above the fullscreen window or, before the window appears, on their own. It skips the debug
   console ("Show Log in Console" in Configure > Debug) and the What's New dialog after an update:
-  the game stays the one window, and the launcher's Updates screen has the notes.
+  the game stays the one window, and the launcher's Updates screen has the notes;
+- on Windows, takes the launcher's AppUserModelID, `io.github.karimalsalah.guarana` (the bundle
+  identifier the installer puts on the Start menu shortcut), before any window exists
+  (`src/lichii/main.cpp`). The launcher sets the same one for itself at start (`main.rs`), also when
+  it starts from a game file or a link. Windows then treats the two as one app: their windows share
+  one taskbar button, and pinning the game's button pins the launcher.
 
 ### Pads and the log while a game runs
 
