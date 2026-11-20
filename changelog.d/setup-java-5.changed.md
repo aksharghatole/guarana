@@ -1,0 +1,1 @@
+- Bump actions/setup-java from 4 to 5 in the Android workflow.
