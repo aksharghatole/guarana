@@ -20,14 +20,32 @@ set(BUILD_TESTING OFF)
 
 # C++/WinRT on Windows ARM64: the SDK ships cppwinrt 2.0.250303.5 while the Qt arm64
 # package was built with 2.0.250303.1; lld-link's /failifmismatch rejects the mix when
-# linking switch2_ble.cpp against Qt6Core. Compile our WinRT TUs with Qt's exact version.
+# linking switch2_ble.cpp against Qt6Core. Generate the projection with the EXACT
+# compiler version Qt used (NuGet package = compiler + fast-forwarder libs; the headers
+# are generated from the installed SDK's metadata and stamped with the compiler version).
 if (WIN32 AND MSVC AND CMAKE_SYSTEM_PROCESSOR MATCHES "ARM64|aarch64")
-    CPMAddPackage(
-        NAME cppwinrt
-        VERSION 2.0.250303.1
-        URL "https://api.nuget.org/v3-flatcontainer/microsoft.windows.cppwinrt/2.0.250303.1/microsoft.windows.cppwinrt.2.0.250303.1.nupkg"
-        DOWNLOAD_ONLY YES
-    )
+    set(CPPWINRT_VER 2.0.250303.1)
+    set(CPPWINRT_PKG "${CMAKE_BINARY_DIR}/cppwinrt-${CPPWINRT_VER}")
+    if (NOT EXISTS "${CPPWINRT_PKG}/include/winrt/base.h")
+        set(CPPWINRT_NUPKG "${CPPWINRT_PKG}.nupkg")
+        file(DOWNLOAD
+            "https://api.nuget.org/v3-flatcontainer/microsoft.windows.cppwinrt/${CPPWINRT_VER}/microsoft.windows.cppwinrt.${CPPWINRT_VER}.nupkg"
+            "${CPPWINRT_NUPKG}"
+            EXPECTED_HASH SHA512=adf9ec7059a58b3e0eb0057de52900692f58305aee8ba708d265d273a81127978beb9bf2599b00855b61b725d4e6eb06206b66897eaeaef1aec83948d60bc293
+            STATUS CPPWINRT_DL_STATUS)
+        list(GET CPPWINRT_DL_STATUS 0 CPPWINRT_DL_RC)
+        if (NOT CPPWINRT_DL_RC EQUAL 0)
+            message(FATAL_ERROR "cppwinrt ${CPPWINRT_VER} download failed: ${CPPWINRT_DL_STATUS}")
+        endif()
+        file(ARCHIVE_EXTRACT INPUT "${CPPWINRT_NUPKG}" DESTINATION "${CPPWINRT_PKG}")
+        execute_process(
+            COMMAND "${CPPWINRT_PKG}/bin/cppwinrt.exe" -input sdk -output "${CPPWINRT_PKG}/include"
+            RESULT_VARIABLE CPPWINRT_GEN_RC)
+        if (NOT CPPWINRT_GEN_RC EQUAL 0)
+            message(FATAL_ERROR "cppwinrt projection generation failed (${CPPWINRT_GEN_RC})")
+        endif()
+    endif()
+    set(cppwinrt_SOURCE_DIR "${CPPWINRT_PKG}")
 endif()
 
 # Build only static externals
