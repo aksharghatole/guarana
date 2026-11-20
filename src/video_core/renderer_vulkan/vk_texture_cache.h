@@ -5,6 +5,8 @@
 
 #pragma once
 
+#include <atomic>
+#include <cstring>
 #include <chrono>
 #include <deque>
 #include <memory>
@@ -302,8 +304,11 @@ public:
     std::optional<f32> ocarina_fsr_lod_bias;
     /// Set when the Ocarina upscaler fails during the session: samplers drop the bias again.
     bool ocarina_fsr_failed{};
-#include <atomic>
-#include <cstring>
+    /// EDEN_NX2_OOT_FSR_ANY: the bias of the scale FSR last upscaled at, in quarter LODs below
+    /// zero (VideoCommon::OcarinaFsrLodBiasQuarters), in place of the session's bias and in
+    /// either console mode. 0 until FSR replaces a frame.
+    u8 ocarina_fsr_lod_quarters{};
+    SamplerBinding fallback_sampler{};
     /// The game DLSS network's health check (ProbeGameDlssOutput), created on first use.
     std::unique_ptr<DlssNetworkProbe> dlss_network_probe;
     std::optional<std::chrono::steady_clock::time_point> fsr3_last_evaluation;
