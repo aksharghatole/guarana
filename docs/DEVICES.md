@@ -4,6 +4,13 @@ Guarana is built for integrated GPUs: Intel Arc first, AMD Radeon handhelds next
 been tested so far. Every other row below is waiting for a report, and a report from your device is
 one of the most useful contributions you can make.
 
+**Tested on one machine, built for thousands.** Sending a report takes minutes and no code:
+[fill the device-report form](https://github.com/karimalsalah/guarana/issues/new?template=device-report.yml) →
+`tools/ingest` parses it → CI validates the row and updates the
+[community leaderboard](https://karimalsalah.github.io/guarana/benchmarks.html) pull request; verified reports
+earn a row in the matrix below. The standing call is
+[#55 — Call for testers: every device counts](https://github.com/karimalsalah/guarana/issues/55).
+
 - **Tested:** the game ran and game fps was measured in a known scene, with the numbers published.
 - **Untested:** nobody has sent a report yet. It may run well, badly or not at all.
 

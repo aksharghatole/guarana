@@ -153,6 +153,8 @@ add_library(video_core STATIC
     nx2_list_macro_trace.cpp
     nx2_list_macro_trace.h
     nx2_cache_stats.h
+    nx2_mme_capture.cpp
+    nx2_mme_capture.h
     nx2_cmdpage_diag.h
     nx2_debug_control.cpp
     nx2_debug_control.h
