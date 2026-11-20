@@ -1,1 +1,0 @@
-- Bump vite from 8.3.6 to 8.3.8 in the launcher UI.
