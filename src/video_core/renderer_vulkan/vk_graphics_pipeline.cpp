@@ -255,7 +255,8 @@ bool Passes(const std::array<bool, NUM_STAGES>& stages,
     return true;
 }
 
-using ConfigureFuncPtr = bool (*)(GraphicsPipeline*, bool);
+using ConfigureFuncPtr = bool (*)(GraphicsPipeline*, bool,
+                                  std::optional<GraphicsPipeline::PreparedBinding>*);
 
 template <typename Spec, typename... Specs>
 ConfigureFuncPtr FindSpec(const std::array<bool, NUM_STAGES>& stages,
@@ -912,7 +913,7 @@ void GraphicsPipeline::AddTransition(GraphicsPipeline* transition) {
 }
 
 template <typename Spec>
-bool GraphicsPipeline::ConfigureImpl(bool is_indexed) {
+bool GraphicsPipeline::ConfigureImpl(bool is_indexed, std::optional<PreparedBinding>* deferred) {
     boost::container::small_vector<VideoCommon::ImageViewInOut, 160> views;
     boost::container::small_vector<VideoCommon::SamplerId, 96> samplers;
     boost::container::small_vector<ComputedHandle, 16> computed_handles;
@@ -1531,7 +1532,7 @@ bool GraphicsPipeline::ConfigureImpl(bool is_indexed) {
         return false;
     }
     Profile::Scope scope{Profile::Zone::ConfigureDraw};
-    return ConfigureDraw(rescaling, render_area);
+    return ConfigureDraw(rescaling, render_area, deferred);
 }
 
 bool GraphicsPipeline::DeltaImagesChange() const noexcept {
@@ -1576,7 +1577,7 @@ bool GraphicsPipeline::ComputedHandlesChanged() const {
     return false;
 }
 
-bool GraphicsPipeline::ConfigureDelta(bool is_indexed) {
+bool GraphicsPipeline::ConfigureDelta(bool is_indexed, std::optional<PreparedBinding>* deferred) {
     namespace Profile = VideoCommon::Nx2Profile;
     // ConfigureImpl without reading handles and resolving image views, samplers and texture
     // buffers: the buffers are resolved, synchronized and bound as it does.
@@ -1713,7 +1714,7 @@ bool GraphicsPipeline::ConfigureDelta(bool is_indexed) {
         return false;
     }
     Profile::Scope scope{Profile::Zone::ConfigureDraw};
-    return ConfigureDraw(rescaling, render_area);
+    return ConfigureDraw(rescaling, render_area, deferred);
 }
 
 void GraphicsPipeline::KeepDrawTemplate(DrawTemplate* verified,
@@ -1864,13 +1865,17 @@ void GraphicsPipeline::CheckColorFeedbackLoop(std::span<const VideoCommon::Image
 /// and bindings. Returns false, and the draw is skipped, when the queued descriptor count does not
 /// match the pipeline or no descriptor memory can be reserved.
 bool GraphicsPipeline::ConfigureDraw(const RescalingPushConstant& rescaling,
-                                     const RenderAreaPushConstant& render_area) {
+                                     const RenderAreaPushConstant& render_area,
+                                     std::optional<PreparedBinding>* deferred) {
+    if (guest_descriptor_queue.HasRejectedTexelBuffer()) {
+        return false;
+    }
     if (guest_descriptor_queue.UpdateCount() != num_descriptor_entries) {
         LOG_CRITICAL(Render_Vulkan, "Graphics descriptor count mismatch: expected {}, got {}",
                      num_descriptor_entries, guest_descriptor_queue.UpdateCount());
         return false;
     }
-    const void* const descriptor_data{guest_descriptor_queue.UpdateData()};
+    const DescriptorUpdateEntry* const descriptor_data{guest_descriptor_queue.UpdateData()};
 
     VkDeviceSize descriptor_buffer_offset{};
     u32 descriptor_buffer_chunk{};
@@ -2072,7 +2077,39 @@ bool GraphicsPipeline::ConfigureDraw(const RescalingPushConstant& rescaling,
             scheduler.Record(std::move(mesh_work));
         }
     }
+    const u64 render_pass = deferred != nullptr ? scheduler.RenderPassSerial() : 0;
     scheduler.RequestRenderpass(texture_cache.GetFramebuffer());
+    const bool can_defer = deferred != nullptr && IsBuilt() && !Failed() && !IsMeshPipeline() &&
+                           !writes_storage && scheduler.RenderPassSerial() == render_pass &&
+                           scheduler.BoundGraphicsPipeline() == this &&
+                           (!descriptor_set_layout || num_descriptor_entries != 0);
+    const PreparedBinding binding{
+        .rescaling = rescaling.Data(),
+        .render_area = render_area,
+        .descriptor_buffer_offset = descriptor_buffer_offset,
+        .descriptor_buffer_chunk = descriptor_buffer_chunk,
+        .is_rescaling = texture_cache.IsRescaling(),
+    };
+    if (can_defer) {
+        deferred->emplace(binding);
+        (*deferred)->bind_pipeline = scheduler.UpdateGraphicsPipeline(this);
+        (*deferred)->down_factor = Settings::values.resolution_info.down_factor;
+        if (descriptor_set_layout && !uses_descriptor_buffer && num_descriptor_entries != 0) {
+            (*deferred)->descriptors = std::make_shared<const std::vector<DescriptorUpdateEntry>>(
+                descriptor_data, descriptor_data + num_descriptor_entries);
+        }
+    } else {
+        RecordBinding(binding, descriptor_data);
+    }
+    return true;
+}
+
+void GraphicsPipeline::RecordPreparedBinding(const PreparedBinding& binding) {
+    RecordBinding(binding, binding.descriptors ? binding.descriptors->data() : nullptr);
+}
+
+void GraphicsPipeline::RecordBinding(const PreparedBinding& binding,
+                                     const DescriptorUpdateEntry* descriptor_data) {
     if (writes_storage) {
         scheduler.NoteRenderPassStores();
     }
@@ -2166,7 +2203,7 @@ bool GraphicsPipeline::ConfigureDraw(const RescalingPushConstant& rescaling,
     const bool bind_pipeline{scheduler.UpdateGraphicsPipeline(this)};
     const bool bind_descriptor_buffer{
         descriptor_set_layout && uses_descriptor_buffer &&
-        scheduler.UpdateDescriptorBufferChunk(descriptor_buffer_chunk)};
+        scheduler.UpdateDescriptorBufferChunk(binding.descriptor_buffer_chunk)};
 
     // Log graphics pipeline binding
     if (bind_pipeline && GPU::Logging::IsActive() &&
@@ -2268,7 +2305,6 @@ bool GraphicsPipeline::ConfigureDraw(const RescalingPushConstant& rescaling,
                                       descriptor_set, nullptr);
         }
     });
-    return true;
 }
 
 void GraphicsPipeline::MakePrepassPipelines(VkRenderPass render_pass) {

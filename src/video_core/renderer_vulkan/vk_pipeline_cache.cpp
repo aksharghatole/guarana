@@ -1373,7 +1373,8 @@ PipelineCache::PipelineCache(Tegra::MaxwellDeviceMemoryManager& device_memory_,
     }
     shader_jobs.emplace(VideoCommon::ShaderJobConfig{
         .cpu_threads = cpu_threads,
-        .driver_threads = driver_threads,
+        .driver_threads = device.IsAmdLegacyGcn() ? std::min<size_t>(driver_threads, 2)
+                                                  : driver_threads,
         .name = "VkShader",
         .wait_boost = wait_boost,
     });
@@ -3515,6 +3516,22 @@ void ReportUnsupportedMeshPipeline(const GraphicsPipelineCacheKey& key, const Pr
                 position, generic, other, others, info.primitive_lines.size(), primitive_attributes,
                 has_pixel, with_task, per_primitive, non_triangle);
 }
+
+void LogSkippedPipelineLookup(bool mesh) {
+    if (mesh) {
+        static std::atomic<u64> mesh_skipped{};
+        if ((mesh_skipped.fetch_add(1, std::memory_order_relaxed) & 255) == 0) {
+            LOG_INFO(Render_Vulkan, "Async shaders: {} mesh pipeline lookups skipped",
+                     mesh_skipped.load(std::memory_order_relaxed));
+        }
+    }
+    static std::atomic<u64> skipped{};
+    if ((skipped.fetch_add(1, std::memory_order_relaxed) & 255) == 0) {
+        // Counts lookups, not draws: a draw state can look its pipeline up more than once.
+        LOG_INFO(Render_Vulkan, "Async shaders: {} pipeline lookups skipped for unbuilt pipelines",
+                 skipped.load(std::memory_order_relaxed));
+    }
+}
 } // Anonymous namespace
 
 namespace {
@@ -4059,10 +4076,14 @@ void PipelineCache::ChargeNativeWait(std::chrono::steady_clock::time_point begin
 /// Returns `pipeline` when it is built or the current draw must wait for it, and nullptr when the
 /// draw may be skipped while it builds (asynchronous shaders; native draws only with
 /// EDEN_NX2_ASYNC_DISCARD=1). Each nullptr returned for an unbuilt pipeline is counted for the log.
+bool PipelineCache::SkipPendingMeshDraw() const {
+    return use_asynchronous_shaders && Settings::values.skip_unbuilt_mesh_draws.GetValue() &&
+           maxwell3d->GetNativeMacroEngine().native_turing && maxwell3d->regs.IsMeshEnabled();
+}
 
 /// Returns `pipeline` when it is built or the current draw must wait for it, and nullptr when the
-/// draw may be skipped while it builds (asynchronous shaders; native draws only with
-/// EDEN_NX2_ASYNC_DISCARD=1). Each nullptr returned for an unbuilt pipeline is counted for the log.
+/// draw may be skipped while it builds. Each nullptr returned for an unbuilt pipeline is counted
+/// for the log.
 GraphicsPipeline* PipelineCache::BuiltPipeline(GraphicsPipeline* pipeline) noexcept {
     if (pipeline->IsBuilt()) {
         return pipeline;
@@ -4138,7 +4159,7 @@ GraphicsPipeline* PipelineCache::BuiltPipeline(GraphicsPipeline* pipeline) noexc
                      skipped.load(std::memory_order_relaxed));
         }
     }
-    return discard ? nullptr : pipeline;
+    return (discard || SkipPendingMeshDraw()) ? nullptr : pipeline;
 }
 
 bool PipelineCache::SkipUnbuiltDispatch(ComputePipeline& pipeline, bool outputs_hold_gpu_data) {
