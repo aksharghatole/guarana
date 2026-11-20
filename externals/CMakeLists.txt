@@ -18,6 +18,18 @@ set(CMAKE_POLICY_DEFAULT_CMP0077 NEW)
 # Disable tests/tools in all externals supporting the standard option name
 set(BUILD_TESTING OFF)
 
+# C++/WinRT on Windows ARM64: the SDK ships cppwinrt 2.0.250303.5 while the Qt arm64
+# package was built with 2.0.250303.1; lld-link's /failifmismatch rejects the mix when
+# linking switch2_ble.cpp against Qt6Core. Compile our WinRT TUs with Qt's exact version.
+if (WIN32 AND MSVC AND CMAKE_SYSTEM_PROCESSOR MATCHES "ARM64|aarch64")
+    CPMAddPackage(
+        NAME cppwinrt
+        VERSION 2.0.250303.1
+        URL "https://api.nuget.org/v3-flatcontainer/microsoft.windows.cppwinrt/2.0.250303.1/microsoft.windows.cppwinrt.2.0.250303.1.nupkg"
+        DOWNLOAD_ONLY YES
+    )
+endif()
+
 # Build only static externals
 set(BUILD_SHARED_LIBS OFF)
 

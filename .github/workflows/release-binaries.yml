@@ -334,8 +334,13 @@ jobs:
             brew update --quiet
             HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK=1 brew reinstall freetype
             if otool -L "$freetype" | grep -F /usr/lib/libhvf.dylib; then
-              echo "::error::$freetype still links libhvf.dylib, which macOS 15.0 to 15.3 lack"
-              exit 1
+              # The rebuilt bottle has not reached this runner's tap yet: build freetype
+              # from source on the runner so it links only what macOS 15.0-15.3 carry.
+              HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK=1 brew reinstall --build-from-source freetype
+              if otool -L "$freetype" | grep -F /usr/lib/libhvf.dylib; then
+                echo "::error::$freetype still links libhvf.dylib after a source build"
+                exit 1
+              fi
             fi
           fi
 
