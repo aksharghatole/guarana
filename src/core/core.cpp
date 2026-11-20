@@ -496,7 +496,7 @@ struct System::Impl {
     SystemResultStatus SetupForApplicationProcess(
         System& system, Frontend::EmuWindow& emu_window,
         std::shared_ptr<const Service::SystemDataView> isolated_system_data = {}) {
-        kernel_memory_mode = Settings::KernelMemoryMode::Auto;
+        Common::BootTiming::Mark("core: system setup started");
         std::shared_ptr<Service::Glue::Time::TimeZoneBinary> isolated_time_zone;
         u64 isolated_process_id{};
         if (isolated_system_data) {
