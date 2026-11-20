@@ -152,7 +152,10 @@ add_library(video_core STATIC
     nx2_back_idle_trace.h
     nx2_list_macro_trace.cpp
     nx2_list_macro_trace.h
-    nx2_cache_stats.h
+    oot_network.cpp
+    oot_network.h
+    nx2_compute_failure.cpp
+    nx2_compute_failure.h
     nx2_cmdpage_diag.h
     nx2_debug_control.cpp
     nx2_debug_control.h

@@ -75,6 +75,24 @@ struct ByteAddressedRange {
     return VkExtent2D{width / 2, height};
 }
 
+struct SamplerBinding {
+    struct Compatibility {
+        bool mag_linear : 1;
+        bool min_linear : 1;
+        bool mipmap_linear : 1;
+        bool anisotropy : 1;
+        bool compare : 1;
+        bool minmax : 1;
+        bool clamp_to_border : 1;
+        bool custom_border : 1;
+
+        bool operator==(const Compatibility&) const noexcept = default;
+    };
+
+    VkSampler handle{};
+    Compatibility compatibility{};
+};
+
 class TextureCacheRuntime {
 public:
     explicit TextureCacheRuntime(const Device& device_, Scheduler& scheduler_,
@@ -274,6 +292,9 @@ public:
                          std::array<f32, 2> motion_scale);
     std::unique_ptr<Fsr3Upscaler> fsr3_upscaler;
     bool fsr3_unsupported{};
+    /// The backend that last drew a DLSS replacement and why, so each change is logged once.
+    std::string_view last_upscale_backend;
+    std::string_view last_upscale_reason;
 
     /// The LOD bias Ocarina's FSR adds to mipmapped samplers this session (0 for other games or
     /// upscalers), resolved on first use.
@@ -281,10 +302,8 @@ public:
     std::optional<f32> ocarina_fsr_lod_bias;
     /// Set when the Ocarina upscaler fails during the session: samplers drop the bias again.
     bool ocarina_fsr_failed{};
-    /// EDEN_NX2_OOT_FSR_ANY: the bias of the scale FSR last upscaled at, in quarter LODs below
-    /// zero (VideoCommon::OcarinaFsrLodBiasQuarters), in place of the session's bias and in
-    /// either console mode. 0 until FSR replaces a frame.
-    u8 ocarina_fsr_lod_quarters{};
+#include <atomic>
+#include <cstring>
     /// The game DLSS network's health check (ProbeGameDlssOutput), created on first use.
     std::unique_ptr<DlssNetworkProbe> dlss_network_probe;
     std::optional<std::chrono::steady_clock::time_point> fsr3_last_evaluation;
@@ -859,6 +878,7 @@ public:
     CustomBorderColorBudget& operator=(CustomBorderColorBudget&& rhs) noexcept;
 
     bool TryAcquire(const Device& device, size_t count);
+    void Release(size_t count) noexcept;
 
 private:
     void Release() noexcept;
@@ -872,7 +892,7 @@ public:
     explicit Sampler(TextureCacheRuntime&, const Tegra::Texture::TSCEntry&);
 
     [[nodiscard]] VkSampler Handle() const noexcept {
-        return *variants.front().sampler;
+        return variants.front().binding.handle;
     }
 
     [[nodiscard]] VkSampler HandleFor(const ImageView& image_view, bool is_depth);
@@ -915,13 +935,14 @@ private:
     struct Variant {
         VariantKey key;
         vk::Sampler sampler;
+        SamplerBinding binding;
     };
 
     static constexpr size_t MAX_VARIANTS = 32;
 
     [[nodiscard]] VariantKey MakeKey(const ImageView& image_view, bool is_depth) const noexcept;
     [[nodiscard]] VkSampler Find(const VariantKey& key) const noexcept;
-    VkSampler Emplace(VariantKey key);
+    VkSampler Emplace(VariantKey key, const SamplerBinding* fallback = nullptr);
 
     CustomBorderColorBudget custom_border_color_budget;
     std::vector<Variant> variants;
