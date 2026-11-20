@@ -1,0 +1,1 @@
+- Android nightlies install beside the stable app instead of updating it. The APK build checks the packaged app ID before uploading it, and the upstream update checker stays off on both channels.

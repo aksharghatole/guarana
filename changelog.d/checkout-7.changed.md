@@ -1,0 +1,1 @@
+- Bump actions/checkout from 5 to 7 in the bench-rows and switch-registry workflows.

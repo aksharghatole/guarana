@@ -466,7 +466,9 @@ def row_settings(row, logins):
         items = values.items() if isinstance(values, dict) else [(None, values)]
         for key, value in items:
             name = str(section) if key is None else f"{section}/{key}"
-            found[scrub(name, logins)[:60]] = "default" if value is None else scrub(str(value), logins)[:80]
+            # As tools/bench writes it into the ini (ini_format), so it matches the resolver's values.
+            text = "default" if value is None else ("true" if value else "false") if isinstance(value, bool) else str(value)
+            found[scrub(name, logins)[:60]] = scrub(text, logins)[:80]
             if len(found) == 12:
                 return found
     return found
@@ -765,10 +767,6 @@ def parse_issue(issue, titles=None, validate=None):
 
 # ---------------------------------------------------------------------------------------------
 # community.json
-
-def empty_document(repo):
-    return {"schema_version": SCHEMA_VERSION, "reports": {}, "repository": repo}
-
 
 def load_document(text):
     try:

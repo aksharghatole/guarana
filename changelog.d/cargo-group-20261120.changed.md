@@ -1,0 +1,1 @@
+- Bump the launcher cargo group: sysinfo 0.40.1 to 0.40.3 and zip 9.4.1 to 9.5.1.
