@@ -583,6 +583,11 @@ VideoCommon::ShaderWarm::DriverStamp PrecachedListStamp(const Device& device,
         variant = Common::CityHash64WithSeed(reinterpret_cast<const char*>(&variant),
                                              sizeof(variant), 0x16011ceULL);
     }
+    // EDEN_NX2_F2I_ABS_NEG, as floating_point_conversion_integer.cpp reads it: F2I's modifiers.
+    if (NumberSwitchOn("EDEN_NX2_F2I_ABS_NEG")) {
+        variant = Common::CityHash64WithSeed(reinterpret_cast<const char*>(&variant),
+                                             sizeof(variant), 0xf21a5ULL);
+    }
     return {
         .driver = device.GetDriverVersion(),
         .device_id = device.GetDeviceID(),
