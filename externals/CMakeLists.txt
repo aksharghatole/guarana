@@ -45,7 +45,8 @@ if (WIN32 AND MSVC AND CMAKE_SYSTEM_PROCESSOR MATCHES "ARM64|aarch64")
             message(FATAL_ERROR "cppwinrt projection generation failed (${CPPWINRT_GEN_RC})")
         endif()
     endif()
-    set(cppwinrt_SOURCE_DIR "${CPPWINRT_PKG}")
+    set(cppwinrt_SOURCE_DIR "${CPPWINRT_PKG}" CACHE INTERNAL "cppwinrt projection matching Qt's version")
+    message(STATUS "cppwinrt ${CPPWINRT_VER} projection ready: ${CPPWINRT_PKG}/include")
 endif()
 
 # Build only static externals
