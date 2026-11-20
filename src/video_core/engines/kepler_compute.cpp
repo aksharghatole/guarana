@@ -23,6 +23,7 @@
 #include "shader_recompiler/frontend/ampere/program_override.h"
 #include "core/core.h"
 #include "video_core/gpu_split.h"
+#include "video_core/dlss_skip_passes.h"
 
 #include "video_core/fire_emblem_upscale.h"
 #include "video_core/front_qmd.h"
