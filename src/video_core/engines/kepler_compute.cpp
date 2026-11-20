@@ -23,6 +23,7 @@
 #include "shader_recompiler/frontend/ampere/program_override.h"
 #include "core/core.h"
 #include "video_core/gpu_split.h"
+#include "video_core/dlss_skip_passes.h"
 
 #include "video_core/fire_emblem_upscale.h"
 #include "video_core/front_qmd.h"
@@ -1644,8 +1645,43 @@ bool KeplerCompute::BypassOotNetwork(u64 program_id, u64 native_key, u64 unique_
                (cross_a > cross_b ? cross_a - cross_b : cross_b - cross_a) * 32 <= cross_a;
     };
     const auto output = ConstBuffer0Image(handle_offset);
+    // A tonemap drawn since the last replacement is copied rather than the sampled image, when it
+    // fits the output (CopiesTrackedTonemap): the image the output pass samples is not always the
+    // tonemap's target. A frame without a known tonemap draw (#1688) keeps the sampled image.
+    bool use_tracked = false;
+    if (!extra.any && output) {
+        Maxwell3D::Regs::RenderTargetConfig candidate{};
+        bool fresh = false;
+        {
+            std::scoped_lock lock{bypass->mutex};
+            candidate = bypass->tonemapped;
+            fresh = bypass->tonemapped_fresh;
+        }
+        const bool candidate_fits =
+            base_output
+                ? (candidate.width <= output->Width() && candidate.height <= output->Height())
+                : (candidate.width == output->Width() && candidate.height == output->Height());
+        if (candidate_fits && candidate.Address() != output->Address() &&
+            CopiesTrackedTonemap(fresh, candidate.Address(),
+                                 candidate.format == Tegra::RenderTargetFormat::B10G11R11_FLOAT,
+                                 candidate.tile_mode.is_pitch_linear.Value() == 0U,
+                                 candidate.width, candidate.height)) {
+            use_tracked = true;
+            tracked = candidate;
+            sampled.reset();
+            source_address = tracked.Address();
+            source_block_linear = true;
+            source_format_ok = true;
+            source_format = static_cast<u32>(tracked.format);
+            image_width = tracked.width;
+            image_height = tracked.height;
+            area = {0, 0, image_width, image_height};
+            source_width = image_width;
+            source_height = image_height;
+        }
+    }
     const char* unexpected = nullptr;
-    if (!extra.any && !sampled) {
+    if (!extra.any && !sampled && !use_tracked) {
         unexpected = "tonemapped descriptor unreadable";
     } else if (!output) {
         unexpected = "output descriptor unreadable";
@@ -1731,6 +1767,11 @@ bool KeplerCompute::BypassOotNetwork(u64 program_id, u64 native_key, u64 unique_
         .src_y1 = static_cast<s32>(area.y1),
     };
     const bool copied = rasterizer->AccelerateSurfaceCopy(source, destination, config);
+    if (use_tracked) {
+        // The next frame's tonemap draw makes it fresh again.
+        std::scoped_lock lock{bypass->mutex};
+        bypass->tonemapped_fresh = false;
+    }
     // Learn this output pass's images for the candidate detection of the next frames: draws are
     // matched against the previous output pass's input size and output address.
     if (const auto input = ConstBuffer0Image(InputImageHandleOffset);
