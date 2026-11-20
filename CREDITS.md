@@ -83,8 +83,31 @@ The Lichii logo, icon and library artwork that the packages still use are by YOB
 
 The libraries the emulator uses keep their own licences: see [LICENSES](LICENSES), the notices in `externals/`, and the licence files inside the release packages (the Linux x86_64 packages ship fsr4-vk with its own).
 
+## Ocarina of Time built-in add-ons
+
+The built-in patches for the Switch 2 release of Ocarina of Time carry named work, documented in
+[docs/nx2/ocarina-dynamic-fps.md](docs/nx2/ocarina-dynamic-fps.md), [docs/nx2/oot-network-bypass.md](docs/nx2/oot-network-bypass.md)
+and [docs/patch-packs.md](docs/patch-packs.md):
+
+- **Dark**, an Eglantine developer — the Dynamic FPS routine. Dark gave permission to bundle it; the port
+  preserves the call and 120-byte routine from **Frizti**'s `oot-gather-fix` commit `765659af4ccb`, which also
+  supplied the built-in integration. **CTGL**'s [Lichii #299](https://github.com/zortos293/Lichii/pull/299)
+  changed one instruction: the delta cap is `CNTFRQ / 10` instead of `CNTFRQ / 20`.
+- **NotRexed** ([Hookshot](https://github.com/NotRexed/Hookshot)) — the text-speed patches
+  ([Hookshot #402](https://github.com/NotRexed/Hookshot/pull/402)), ported by way of
+  [Lichii #1422](https://github.com/zortos293/Lichii/pull/1422) into the shipped JSON pack
+  `dist/patch-packs/0400486024DEC000-text-speed.json`. Hookshot also found both whole-tick counter sites
+  (`nx2/oot_patches.py`, `WHOLE_SITES`, GPL-3.0); the stubs here are our own.
+- The **KaeGae registry** ([Kabosune/oot-remake-modding](https://github.com/Kabosune/oot-remake-modding),
+  `registry/e0f3ccfa.toml`) — the memory-region map used to place the built-ins' code caves clear of mods and cheats.
+- **RsMan-Dev** — the texture pool patch behind Texture Pool x2.
+- **myshadowww** — Native DLAA sizing and atomic runtime-settings publication
+  ([Lichii #840](https://github.com/zortos293/Lichii/pull/840)), adapted for the DLSS quality settings
+  ([docs/user/DLSS.md](docs/user/DLSS.md)).
+- **ProfessorTee** — the Ocarina of Time render scales ([Lichii #903](https://github.com/zortos293/Lichii/pull/903))
+  the Max Resolution built-in's fixed-scale path uses.
+
 ## Guarana
 
 The fork's own changes are listed in [CHANGELOG.md](CHANGELOG.md) and in git history, with their authors.
-- ProfessorTee: the Ocarina of Time render scales (Lichii #903) the Max Resolution
-  built-in's fixed-scale path uses, carried into Guarana's built-in add-ons.
+The named work the built-in add-ons carry is credited above, in [Ocarina of Time built-in add-ons](#ocarina-of-time-built-in-add-ons).
