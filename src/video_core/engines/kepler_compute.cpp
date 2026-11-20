@@ -47,6 +47,8 @@
 #include "video_core/rasterizer_interface.h"
 #include "video_core/texture_cache/format_lookup_table.h"
 #include "video_core/textures/decoders.h"
+#include "video_core/dlss_contract.h"
+#include "video_core/dlss_skip_passes.h"
 
 namespace Tegra::Engines {
 
