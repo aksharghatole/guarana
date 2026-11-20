@@ -252,6 +252,7 @@ The OoT built-ins and the nx2 layer carry named work, credited in full in [CREDI
 - Everyone who contributed upstream, the authors of every pull request we carry included: [CREDITS.md](CREDITS.md).
   Everyone who contributed here: [CONTRIBUTORS.md](CONTRIBUTORS.md).
 
+<!-- legacy:start -->
 <p align="center">
   <a href="https://github.com/mushymeow"><img src="https://github.com/mushymeow.png?size=96" width="48" height="48" alt="mushymeow" title="mushymeow"></a>
   <a href="https://github.com/zortos293"><img src="https://github.com/zortos293.png?size=96" width="48" height="48" alt="zortos293" title="zortos293"></a>
@@ -316,9 +317,8 @@ The OoT built-ins and the nx2 layer carry named work, credited in full in [CREDI
 </p>
 
 **99 people credited for good**, 39 of them not shown here. Everyone: [CONTRIBUTORS.md](CONTRIBUTORS.md) and the [Hall of fame](https://karimalsalah.github.io/guarana/legacy.html).
-||||||| bc7e5f3eee
-**93 people credited for good**, 33 of them not shown here. Everyone: [CONTRIBUTORS.md](CONTRIBUTORS.md) and the [Hall of fame](https://karimalsalah.github.io/guarana/legacy.html).
 *Everyone who contributed here, in commit order: [CONTRIBUTORS.md](CONTRIBUTORS.md).*
+<!-- legacy:end -->
 
 ## Contributing
 
