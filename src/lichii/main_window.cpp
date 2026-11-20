@@ -1,6 +1,9 @@
 // SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+// SPDX-FileCopyrightText: Copyright 2026 citron Emulator Project
+// SPDX-License-Identifier: GPL-2.0-or-later
+
 // Static Qt on macOS doesn't use Vulkan
 // Other platforms do, and thus have conflicting VulkanMemoryAllocator symbols
 #include "core/launch_params.h"
@@ -95,6 +98,7 @@
 #include <QFileInfo>
 #include <QFutureWatcher>
 #include <QGuiApplication>
+#include <QImage>
 #include <QInputDialog>
 #include <QMimeData>
 #include <QPalette>
@@ -111,6 +115,7 @@
 // Qt Common //
 #include "qt_common/config/shared_translation.h"
 #include "qt_common/config/uisettings.h"
+#include "qt_common/game_list/game_list_p.h"
 
 #include "qt_common/abstract/frontend.h"
 
@@ -170,9 +175,11 @@ static FileSys::VirtualFile VfsDirectoryCreateFileWrapper(const FileSys::Virtual
 #include "core/frontend/applets/software_keyboard.h"
 
 #include "core/hle/kernel/k_process.h"
+#include "core/hle/service/acc/nextendo_id_token.h"
 #include "core/hle/service/acc/profile_manager.h"
 #include "core/hle/service/am/applet_manager.h"
 #include "core/hle/service/am/frontend/applet_web_browser_types.h"
+#include "core/hle/service/bcat/backend/nextendo.h"
 
 #include "core/file_sys/card_image.h"
 #include "core/file_sys/common_funcs.h"
@@ -389,6 +396,48 @@ QString GetTranslatedGameIconSize(size_t index) {
     return QCoreApplication::translate("MainWindow", default_game_icon_sizes[index].second);
 }
 
+// After citron-nextendo's NextendoController::ApplyProfileName and WriteProfileAvatar. False when
+// the picture couldn't be saved.
+bool WriteNextendoProfile(Service::Account::ProfileManager& manager, const Common::UUID& user,
+                          const Common::Nextendo::ProfilePull& pull) {
+    Service::Account::ProfileBase profile{};
+    if (!manager.GetProfileBase(user, profile)) {
+        return true;
+    }
+    const auto username = reinterpret_cast<const char*>(profile.username.data());
+    const std::string nickname =
+        Common::Nextendo::ProfileNickname(pull.nickname, profile.username.size());
+    if (!nickname.empty() && nickname != Common::StringFromFixedZeroTerminatedBuffer(
+                                             username, profile.username.size())) {
+        profile.username.fill(0);
+        std::ranges::copy(nickname, profile.username.begin());
+        manager.SetProfileBase(user, profile);
+        manager.WriteUserSaveFile();
+        LOG_INFO(Frontend, "Took the Nextendo nickname for the current user");
+    }
+    if (!pull.avatar) {
+        return true;
+    }
+    QImage image;
+    if (!image.loadFromData(reinterpret_cast<const uchar*>(pull.avatar->data()),
+                            static_cast<int>(pull.avatar->size()))) {
+        LOG_WARNING(Frontend, "nextendo.network sent a profile picture Lichii can't read");
+        return true;
+    }
+    constexpr int size = 256;
+    image = image.scaled(size, size, Qt::KeepAspectRatioByExpanding, Qt::SmoothTransformation);
+    image = image.copy((image.width() - size) / 2, (image.height() - size) / 2, size, size);
+    const auto path = QString::fromStdString(Common::FS::PathToUTF8String(
+        Common::FS::GetEdenPath(Common::FS::EdenPath::NANDDir) /
+        fmt::format("system/save/8000000000000010/su/avators/{}.jpg", user.FormattedString())));
+    if (!QDir{}.mkpath(QFileInfo{path}.absolutePath()) || !image.save(path, "JPEG", 100)) {
+        LOG_WARNING(Frontend, "Could not save the Nextendo profile picture");
+        return false;
+    }
+    LOG_INFO(Frontend, "Took the Nextendo profile picture for the current user");
+    return true;
+}
+
 } // namespace
 
 #ifndef _WIN32
@@ -520,11 +569,17 @@ MainWindow::MainWindow(bool has_broken_vulkan)
                                          tr("Sign in again in Configure > Network."));
             });
     connect(&nextendo_status_watcher,
-            &QFutureWatcher<std::optional<Common::Nextendo::OnlineStatus>>::finished, this,
-            [this] {
+            &QFutureWatcher<std::optional<Common::Nextendo::OnlineStatus>>::finished, this, [this] {
+                // A reply for the user before a profile switch isn't this user's, and the check
+                // a game booted on the new profile meanwhile waited for this one.
+                if (nextendo_status_profile !=
+                    Service::Account::Nextendo::CurrentProfile(*QtCommon::system)) {
+                    CheckNextendoOnlineStatus();
+                    return;
+                }
                 const auto status = nextendo_status_watcher.result();
                 QString message;
-                if (!Common::Nextendo::LoadAccount()) {
+                if (!Common::Nextendo::LoadAccount(nextendo_status_profile)) {
                     message = tr("Nextendo online play is on, but you aren't signed in. Sign in "
                                  "in Configure > Network.");
                 } else if (status && !status->allow) {
@@ -556,10 +611,26 @@ MainWindow::MainWindow(bool has_broken_vulkan)
                               .arg(QString::fromStdString(verdict->recommended)),
                     30000);
             });
-    connect(&nextendo_session_timer, &QTimer::timeout, this,
-            &MainWindow::KeepNextendoSessionAlive);
-    nextendo_session_timer.start(std::chrono::minutes{2});
-    KeepNextendoSessionAlive();
+    connect(&nextendo_session_timer, &QTimer::timeout, this, &MainWindow::KeepNextendoSessionAlive);
+    connect(&nextendo_social_timer, &QTimer::timeout, this, &MainWindow::UpdateNextendoSocial);
+    connect(&nextendo_profile_watcher,
+            &QFutureWatcher<std::optional<Common::Nextendo::ProfilePull>>::finished, this, [this] {
+                const auto pull = nextendo_profile_watcher.result();
+                // Asked for while this pull ran, for another user or a new sign-in.
+                const bool pending = nextendo_profile_force;
+                if (pull && Common::Nextendo::OnlinePlayActive() &&
+                    Settings::values.nextendo_sync_profile.GetValue()) {
+                    // A game that booted meanwhile reads the profile: write it once the game stops.
+                    if (QtCommon::system->IsPoweredOn() ||
+                        !WriteNextendoProfile(QtCommon::system->GetProfileManager(),
+                                              nextendo_profile_user, *pull)) {
+                        nextendo_profile_force = true;
+                    }
+                }
+                if (pending) {
+                    SyncNextendoProfile(false);
+                }
+            });
 
     // Setup content providers.
     QtCommon::SetupContentProviders();
@@ -1587,6 +1658,11 @@ void MainWindow::InitializeHotkeys() {
     });
     connect_shortcut(QStringLiteral("Change Adapting Filter"), &MainWindow::OnToggleAdaptingFilter);
     connect_shortcut(QStringLiteral("Change Docked Mode"), &MainWindow::OnToggleDockedMode);
+    connect_shortcut(QStringLiteral("HOME Button"), [this] {
+        if (emulation_running) {
+            QtCommon::system->GetAppletManager().PressHomeButton();
+        }
+    });
     connect_shortcut(QStringLiteral("Change GPU Mode"), &MainWindow::OnToggleGpuAccuracy);
     connect_shortcut(QStringLiteral("Audio Mute/Unmute"), &MainWindow::OnMute);
     connect_shortcut(QStringLiteral("Audio Volume Down"), &MainWindow::OnDecreaseVolume);
@@ -2497,6 +2573,7 @@ void MainWindow::BootGame(const QString& filename, Service::AM::FrontendAppletPa
         watcher.setFuture(QtConcurrent::run([&loader, title_id] {
             Common::NplnPatchCatalog::PrepareForGame(
                 title_id, [&] { return loader->ReadMainBuildIdHex(*QtCommon::system); });
+            Service::BCAT::Nextendo::PrepareForGame(title_id);
         }));
         progress.show();
         loop.exec();
@@ -2602,6 +2679,12 @@ void MainWindow::BootGame(const QString& filename, Service::AM::FrontendAppletPa
     // Register an ExecuteProgram callback such that Core can execute a sub-program
     QtCommon::system->RegisterExecuteProgramCallback(
         [this](std::size_t program_index_) { render_window->ExecuteProgram(program_index_); });
+
+    QtCommon::system->RegisterLaunchInNewSessionCallback([this](u64 program_id) {
+        QMetaObject::invokeMethod(
+            this, [this, program_id] { OnLaunchInNewSession(program_id); },
+            Qt::QueuedConnection);
+    });
 
     QtCommon::system->RegisterExitCallback([this] {
         QtCommon::emu_thread->ForceStop();
@@ -2733,6 +2816,8 @@ void MainWindow::BootGame(const QString& filename, Service::AM::FrontendAppletPa
     }
     CheckNextendoOnlineStatus();
     CheckNextendoGameVersion(title_id, title_version);
+    nextendo_social_timer.start(Common::Nextendo::FriendsRefreshInterval);
+    UpdateNextendoSocial();
     OnStartGame();
 }
 
@@ -2997,6 +3082,24 @@ void MainWindow::OnEmulationStopped() {
     if (Common::FrameTargetHotkeys::Enabled()) {
         Common::FrameTargetHotkeys::SessionTarget.Reset();
     }
+    nextendo_social_timer.stop();
+    if (Common::Nextendo::OnlinePlayActive()) {
+        const auto post_offline =
+            [client_id = Settings::values.nextendo_client_id.GetValue(),
+             profile = Service::Account::Nextendo::CurrentProfile(*QtCommon::system)] {
+                void(QtConcurrent::run([client_id, profile] {
+                    void(Common::Nextendo::UpdatePresence(client_id, profile, 0));
+                }));
+            };
+        // A refresh still running would post playing after the offline one.
+        if (nextendo_social_watcher.isRunning()) {
+            connect(&nextendo_social_watcher, &QFutureWatcher<void>::finished, this, post_offline,
+                    Qt::SingleShotConnection);
+        } else {
+            post_offline();
+        }
+    }
+    SyncNextendoProfile(false);
 
     game_list->SetReportableProgramId(report_session ? report_session->program_id : 0);
 
@@ -3604,13 +3707,14 @@ void MainWindow::OnGameListShowList(bool show) {
     game_list_placeholder->setVisible(!show);
 };
 
-void MainWindow::OnGameListOpenPerGameProperties(const std::string& file) {
-    u64 title_id{};
+void MainWindow::OnGameListOpenPerGameProperties(u64 title_id, const std::string& file) {
     {
         const auto v_file = Core::GetGameFileFromPath(QtCommon::vfs, file);
-        const auto loader = Loader::GetLoader(*QtCommon::system, v_file);
+        const auto loader = Loader::GetLoader(*QtCommon::system, v_file, title_id);
 
-        if (loader == nullptr || loader->ReadProgramId(title_id) != Loader::ResultStatus::Success) {
+        u64 loaded_id{};
+        if (!loader || loader->ReadProgramId(loaded_id) != Loader::ResultStatus::Success ||
+            loaded_id != title_id) {
             QMessageBox::information(this, tr("Properties"),
                                      tr("The game properties could not be loaded."));
             return;
@@ -3621,45 +3725,50 @@ void MainWindow::OnGameListOpenPerGameProperties(const std::string& file) {
 }
 
 void MainWindow::OnLinkToRyujinx(const u64& program_id) {
-    namespace fs = std::filesystem;
+    if (emulation_running) {
+        QMessageBox::warning(this, tr("Stop emulation before linking saves"),
+                             tr("Close the running game before changing Ryujinx save links."));
+        return;
+    }
 
-    fs::path ryu_dir;
+    const auto profile = GetProfileID();
+    if (!profile) {
+        return;
+    }
 
-    // find an existing Ryujinx linked path in config.ini; if it exists, use it as a "hint"
-    // If it's not defined in config.ini, use default
-    const fs::path existing_path =
+    auto ryujinx_root =
         UISettings::values.ryujinx_link_paths
             .value(program_id, QDir(Common::FS::GetLegacyPath(Common::FS::RyujinxDir)))
             .filesystemAbsolutePath();
 
-    // this function also prompts the user to manually specify a portable location
-    ryu_dir = QtCommon::FS::GetRyujinxSavePath(existing_path, program_id);
-
-    if (ryu_dir.empty())
+    const auto save = QtCommon::FS::ChooseRyujinxSave(ryujinx_root, program_id, profile->AsU128());
+    if (!save) {
         return;
+    }
 
-    const std::string user_id = GetProfileIDString();
-    if (user_id.empty())
-        return;
+    const bool device = save->type == Common::FS::RyujinxSaveType::Device;
+    const auto type = device ? FileSys::SaveDataType::Device : FileSys::SaveDataType::Account;
+    const auto user = device ? u128{} : profile->AsU128();
+    const auto save_root = Common::FS::GetEdenPath(Common::FS::EdenPath::SaveDir);
+    const auto vfs_root = QtCommon::vfs->OpenDirectory(Common::FS::PathToUTF8String(save_root),
+                                                       FileSys::OpenMode::Read);
+    const auto lichii_dir = Common::FS::ConcatPathSafe(
+        save_root, FileSys::SaveDataFactory::GetFullPath(
+                       {}, vfs_root, FileSys::SaveDataSpaceId::User, type, program_id, user, 0));
 
-    const std::string hex_program = fmt::format("{:016X}", program_id);
-
-    const fs::path eden_dir = FrontendCommon::DataManager::GetDataDir(
-                                  FrontendCommon::DataManager::DataDir::Saves, user_id) /
-                              hex_program;
-
-    // CheckUnlink basically just checks to see if one or both are linked, and prompts the user to
-    // unlink if this is the case.
-    // If it returns false, neither dir is linked so it's fine to continue
-    if (!QtCommon::FS::CheckUnlink(eden_dir, ryu_dir)) {
-        RyujinxDialog dialog(eden_dir, ryu_dir, this);
-        if (dialog.exec() == QDialog::Accepted) {
-            UISettings::values.ryujinx_link_paths.insert(
-                program_id,
-                QString::fromStdString(Common::FS::GetRyuPathFromSavePath(ryu_dir).string()));
+    if (const auto unlinked = QtCommon::FS::CheckUnlink(lichii_dir, save->path)) {
+        if (!*unlinked) {
+            return;
         }
-    } else {
         UISettings::values.ryujinx_link_paths.remove(program_id);
+    } else {
+        RyujinxDialog dialog(lichii_dir, save->path,
+                             QString::fromStdString(fmt::format("{:016x}", save->save_id)), this);
+        if (dialog.exec() != QDialog::Accepted) {
+            return;
+        }
+        UISettings::values.ryujinx_link_paths.insert(
+            program_id, QString::fromStdU16String(ryujinx_root.u16string()));
     }
 
     config->SaveAllValues();
@@ -4044,6 +4153,40 @@ void MainWindow::OnExecuteProgram(std::size_t program_index) {
 
     LOG_DEBUG(Frontend, "ExecuteProgram booting from path: {}", filename.toStdString());
 
+    BootGame(filename, params);
+}
+
+void MainWindow::OnLaunchInNewSession(u64 program_id) {
+    // A request queued while its session stops would run inside ShutdownGame's event loop and boot
+    // under the outer shutdown, which then takes the new session's thread for a stuck one.
+    if (!emulation_running || QtCommon::system->IsShuttingDown()) {
+        LOG_WARNING(Frontend, "Dropping HOME Menu launch of {:016X}: its session is stopping",
+                    program_id);
+        return;
+    }
+    auto* const model = game_list->GetModel();
+    const auto matches =
+        model->match(model->index(0, 0), GameListItemPath::ProgramIdRole,
+                     QVariant::fromValue(qulonglong{program_id}), 1,
+                     Qt::MatchExactly | Qt::MatchRecursive);
+    QString filename;
+    if (!matches.isEmpty()) {
+        filename = matches.front().data(GameListItemPath::FullPathRole).toString();
+    } else if (const auto nca = QtCommon::system->GetContentProviderUnion().GetEntryRaw(
+                   program_id, FileSys::ContentRecordType::Program)) {
+        filename = QString::fromStdString(nca->GetFullPath());
+    }
+
+    LOG_INFO(Frontend, "HOME Menu launch of {:016X} in a new session from {}", program_id,
+             filename.toStdString());
+
+    ShutdownGame();
+    if (filename.isEmpty()) {
+        return;
+    }
+
+    auto params = ApplicationAppletParameters();
+    params.program_id = program_id;
     BootGame(filename, params);
 }
 
@@ -4435,6 +4578,14 @@ void MainWindow::OnConfigure() {
 #ifdef __unix__
     const bool old_force_x11 = UISettings::values.gui_force_x11.GetValue();
 #endif
+    const bool old_nextendo_sync = Settings::values.nextendo_sync_profile.GetValue();
+    const auto old_current_user = Settings::values.current_user.GetValue();
+    const auto nextendo_pid = [] {
+        const auto account = Common::Nextendo::LoadAccount(
+            Service::Account::Nextendo::CurrentProfile(*QtCommon::system));
+        return account ? account->pid : 0;
+    };
+    const u64 old_nextendo_pid = nextendo_pid();
 
     Settings::SetConfiguringGlobal(true);
     ConfigureDialog configure_dialog(this, hotkey_registry, input_subsystem.get(),
@@ -4510,6 +4661,11 @@ void MainWindow::OnConfigure() {
         GraphicsBackend::SetForceX11(UISettings::values.gui_force_x11.GetValue());
     }
 #endif
+    // Just ticked, or a sign-in or another user since.
+    if (!old_nextendo_sync || nextendo_pid() != old_nextendo_pid ||
+        Settings::values.current_user.GetValue() != old_current_user) {
+        SyncNextendoProfile(true);
+    }
 
     if (!multiplayer_state->IsHostingPublicRoom()) {
         multiplayer_state->UpdateCredentials();
@@ -5653,9 +5809,45 @@ void MainWindow::KeepNextendoSessionAlive() {
     if (!Common::Nextendo::OnlinePlayActive() || nextendo_session_watcher.isRunning()) {
         return;
     }
-    nextendo_session_watcher.setFuture(
-        QtConcurrent::run([client_id = Settings::values.nextendo_client_id.GetValue()] {
-            return Common::Nextendo::KeepSessionAlive(client_id);
+    // Only the profile a game plays with, or the one the next game boots with: a heartbeat for
+    // every signed-in profile would spend the request budget.
+    nextendo_session_watcher.setFuture(QtConcurrent::run(
+        [client_id = Settings::values.nextendo_client_id.GetValue(),
+         profile = Service::Account::Nextendo::CurrentProfile(*QtCommon::system)] {
+            return Common::Nextendo::KeepSessionAlive(client_id, profile);
+        }));
+}
+
+void MainWindow::UpdateNextendoSocial() {
+    if (!Common::Nextendo::OnlinePlayActive() || nextendo_social_watcher.isRunning()) {
+        return;
+    }
+    nextendo_social_watcher.setFuture(
+        QtConcurrent::run([client_id = Settings::values.nextendo_client_id.GetValue(),
+                           profile = Service::Account::Nextendo::CurrentProfile(*QtCommon::system),
+                           program_id = QtCommon::system->GetApplicationProcessProgramID()] {
+            void(Common::Nextendo::RefreshFriends(client_id, profile));
+            void(Common::Nextendo::UpdatePresence(client_id, profile, program_id));
+        }));
+}
+
+void MainWindow::SyncNextendoProfile(bool force) {
+    nextendo_profile_force |= force;
+    if (!Common::Nextendo::OnlinePlayActive() ||
+        !Settings::values.nextendo_sync_profile.GetValue() || QtCommon::system->IsPoweredOn() ||
+        nextendo_profile_watcher.isRunning()) {
+        return;
+    }
+    const auto user = QtCommon::system->GetProfileManager().GetUser(
+        static_cast<std::size_t>(Settings::values.current_user.GetValue()));
+    if (!user) {
+        return;
+    }
+    nextendo_profile_user = *user;
+    nextendo_profile_watcher.setFuture(
+        QtConcurrent::run([client_id = Settings::values.nextendo_client_id.GetValue(), user = *user,
+                           force = std::exchange(nextendo_profile_force, false)] {
+            return Common::Nextendo::PullProfile(client_id, user, force);
         }));
 }
 
@@ -5663,9 +5855,11 @@ void MainWindow::CheckNextendoOnlineStatus() {
     if (!Common::Nextendo::OnlinePlayActive() || nextendo_status_watcher.isRunning()) {
         return;
     }
+    nextendo_status_profile = Service::Account::Nextendo::CurrentProfile(*QtCommon::system);
     nextendo_status_watcher.setFuture(
-        QtConcurrent::run([client_id = Settings::values.nextendo_client_id.GetValue()] {
-            return Common::Nextendo::CheckOnlineStatus(client_id);
+        QtConcurrent::run([client_id = Settings::values.nextendo_client_id.GetValue(),
+                           profile = nextendo_status_profile] {
+            return Common::Nextendo::CheckOnlineStatus(client_id, profile);
         }));
 }
 
@@ -6447,11 +6641,19 @@ bool MainWindow::SelectRomFSDumpTarget(const FileSys::ContentProvider& installed
     using ContentInfo = std::tuple<u64, FileSys::TitleType, FileSys::ContentRecordType>;
     boost::container::flat_set<ContentInfo> available_title_ids;
 
+    std::vector<u64> add_on_content;
+    for (const auto& entry :
+         installed.ListEntriesFilter(FileSys::TitleType::AOC, FileSys::ContentRecordType::Data)) {
+        add_on_content.push_back(entry.title_id);
+    }
+    const u64 add_on_base = FileSys::GetAddOnApplicationID(program_id, add_on_content);
+
     const auto RetrieveEntries = [&](FileSys::TitleType title_type,
                                      FileSys::ContentRecordType record_type) {
+        const u64 base = title_type == FileSys::TitleType::AOC ? add_on_base : program_id;
         const auto entries = installed.ListEntriesFilter(title_type, record_type);
         for (const auto& entry : entries) {
-            if (FileSys::GetBaseTitleID(entry.title_id) == program_id &&
+            if (FileSys::GetBaseTitleID(entry.title_id) == base &&
                 installed.GetEntry(entry)->GetStatus() == Loader::ResultStatus::Success) {
                 available_title_ids.insert({entry.title_id, title_type, record_type});
             }

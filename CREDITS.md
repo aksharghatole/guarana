@@ -86,3 +86,5 @@ The libraries the emulator uses keep their own licences: see [LICENSES](LICENSES
 ## Guarana
 
 The fork's own changes are listed in [CHANGELOG.md](CHANGELOG.md) and in git history, with their authors.
+- ProfessorTee: the Ocarina of Time render scales (Lichii #903) the Max Resolution
+  built-in's fixed-scale path uses, carried into Guarana's built-in add-ons.
