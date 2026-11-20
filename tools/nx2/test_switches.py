@@ -15,8 +15,6 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 CXX = os.environ.get("CXX", "c++")
 
 
-@unittest.skipUnless(sys.platform.startswith("linux") and shutil.which(CXX),
-                     f"needs Linux and the C++ compiler {CXX!r} (set CXX)")
 class SwitchDiscovery(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -63,6 +61,8 @@ int main(int argc, char** argv) {
         command = [str(executable), name] + ([mode] if mode else [])
         return subprocess.check_output(command, env=clean, cwd=self.root, text=True)
 
+    @unittest.skipUnless(sys.platform.startswith("linux") and shutil.which(CXX),
+                         f"needs Linux and the C++ compiler {CXX!r} (set CXX)")
     def test_only_the_shipped_copy_counts_as_shipped(self):
         # A game's switch defaults replace only what the copy next to the executable alone set;
         # every other file is the player's, and so is the real environment.
@@ -161,6 +161,8 @@ int main(int argc, char** argv) {
         self.assertEqual(self.run_probe(self.bin / "lichii", APPIMAGE=str(image)), "3")
         self.assertEqual(self.run_probe(self.bin / "lichii", APPIMAGE=str(image), EDEN_NX2_PRELOAD_ALL_PIPELINES="4"), "4")
 
+    @unittest.skipUnless(sys.platform.startswith("linux") and shutil.which(CXX),
+                         f"needs Linux and the C++ compiler {CXX!r} (set CXX)")
     def test_portable_user_folder_replaces_per_user_copy(self):
         # Outside Windows the path manager looks for the portable "user" folder in the current
         # directory, and run_probe starts the probe in self.root.
@@ -180,6 +182,8 @@ int main(int argc, char** argv) {
         (outer / "nx2_switches.txt").write_text("EDEN_NX2_PRELOAD_ALL_PIPELINES=5\n")
         self.assertEqual(self.run_probe(self.bin / "lichii", APPIMAGE=str(image)), "2")
 
+    @unittest.skipUnless(sys.platform.startswith("linux") and shutil.which(CXX),
+                         f"needs Linux and the C++ compiler {CXX!r} (set CXX)")
     def test_portable_copy_is_limited_like_sidecars(self):
         portable = self.root / "user"
         portable.mkdir()
@@ -189,6 +193,8 @@ int main(int argc, char** argv) {
             with self.subTest(name=name):
                 self.assertEqual(self.run_probe(self.bin / "lichii", name), "unset")
 
+    @unittest.skipUnless(sys.platform.startswith("linux") and shutil.which(CXX),
+                         f"needs Linux and the C++ compiler {CXX!r} (set CXX)")
     def test_user_file_is_not_portable_mode(self):
         (self.root / "user").write_text("EDEN_NX2_PRELOAD_ALL_PIPELINES=2\n")
         (self.config / "nx2_switches.txt").write_text("EDEN_NX2_PRELOAD_ALL_PIPELINES=3\n")
