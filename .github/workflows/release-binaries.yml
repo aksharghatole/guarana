@@ -1133,6 +1133,8 @@ jobs:
           - **Provenance**: every file has a signed build provenance attestation; check a download with `gh attestation verify <file> --repo @REPO@`. Signatures and the other checks: [docs/SIGNING.md](@SERVER@/@REPO@/blob/HEAD/docs/SIGNING.md).
 
           No keys, firmware or games are included or provided. Dump your own from hardware you own; see LEGAL.md.
+
+          Built by the Guarana project — github.com/karimalsalah/guarana (yuzu → Eden → Eglantine → Lichii lineage, GPL-3.0-or-later).
           EOF
           } > release-notes.md
           # The Windows programs are guarana.exe and guarana-cli.exe, or lichii.exe and eden-cli.exe
