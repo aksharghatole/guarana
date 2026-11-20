@@ -2,9 +2,10 @@ name: build-check
 
 on:
   pull_request:
-          - [self-hosted, eden-unix]
-          - [windows-11-arm, windows, arm64]
-          - [windows-2025-vs2026, windows, amd64]
+  # GitHub's merge queue, once it is turned on, runs these checks on the queued merge commit
+  # (docs/LANES.md, "Merging"). The jobs below need no change for it: with no pull request
+  # number every build runs, as for a push.
+  merge_group:
   push:
     branches:
       - main
