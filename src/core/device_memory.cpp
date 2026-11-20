@@ -13,8 +13,18 @@
 #include "common/thread.h"
 #endif
 
-#include "common/logging.h"
-#include "common/memory_detect.h"
+#include "common/power_policy.h"
+
+#include <algorithm>
+#include <cstdint>
+
+#ifndef _WIN32
+#include <sys/mman.h>
+#else
+#include <synchapi.h>
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#endif
 #include "core/device_memory.h"
 #include "hle/kernel/board/nintendo/nx/k_system_control.h"
 
@@ -39,11 +49,10 @@ DeviceMemory::DeviceMemory()
 
 DeviceMemory::~DeviceMemory() = default;
 
-void DeviceMemory::StopZeroTrim() {
-#ifdef _WIN32
-    zero_trim_thread.request_stop();
-#endif
-}
+    if (Settings::IsFastmemEnabled()) {
+        return base_pointer + virtual_addr;
+    }
+    return 0;
 
 #ifdef _WIN32
 // Windows can't punch holes in the guest memory section, so pages holding only zeros (games clear

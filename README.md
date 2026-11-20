@@ -5,8 +5,8 @@
   <img alt="Guarana: Switch 2 emulation, tuned for the GPU you actually have" src="assets/readme/hero-light.svg" width="100%">
 </picture>
 
-**An open-source Nintendo Switch 2 emulator, tuned for the integrated GPU in your laptop or handheld.**<br>
-A fork of [Lichii](https://github.com/zortos293/Lichii) (the yuzu, Eden, Eglantine line), GPL-3.0-or-later. Intel Arc first, AMD handhelds next. Every number names its machine.
+**The open-source Nintendo Switch 2 emulator that runs everywhere — tuned first for the GPU you actually have.**<br>
+Intel Arc iGPUs and Radeon handhelds are the measured home ground; NVIDIA and AMD discrete cards, Windows, Linux, macOS and Android, x64 and ARM64 all run the same build. A fork of [Lichii](https://github.com/zortos293/Lichii) (the yuzu, Eden, Eglantine line), GPL-3.0-or-later. Every number names its machine.
 
 <a href="https://github.com/karimalsalah/guarana/releases/latest"><img alt="Download Guarana" src="https://img.shields.io/badge/Download-latest_release-F2851A?style=for-the-badge&labelColor=16181D"></a>
 
@@ -68,6 +68,50 @@ Guarana is tuned for integrated GPUs: **Intel Arc first, AMD handhelds next, and
 | NVIDIA and other discrete GPUs | | Not a target and not tested here; reports welcome |
 
 *Community reports* are third-party numbers from other builds and scenes. For context, a survey of other Switch 2 forks, as of 2026-11-13, found none claiming more than 26 fps in Hyrule Field on an Intel integrated GPU. Requirements, vendor notes and the device profile line: [docs/DEVICES.md](docs/DEVICES.md). Reports feed the leaderboard on the [benchmarks page](https://karimalsalah.github.io/guarana/benchmarks.html).
+
+## New in v20.6
+
+The biggest sync since the fork: **226 upstream Lichii commits** merged with every Guarana tuning
+kept, plus the fleet's own fixes. Highlights:
+
+- **Frame pacing for unlocked games.** Present ids and present waits let the host display start
+  the frames of games with an unlocked frame rate (FPS Unlock, Dynamic FPS); frame generation
+  never waits for a present frame, and pacing targets count game frames, not generated presents.
+  Guarana's fluid presenter and locked cadence compose with all of it.
+- **Ocarina of Time text speeds, built in.** 2x, 4x and Instant text as opt-in add-ons (port of
+  NotRexed/Hookshot#402), next to the patch-pack versions; the FPS Unlock built-in now flags the
+  game's frame rate as unlocked so the presenter can pace it. Cheats that write over a built-in's
+  code or state are named in the log before they surprise you.
+- **Smarter async shaders.** The pending-draw policy gains upstream's color-write-history
+  heuristic (a draw is skipped only when every target it writes was drawn in an earlier frame —
+  Mario Kart World's baked terrain, Eglantine #874) and a bounded wait budget with 10 s logging;
+  `EDEN_NX2_ASYNC_DISCARD=2` (Fritchii) and `EDEN_NX2_SKIP_REDRAWN` keep their measured behavior.
+- **Switch 2 rendering fixes.** Mesh vertex-input lending, color-feedback-loop checks, mesh
+  compute builds with guest-warp subgroup sizing, texture-cache write-back fixes, and the
+  clear-covers depth optimization (Fritchii EXP56) that stops OoT re-uploading 7.5 MiB a frame.
+- **OoT network bypass, more robust.** The tonemap copy keeps Guarana's design and gains
+  upstream's candidate detection: the latest draw of the output pass's input size stands in for
+  the tonemap when no known tonemap shader has drawn yet.
+- **Launcher.** Built-in add-ons say before the first start whether they fit the game's build;
+  launcher sessions hide the desktop window while the game plays and bring it back on stop;
+  session report cards summarize every run.
+- **Platform hardening.** Native HOME isolation, fail-closed NCA header signatures, RADV hang
+  report wait, Joy-Con 2 IR mouse support, and the ingest triage parses every current issue form.
+
+## The launcher
+
+Guarana ships a launcher, not just an emulator window:
+
+- **Launcher sessions** — start a game from the list and the desktop window steps aside; it
+  returns when the game stops, with a session report card (fps, pacing, stutters, switches).
+- **Add-ons in one place** — built-ins (Max Resolution, render scales, text speeds, FPS Unlock)
+  and patch packs with per-game enable/disable, off-by-default options, and a build-fit check
+  before the first start.
+- **One place per setting** — the mode is set once, not beside the settings page; device
+  profiles apply the measured switch set for your GPU.
+- **Stable install path and update handoff** — installs land where the updater expects them.
+
+<!-- Screenshot: assets/readme/launcher.png — capture plan in the v20.6 marketing kit. -->
 
 ## New in v20.4
 
@@ -265,7 +309,7 @@ listed apart as tools. Rebuilt daily by [`tools/ci/legacy.py`](tools/ci/legacy.p
   <a href="https://github.com/Velken"><img src="https://github.com/Velken.png?size=96" width="48" height="48" alt="Velken" title="Velken"></a>
 </p>
 
-**81 people credited for good**, 21 of them not shown here. Everyone: [CONTRIBUTORS.md](CONTRIBUTORS.md) and the [Hall of fame](https://karimalsalah.github.io/guarana/legacy.html).
+**93 people credited for good**, 33 of them not shown here. Everyone: [CONTRIBUTORS.md](CONTRIBUTORS.md) and the [Hall of fame](https://karimalsalah.github.io/guarana/legacy.html).
 
 <!-- legacy:end -->
 
@@ -273,6 +317,78 @@ listed apart as tools. Rebuilt daily by [`tools/ci/legacy.py`](tools/ci/legacy.p
 <a name="play-ocarina-of-time-on-your-pc"></a>
 
 ## Install in detail
+Visit the [Lichii game compatibility website](https://lichii.zortos.me) to find games and compare community compatibility reports.
+
+## Downloads and setup
+
+Download Lichii only from this repository's [releases page](https://github.com/zortos293/Lichii/releases). Lichii has no other download site: archives offered elsewhere, such as lichii.org, are not built by this project, and one has been reported to install malware ([#545](https://github.com/zortos293/Lichii/issues/545)).
+
+On Windows, extract the entire build archive and run **lichii.exe**. Use homebrew you have permission to run, or your own games and system files dumped from a console you own, where permitted by applicable law. Games, keys and firmware are not included. The project does not provide download sources for them. Owning a console or game does not by itself establish permission to bypass access controls or redistribute its files.
+
+### Existing saves and settings
+
+Lichii uses its own profile: `%APPDATA%\lichii` on Windows, and the `lichii` directories under `$XDG_DATA_HOME`, `$XDG_CONFIG_HOME` and `$XDG_CACHE_HOME` on Linux and macOS. Without XDG overrides, these are `~/.local/share/lichii`, `~/.config/lichii` and `~/.cache/lichii`. An existing portable `user/` directory still takes priority and is not imported or changed by the wizard.
+
+On the first non-portable GUI launch, Lichii offers to import Eden and other detected emulator profiles. Back up `%APPDATA%\eden` first on Windows, or the old data, config and cache directories on Unix, and close the source emulator. Choose **Keep Old Data** to copy without changing the source, then check your saves and relaunch. Existing destination data is retained in backup directories rather than merged. Move also retains a source backup until you remove it yourself; Link deliberately shares settings and saves. Paths outside the imported data root remain shared and unchanged. An interrupted import offers recovery on the next launch. `eden-cli`, including `--help` and `--version`, refuses to initialize configuration until you import or explicitly choose **Start fresh** in the GUI.
+
+## Compatibility and issue reports
+
+Compatibility and performance vary by game, hardware and driver. Rendering errors, stutters and crashes remain possible. Passing automated tests does not establish that a game renders correctly, and this project makes no universal frame-rate guarantee.
+
+Browse [community compatibility reports](https://lichii.zortos.me/reports) for results with each player's build and setup.
+
+Desktop reporting requires a build containing [PR #303](https://github.com/zortos293/Lichii/pull/303) and is not available in build 88. In builds that include it, play and stop a Switch 2 game, then right-click that game and choose **Submit compatibility report**. Only the latest session in the current Lichii process is eligible.
+
+Confirm the matching website catalog entry and review the editable machine, game, setup, and enabled add-on details prefilled where available. Check the public preview and give explicit consent before submitting. Nothing uploads automatically, and the native v1 reporter does not read or upload logs or files.
+
+When [reporting an issue](https://github.com/zortos293/Eglantine/issues), include:
+
+- The exact build, game version, CPU, GPU and driver version.
+- Relevant settings and steps to reproduce the problem.
+- A screenshot and the log from the affected session, after checking it for personal information.
+
+Do not upload game files, keys, firmware or private account information. Bug bundles, GPU traces, shader dumps, pipeline caches and crash dumps can also contain game data. Do not attach them to public reports; ask a maintainer for handling instructions before sharing them. Plain-text logs should be checked for sensitive information before posting.
+
+## Building and contributing
+
+See the [build guide](docs/Build.md), [user documentation](docs/user/README.md) and [coding guidelines](docs/Coding.md). Some inherited documentation and internal build target names still use upstream names. The GUI build target is `lichii`; its output is `lichii.exe` on Windows and `lichii` on other desktop platforms.
+
+Keep changes focused and distinguish code-level checks from actual gameplay testing.
+
+## Artwork
+Art created by YOB (yobslab)
+The supplied Lichii logo, icon and library artwork are in [dist/branding](dist/branding). Windows, Linux and macOS icon resources are generated from that artwork by [Generate-LichiiIcons.ps1](tools/Generate-LichiiIcons.ps1).
+
+## Support Lichii
+
+Lichii is free and stays free. If you want to help, you can donate in crypto. Donations help pay for the AI tools and build machines used to develop this open-source project faster.
+
+**Solana (SOL)**
+```text
+JepEjfyWjGjhJvHSrqj52KtLjcbbbmUh1iGqerYBF4w
+```
+
+**Ethereum (ETH)**
+```text
+0x055ABa1b80Bc35C836Ce7E9F47c2b3d6C75b5534
+```
+
+**Bitcoin (BTC)**
+```text
+bc1qcvxdpf4qvdhqp8ee4s355cjmxrzsphsdwpl8w4
+```
+
+**BNB Smart Chain (BNB)**
+```text
+0x055ABa1b80Bc35C836Ce7E9F47c2b3d6C75b5534
+```
+
+**Polygon**
+```text
+0x055ABa1b80Bc35C836Ce7E9F47c2b3d6C75b5534
+```
+
+Send each coin on its matching network. Coins sent on the wrong network can't be recovered.
 
 > [!NOTE]
 > **Guarana Setup** (since v20.1), the Windows installer and launcher, about 92 MB with WebView2 included, one click:
@@ -410,3 +526,7 @@ Guarana stands on [Lichii](https://github.com/zortos293/Lichii), [Eglantine](htt
 upstream had not merged when we took them. Everyone who contributed upstream, the authors of every pull request we carry
 included: [CREDITS.md](CREDITS.md). Everyone who contributed here: [CONTRIBUTORS.md](CONTRIBUTORS.md). Free software under
 the **GNU General Public License v3.0 or later** ([LICENSE.txt](LICENSE.txt)).
+
+Lichii inherits the work of the Eglantine, Eden, yuzu and Sudachi projects and their contributors, including Eglantine's original developer Camille LaVey. Upstream attribution and third-party license obligations continue to apply.
+
+See [LICENSE.txt](LICENSE.txt) and the source files for applicable license terms.
