@@ -56,6 +56,7 @@ namespace Service {
 
 namespace Account {
 class ProfileManager;
+enum class ProfileStorage;
 } // namespace Account
 
 namespace AM {
@@ -168,6 +169,7 @@ public:
     using CurrentBuildProcessID = std::array<u8, 0x20>;
 
     explicit System();
+    explicit System(Service::Account::ProfileStorage profile_storage);
 
     ~System();
 
@@ -257,6 +259,9 @@ public:
      * @returns True if the emulated system is powered on, otherwise false.
      */
     [[nodiscard]] bool IsPoweredOn() const;
+#ifdef HAS_HYPERVISOR
+    [[nodiscard]] bool IsHypervisorAllowedForLoad() const;
+#endif
 
     /// Prepare the core emulation for a reschedule
     void PrepareReschedule(u32 core_index);
@@ -414,6 +419,7 @@ public:
 
     [[nodiscard]] Service::Account::ProfileManager& GetProfileManager();
     [[nodiscard]] const Service::Account::ProfileManager& GetProfileManager() const;
+    [[nodiscard]] std::shared_ptr<Service::Account::ProfileManager> GetScratchProfileManager() const;
 
     [[nodiscard]] Core::Debugger& GetDebugger();
     [[nodiscard]] const Core::Debugger& GetDebugger() const;
