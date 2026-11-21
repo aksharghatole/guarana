@@ -84,6 +84,8 @@ export const api = {
   checkUpdates: (channel?: Channel) => call<UpdateInfo>("check_updates", channel ? { channel } : undefined),
   installVersion: (version: string, channel: Channel) => call<InstallResult>("install_version", { version, channel }),
   setCurrentVersion: (version: string) => call<LauncherState>("set_current_version", { version }),
+  /** Removes old installed versions, keeping the current one and the newest `keep` (default 3). */
+  pruneVersions: (keep?: number) => call<string[]>("prune_versions", keep === undefined ? undefined : { keep }),
   locateFiles: (scope: "quick" | "deep", roots?: string[]) =>
     call<Found>("locate_files", roots && roots.length ? { scope, roots } : { scope }),
   importKeys: (path: string) => call<ImportResult>("import_keys", { path }),

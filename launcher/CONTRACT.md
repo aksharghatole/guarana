@@ -22,8 +22,9 @@ Hard rules (legal and trust):
 | `list_profiles` | – | `Profile[]` (with `recommended` set from `detect_system`) |
 | `get_state` | – | `LauncherState` |
 | `check_updates` | `{ channel?: "stable" \| "nightly" }` (default: the installed version's channel) | `UpdateInfo` |
-| `install_version` | `{ version: string, channel: "stable" \| "nightly" }` | `InstallResult`; streams `install://progress` events. The version becomes current and the program folder switches to it (see "Program folder"); `path` is its own folder in `versions\` |
+| `install_version` | `{ version: string, channel: "stable" \| "nightly" }` | `InstallResult`; streams `install://progress` events. The version becomes current and the program folder switches to it (see "Program folder"); `path` is its own folder in `versions\`. The asset matches the host architecture (native `windows-arm64` on ARM64 PCs, x86_64 as the fallback); the download resumes a partial `.part` file and retries up to 3 times, and the finished file is checked against the release's SHA-256 before anything is unpacked. After a successful install, old versions are auto-pruned (see `prune_versions`) |
 | `set_current_version` | `{ version }` | `LauncherState` (rollback = set an older installed version). The program folder switches to it now, or at the next Play while Guarana or a warm-up runs (see "Program folder") |
+| `prune_versions` | `{ keep?: number }` (default 3) | `string[]` (the versions removed). Keeps the current version and the newest `keep` installed versions (the current one counts); only folders inside `versions\` are deleted, never the running `app` folder. Runs automatically after every successful install; the Updates screen also offers it as "Clean up old versions" |
 | `locate_files` | `{ scope: "quick" \| "deep", roots?: string[] }` | `Found`; streams `locate://progress`. A deep search with no `roots` covers every fixed drive |
 | `import_keys` | `{ path }` | `ImportResult` |
 | `add_game_folder` | `{ path }` | `Game[]` |
@@ -493,7 +494,18 @@ says "removed, left to the emulator on an Intel integrated GPU" when it removes 
 goes; `qt-config.ini` stays as the player left it), `gm_routing` → `EDEN_NX2_GM=11`,
 `igpu_power_policy` (experimental) → `EDEN_NX2_POWER_POLICY=igpu`, `async_shaders`, `vram_mode`.
 Also: `fluid_presenter` → `EDEN_NX2_FLUID=1` (on for `intel-arc-igpu` and `amd-igpu-handheld`;
-experimental except on `intel-arc-igpu`), `hdr_auto` → `[Renderer] hdr_mode=2, hdr_swapchain=0`
+experimental except on `intel-arc-igpu`; on an Intel integrated GPU the line is left out so the
+emulator's measured per-title set applies), `fluid_interp` → `EDEN_NX2_FLUID_INTERP` (off for
+`intel-arc-igpu`, `amd-igpu-handheld`, `low-power-handheld` and `safe-defaults`; on for
+`desktop-dgpu`). `fluid_interp` writes only while `fluid_presenter` is on: off writes the measured
+low-end set `EDEN_NX2_FLUID_INTERP=0`, `EDEN_NX2_CADENCE=3`, `EDEN_NX2_SHOWN_RATE=120` — crisp
+repeated real frames at an even 120 Hz share, because interpolated in-betweens ghost every moving
+edge at low real fps (measured on an Arc 140T at ~20 real fps); on writes `EDEN_NX2_FLUID_INTERP=1`
+and leaves the cadence to the emulator, for GPUs that sustain 60+ real fps. With
+`EDEN_NX2_EXTRAPOLATE=1` the presenter extrapolates and `FLUID_INTERP` does nothing; the set
+governs the interpolation path. The lines live inside the managed block, so every apply rewrites
+them and they survive profile switches; user edits stay outside the block as always.
+`hdr_auto` → `[Renderer] hdr_mode=2, hdr_swapchain=0`
 (on except in `safe-defaults`), `resolution` (choice `0.5x`…`2x` → `resolution_setup`) and
 `fps_cap` (choice `off`/`30`/`40`/`45`/`60` → `fps_limit`; `low-power-handheld` uses `0.75x` and
 `30`).
