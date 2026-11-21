@@ -2196,11 +2196,12 @@ void GraphicsPipeline::RecordBinding(const PreparedBinding& binding,
             }
         });
     }
-    const bool is_rescaling{texture_cache.IsRescaling()};
+    const bool is_rescaling = binding.is_rescaling;
     // A later draw's hoisted dispatch can overwrite the down factor before this draw runs.
     const bool update_rescaling{scheduler.UpdateRescaling(is_rescaling, IsMeshPipeline()) ||
                                 Scheduler::MeshBeforePassEnabled()};
-    const bool bind_pipeline{scheduler.UpdateGraphicsPipeline(this)};
+    const bool bind_pipeline = binding.bind_pipeline ? *binding.bind_pipeline
+                                                     : scheduler.UpdateGraphicsPipeline(this);
     const bool bind_descriptor_buffer{
         descriptor_set_layout && uses_descriptor_buffer &&
         scheduler.UpdateDescriptorBufferChunk(binding.descriptor_buffer_chunk)};
@@ -2224,14 +2225,13 @@ void GraphicsPipeline::RecordBinding(const PreparedBinding& binding,
             last_descriptor_payload.assign(entries, entries + num_descriptor_entries);
         }
     }
-    scheduler.Record([this, descriptor_data, bind_pipeline, update_descriptors,
-                      descriptor_buffer_offset, descriptor_buffer_chunk, bind_descriptor_buffer,
-                      rescaling_data = rescaling.Data(), is_rescaling, update_rescaling,
-                      uses_render_area = render_area.uses_render_area,
-                      render_area_data = render_area.words, mesh_set](vk::CommandBuffer cmdbuf) {
+    scheduler.Record([this, descriptor_data, bind_pipeline, update_descriptors, binding,
+                      bind_descriptor_buffer, is_rescaling, update_rescaling,
+                      uses_render_area = binding.render_area.uses_render_area,
+                      render_area_data = binding.render_area.words](vk::CommandBuffer cmdbuf) {
         if (bind_descriptor_buffer) {
             const VkDescriptorBufferBindingInfoEXT binding_info{
-                descriptor_buffer_ring.BindingInfo(descriptor_buffer_chunk)};
+                descriptor_buffer_ring.BindingInfo(binding.descriptor_buffer_chunk)};
             cmdbuf.BindDescriptorBuffersEXT(binding_info);
         }
         if (bind_pipeline) {
@@ -2250,7 +2250,8 @@ void GraphicsPipeline::RecordBinding(const PreparedBinding& binding,
         cmdbuf.PushConstants(*pipeline_layout, push_stages, RESCALING_LAYOUT_WORDS_OFFSET,
                              sizeof(rescaling_data), rescaling_data.data());
         if (update_rescaling || mesh_emulation) {
-            const f32 config_down_factor{Settings::values.resolution_info.down_factor};
+            const f32 config_down_factor{binding.down_factor ? *binding.down_factor
+                                                           : Settings::values.resolution_info.down_factor};
             const f32 scale_down_factor{is_rescaling ? config_down_factor : 1.0f};
             cmdbuf.PushConstants(*pipeline_layout, push_stages,
                                  RESCALING_LAYOUT_DOWN_FACTOR_OFFSET, sizeof(scale_down_factor),
@@ -2283,7 +2284,7 @@ void GraphicsPipeline::RecordBinding(const PreparedBinding& binding,
         }
         if (mesh_emulation) {
             // The set the emulation's dispatch committed (see above).
-            const VkDescriptorSet descriptor_set{mesh_set ? *mesh_set : mesh_descriptor_set};
+            const VkDescriptorSet descriptor_set{mesh_descriptor_set};
             if (descriptor_set) {
                 cmdbuf.BindDescriptorSets(VK_PIPELINE_BIND_POINT_GRAPHICS, *pipeline_layout, 0,
                                           descriptor_set, nullptr);
@@ -2293,7 +2294,7 @@ void GraphicsPipeline::RecordBinding(const PreparedBinding& binding,
         if (uses_descriptor_buffer) {
             const u32 buffer_index{};
             cmdbuf.SetDescriptorBufferOffsetsEXT(VK_PIPELINE_BIND_POINT_GRAPHICS, *pipeline_layout,
-                                                 0, buffer_index, descriptor_buffer_offset);
+                                                 0, buffer_index, binding.descriptor_buffer_offset);
         } else if (uses_push_descriptor) {
             cmdbuf.PushDescriptorSetWithTemplateKHR(*descriptor_update_template, *pipeline_layout,
                                                     0, descriptor_data);
