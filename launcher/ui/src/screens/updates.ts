@@ -85,7 +85,26 @@ const screen: ScreenDef = {
     const notesBody = h("div", { class: "md notes-body" }, skeleton([90, 70, 80, 55]));
     const notes = h("section", { class: "card notes", "aria-labelledby": "notes-title" }, h("header", { class: "card-head" }, h("span", { class: "card-icon" }, icon("sparkle")), h("div", { class: "card-titles" }, notesTitle)), notesBody);
     const versionsList = h("ul", { class: "versions-list" }, skeleton([80, 70, 75]));
-    const rollback = card("Installed versions", { icon: "history", kicker: "Roll back any time" }, versionsList, h("p", { class: "fine", text: "The version you pick is the one Play starts next." }));
+    const prune = button("Clean up old versions", {
+      kind: "ghost",
+      size: "sm",
+      icon: "clean",
+      onClick: (_e, btn) => {
+        void busy(btn, async () => {
+          const removed = await api.pruneVersions();
+          toast(
+            removed.length
+              ? `Removed ${removed.length} old version${removed.length === 1 ? "" : "s"}. The current one and the newest stay.`
+              : "Nothing to clean up: only recent versions are installed.",
+            { tone: "ok" },
+          );
+          announceState();
+          const state = await launcher.get(true);
+          if (!ctx.signal.aborted) renderInstalled(state);
+        }, "Cleaning…").catch((e: unknown) => toast(errorText(e), { tone: "fail" }));
+      },
+    });
+    const rollback = card("Installed versions", { icon: "history", kicker: "Roll back any time", actions: prune }, versionsList, h("p", { class: "fine", text: "The version you pick is the one Play starts next. Cleaning keeps the current version and the 2 newest others." }));
 
     const el = h(
       "div",

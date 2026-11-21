@@ -142,7 +142,8 @@ TEST_CASE("The sample GPU trace has a snapshot, submits and presents", "[video_c
 
 TEST_CASE("The sample GPU trace written without presents keeps its submits",
           "[video_core][gpu_trace]") {
-    const auto path = TempTrace("lichii-gpu-trace-sample-no-presents.lxtrace");
+    const Tests::TempDir directory{"lichii-gpu-trace-sample-no-presents"};
+    const auto path = directory / "trace.lxtrace";
     REQUIRE(WriteSampleTrace(path, false));
     {
         Reader reader{path};
@@ -163,7 +164,6 @@ TEST_CASE("The sample GPU trace written without presents keeps its submits",
         CHECK(submits == 2);
         CHECK(presents == 0);
     }
-    std::filesystem::remove(path);
 }
 
 TEST_CASE("GPU trace reader reads format 1 traces, not newer ones than its own",

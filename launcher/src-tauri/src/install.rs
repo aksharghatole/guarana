@@ -168,19 +168,55 @@ pub fn label(release: &GhRelease, channel: Channel) -> String {
     }
 }
 
+/// The host's Windows architecture, not this process's: an x64 launcher running under emulation
+/// on an ARM64 machine still wants the native ARM64 build. `PROCESSOR_ARCHITEW6432` names the
+/// real architecture when a process runs emulated; `PROCESSOR_ARCHITECTURE` names it otherwise.
+pub fn host_windows_arch() -> &'static str {
+    arch_from_env(
+        std::env::var("PROCESSOR_ARCHITECTURE").ok().as_deref(),
+        std::env::var("PROCESSOR_ARCHITEW6432").ok().as_deref(),
+    )
+}
+
+pub fn arch_from_env(architecture: Option<&str>, archite_w6432: Option<&str>) -> &'static str {
+    for v in [archite_w6432, architecture] {
+        if v.map(|s| s.eq_ignore_ascii_case("ARM64")).unwrap_or(false) {
+            return "arm64";
+        }
+    }
+    "x86_64"
+}
+
 pub fn pick_asset(release: &GhRelease) -> Option<&GhAsset> {
+    pick_asset_for(release, host_windows_arch())
+}
+
+/// The native build for `arch` first (PGO over plain). An ARM64 host falls back to the x86_64
+/// build, which Windows runs emulated, when the release has no ARM64 asset; an x86_64 host never
+/// takes an ARM64 one.
+pub fn pick_asset_for<'a>(release: &'a GhRelease, arch: &str) -> Option<&'a GhAsset> {
     let v = file_version(&release.tag_name);
     let exact = |name: String| release.assets.iter().find(move |a| a.name.eq_ignore_ascii_case(&name));
-    let suffix = |s: &'static str| {
+    let suffix = |s: String| {
         release.assets.iter().find(move |a| {
             let n = a.name.to_ascii_lowercase();
-            n.starts_with("guarana-") && n.ends_with(s)
+            n.starts_with("guarana-") && n.ends_with(&s)
         })
     };
-    exact(format!("guarana-{v}-windows-x86_64-pgo.zip"))
-        .or_else(|| exact(format!("guarana-{v}-windows-x86_64.zip")))
-        .or_else(|| suffix("-windows-x86_64-pgo.zip"))
-        .or_else(|| suffix("-windows-x86_64.zip"))
+    let mut arches = vec![arch];
+    if arch == "arm64" {
+        arches.push("x86_64");
+    }
+    for a in arches {
+        let found = exact(format!("guarana-{v}-windows-{a}-pgo.zip"))
+            .or_else(|| exact(format!("guarana-{v}-windows-{a}.zip")))
+            .or_else(|| suffix(format!("-windows-{a}-pgo.zip")))
+            .or_else(|| suffix(format!("-windows-{a}.zip")));
+        if found.is_some() {
+            return found;
+        }
+    }
+    None
 }
 
 /// (major, minor, patch, is_final, pre-release text) of `20.1.0` / `20.1.0-rc1`.
@@ -317,23 +353,52 @@ pub async fn check_updates(app: &AppHandle, channel: Option<&str>) -> CmdResult<
     })
 }
 
+/// Download to `part`, resuming a previous partial download when the server honors ranges, and
+/// retrying a broken transfer a few times before giving up. Returns the SHA-256 of the complete
+/// file, hashed by reading it back so a resumed download is verified exactly like a fresh one.
 async fn download(app: &AppHandle, client: &reqwest::Client, asset: &GhAsset, part: &Path) -> CmdResult<String> {
-    let mut resp = client
-        .get(&asset.browser_download_url)
+    const ATTEMPTS: u32 = 3;
+    let mut last_err = String::new();
+    for attempt in 1..=ATTEMPTS {
+        match download_attempt(app, client, asset, part).await {
+            Ok(()) => return sha256_file(part).ctx("Could not read back the download"),
+            Err(e) => {
+                last_err = e;
+                if attempt < ATTEMPTS {
+                    emit(app, "download", 0, 0, Some(format!("Download interrupted, retrying ({attempt}/{ATTEMPTS})")));
+                    tokio::time::sleep(Duration::from_secs(2)).await;
+                }
+            }
+        }
+    }
+    Err(format!("Download failed after {ATTEMPTS} attempts: {last_err}"))
+}
+
+async fn download_attempt(app: &AppHandle, client: &reqwest::Client, asset: &GhAsset, part: &Path) -> CmdResult<()> {
+    let existing = fs::metadata(part).map(|m| m.len()).unwrap_or(0);
+    let mut req = client.get(&asset.browser_download_url);
+    if existing > 0 {
+        req = req.header(reqwest::header::RANGE, format!("bytes={existing}-"));
+    }
+    let mut resp = req
         .send()
         .await
         .ctx("Download failed")?
         .error_for_status()
         .ctx("Download failed")?;
-    let total = resp.content_length().unwrap_or(asset.size);
-    let file = fs::File::create(part).ctx("Could not write the download")?;
+    let (start, total, append) = resume_plan(existing, resp.status(), resp.content_length(), asset.size);
+    let file = fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .append(append)
+        .truncate(!append)
+        .open(part)
+        .ctx("Could not write the download")?;
     let mut out = BufWriter::with_capacity(1 << 20, file);
-    let mut hasher = Sha256::new();
-    let mut done = 0u64;
+    let mut done = start;
     let mut last = Instant::now();
-    emit(app, "download", 0, total, Some(asset.name.clone()));
+    emit(app, "download", done, total, Some(asset.name.clone()));
     while let Some(chunk) = resp.chunk().await.ctx("Download interrupted")? {
-        hasher.update(&chunk);
         out.write_all(&chunk).ctx("Could not write the download")?;
         done += chunk.len() as u64;
         if last.elapsed() >= Duration::from_millis(200) {
@@ -347,7 +412,18 @@ async fn download(app: &AppHandle, client: &reqwest::Client, asset: &GhAsset, pa
     if total > 0 && done != total {
         return Err(format!("Download incomplete: {done} of {total} bytes"));
     }
-    Ok(hex::encode(hasher.finalize()))
+    Ok(())
+}
+
+/// `(bytes to keep, expected total, append)`. A 206 answers the range request, so the part file
+/// is kept and appended to; any other status (a server that ignores Range) starts over.
+fn resume_plan(existing: u64, status: reqwest::StatusCode, content_length: Option<u64>, asset_size: u64) -> (u64, u64, bool) {
+    if existing > 0 && status == reqwest::StatusCode::PARTIAL_CONTENT {
+        let total = content_length.map(|n| existing + n).unwrap_or(asset_size);
+        (existing, total, true)
+    } else {
+        (0, content_length.unwrap_or(asset_size), false)
+    }
 }
 
 pub async fn install_version(app: &AppHandle, version: &str, channel: &str) -> CmdResult<InstallResult> {
@@ -358,6 +434,7 @@ pub async fn install_version(app: &AppHandle, version: &str, channel: &str) -> C
     let _taskbar = taskbar::Guard::new(app, taskbar::Job::Install);
     let result = install_locked(app, version, channel, started).await;
     if let Ok(r) = &result {
+        prune_locked(app, KEEP_VERSIONS);
         notify::update_installed(app, &r.version);
     }
     result
@@ -368,9 +445,13 @@ async fn install_locked(app: &AppHandle, version: &str, channel: Channel, starte
     if let Some(b) = bundled(app) {
         if b.channel == channel && !version.trim().is_empty() && util::sanitize_component(version.trim()) == b.version {
             let app2 = app.clone();
-            return tauri::async_runtime::spawn_blocking(move || install_bundled(&app2, &b))
+            let result = tauri::async_runtime::spawn_blocking(move || install_bundled(&app2, &b))
                 .await
                 .map_err(|e| e.to_string())?;
+            if result.is_ok() {
+                prune_locked(app, KEEP_VERSIONS);
+            }
+            return result;
         }
     }
 
@@ -640,6 +721,68 @@ fn cleanup_leftovers() {
     }
 }
 
+/// How many installed versions auto-prune keeps after an install (the current one counts).
+/// Every version is a full copy of the program, so an unbounded versions folder costs gigabytes.
+pub const KEEP_VERSIONS: usize = 3;
+
+/// The versions a prune removes: everything but the current one and the `keep` newest entries
+/// (newest by install time; the current one counts toward `keep`). Pure, so it is testable.
+pub fn prune_selection(installed: &[InstalledVersion], current: Option<&str>, keep: usize) -> Vec<String> {
+    let mut sorted: Vec<&InstalledVersion> = installed.iter().collect();
+    sorted.sort_by(|a, b| b.installed_at.cmp(&a.installed_at).then(a.version.cmp(&b.version)));
+    let keep = keep.max(1);
+    let mut kept = 0usize;
+    let mut remove = Vec::new();
+    for v in sorted {
+        if current == Some(v.version.as_str()) || kept < keep {
+            kept += 1;
+            continue;
+        }
+        remove.push(v.version.clone());
+    }
+    remove
+}
+
+/// Remove old installed versions, keeping the current one and the newest `keep`. The running
+/// `app` folder is never touched: it is a copy, and the versions folder is only the store.
+/// Returns the versions removed.
+pub async fn prune_versions(app: &AppHandle, keep: usize) -> CmdResult<Vec<String>> {
+    let st = app.state::<AppState>();
+    let _guard = st.install_lock.try_lock().map_err(|_| "Another install is already running".to_string())?;
+    Ok(prune_locked(app, keep))
+}
+
+fn prune_locked(app: &AppHandle, keep: usize) -> Vec<String> {
+    let st = app.state::<AppState>();
+    let persisted = st.load();
+    let current = state::current_version(&persisted).map(|v| v.version.clone());
+    let candidates = prune_selection(&persisted.installed, current.as_deref(), keep);
+    let versions = paths::versions_dir();
+    let mut removed = Vec::new();
+    for version in candidates {
+        let Some(v) = persisted.installed.iter().find(|v| v.version == version) else { continue };
+        let dir = PathBuf::from(&v.path);
+        // Only ever delete inside versions/: a hand-edited state file must not aim this elsewhere.
+        if !dir.starts_with(&versions) {
+            removed.push(version);
+            continue;
+        }
+        match fs::remove_dir_all(&dir) {
+            Ok(()) => removed.push(version),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => removed.push(version),
+            Err(e) => log::warn!("Could not remove old version {}: {e}", dir.display()),
+        }
+    }
+    if removed.is_empty() {
+        return removed;
+    }
+    if let Err(e) = st.update(|s| s.installed.retain(|v| !removed.contains(&v.version))) {
+        log::warn!("Could not save the pruned version list: {e}");
+    }
+    log::info!("Pruned {} old version(s), keeping {keep}: {}", removed.len(), removed.join(", "));
+    removed
+}
+
 pub fn set_current(app: &AppHandle, version: &str) -> CmdResult<LauncherState> {
     let st = app.state::<AppState>();
     let persisted = st.load();
@@ -681,11 +824,71 @@ mod tests {
     #[test]
     fn picks_the_pgo_zip_first() {
         let r = release("v20.0.2", &["guarana-20.0.2-linux-x86_64.AppImage", "guarana-20.0.2-windows-x86_64.zip", "guarana-20.0.2-windows-x86_64-pgo.zip"]);
-        assert_eq!(pick_asset(&r).unwrap().name, "guarana-20.0.2-windows-x86_64-pgo.zip");
+        assert_eq!(pick_asset_for(&r, "x86_64").unwrap().name, "guarana-20.0.2-windows-x86_64-pgo.zip");
         let r = release("v20.0.2", &["guarana-20.0.2-windows-x86_64.zip"]);
-        assert_eq!(pick_asset(&r).unwrap().name, "guarana-20.0.2-windows-x86_64.zip");
+        assert_eq!(pick_asset_for(&r, "x86_64").unwrap().name, "guarana-20.0.2-windows-x86_64.zip");
         let n = release("nightly", &["guarana-nightly-windows-x86_64-pgo.zip"]);
-        assert_eq!(pick_asset(&n).unwrap().name, "guarana-nightly-windows-x86_64-pgo.zip");
+        assert_eq!(pick_asset_for(&n, "x86_64").unwrap().name, "guarana-nightly-windows-x86_64-pgo.zip");
+    }
+
+    #[test]
+    fn arm64_hosts_take_the_native_build_and_fallback() {
+        let both = release("v20.0.2", &["guarana-20.0.2-windows-x86_64-pgo.zip", "guarana-20.0.2-windows-arm64.zip"]);
+        assert_eq!(pick_asset_for(&both, "arm64").unwrap().name, "guarana-20.0.2-windows-arm64.zip");
+        // No ARM64 asset: the x86_64 build runs emulated, better than nothing.
+        let xonly = release("v20.0.2", &["guarana-20.0.2-windows-x86_64-pgo.zip"]);
+        assert_eq!(pick_asset_for(&xonly, "arm64").unwrap().name, "guarana-20.0.2-windows-x86_64-pgo.zip");
+        // An x86_64 host never takes an ARM64 asset.
+        let aonly = release("v20.0.2", &["guarana-20.0.2-windows-arm64.zip"]);
+        assert!(pick_asset_for(&aonly, "x86_64").is_none());
+        assert_eq!(pick_asset_for(&aonly, "arm64").unwrap().name, "guarana-20.0.2-windows-arm64.zip");
+    }
+
+    #[test]
+    fn host_arch_reads_the_emulation_variable_too() {
+        assert_eq!(arch_from_env(Some("AMD64"), None), "x86_64");
+        assert_eq!(arch_from_env(Some("ARM64"), None), "arm64");
+        // An x64 process emulated on ARM64: ARCHITECTURE lies, ARCHITEW6432 does not.
+        assert_eq!(arch_from_env(Some("AMD64"), Some("ARM64")), "arm64");
+        assert_eq!(arch_from_env(None, None), "x86_64");
+        assert_eq!(arch_from_env(Some("x86"), Some("AMD64")), "x86_64");
+    }
+
+    #[test]
+    fn resume_plan_keeps_a_partial_only_on_206() {
+        use reqwest::StatusCode;
+        // Fresh download: nothing on disk.
+        assert_eq!(resume_plan(0, StatusCode::OK, Some(100), 100), (0, 100, false));
+        // Honored range: keep the 40 bytes, 60 remain.
+        assert_eq!(resume_plan(40, StatusCode::PARTIAL_CONTENT, Some(60), 100), (40, 100, true));
+        // Server ignored the range: start over, do not append to the old bytes.
+        assert_eq!(resume_plan(40, StatusCode::OK, Some(100), 100), (0, 100, false));
+        // No content-length on a 206: fall back to the advertised asset size.
+        assert_eq!(resume_plan(40, StatusCode::PARTIAL_CONTENT, None, 100), (40, 100, true));
+    }
+
+    #[test]
+    fn prune_keeps_current_and_the_newest() {
+        let iv = |v: &str, at: &str| InstalledVersion {
+            version: v.into(),
+            channel: "stable".into(),
+            path: format!("C:/Guarana/versions/{v}"),
+            installed_at: at.into(),
+        };
+        let installed = vec![
+            iv("20.0.1", "2026-11-01T00:00:00Z"),
+            iv("20.0.4", "2026-11-04T00:00:00Z"),
+            iv("20.0.2", "2026-11-02T00:00:00Z"),
+            iv("20.0.3", "2026-11-03T00:00:00Z"),
+        ];
+        // Current counts toward keep: keep 3 = current + the 2 newest others.
+        assert_eq!(prune_selection(&installed, Some("20.0.4"), 3), vec!["20.0.1".to_string()]);
+        // An old current is never pruned, even when it is the oldest entry.
+        assert_eq!(prune_selection(&installed, Some("20.0.1"), 2), vec!["20.0.2".to_string()]);
+        // keep floors at 1; with nothing current set only the newest entry stays.
+        assert_eq!(prune_selection(&installed, None, 0), vec!["20.0.3".to_string(), "20.0.2".to_string(), "20.0.1".to_string()]);
+        assert!(prune_selection(&installed, Some("20.0.4"), 10).is_empty());
+        assert!(prune_selection(&[], None, 3).is_empty());
     }
 
     #[test]

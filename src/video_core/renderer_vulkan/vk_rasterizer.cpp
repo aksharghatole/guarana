@@ -319,6 +319,8 @@ void LogPrepassRefusal(const Maxwell& regs, u64 fragment_hash) {
              fragment_hash, regs.zeta_enable, regs.depth_test_enable, regs.depth_write_enabled,
              static_cast<u32>(regs.depth_test_func), regs.stencil_enable, regs.logic_op.enable,
              regs.transform_feedback_enabled, regs.zpass_pixel_count_enable, blended);
+}
+
 void RecordDirectDraw(Scheduler& scheduler, DrawParams params, std::pair<u64, u64> hashes,
                       std::source_location location = std::source_location::current()) {
     scheduler.Record([&scheduler, params, hashes](vk::CommandBuffer cmdbuf) {
