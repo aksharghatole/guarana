@@ -911,13 +911,13 @@ TEST_CASE("A nonwaiting lookup leaves the running prebuild registered until it c
         return std::make_unique<BlockingPipeline>(building, release);
     };
     ShaderJobHandle job;
-    REQUIRE(prebuild.Add(1, 0, 0, translate, &job));
+    REQUIRE(prebuild.Add(1, 0, 0, 0, translate, ShaderJobPriority::Background, {}, &job));
     building.Wait();
 
     auto lookup = std::async(std::launch::async, [&] { return prebuild.TryTakeReady(1); });
     const auto status = lookup.wait_for(2s);
     const bool still_registered =
-        status == std::future_status::ready && !prebuild.Add(1, 0, 0, translate);
+        status == std::future_status::ready && !prebuild.Add(1, 0, 0, 0, translate);
     release.Open();
     REQUIRE(status == std::future_status::ready);
     REQUIRE_FALSE(lookup.get().has_value());
