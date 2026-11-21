@@ -2248,7 +2248,7 @@ void GraphicsPipeline::RecordBinding(const PreparedBinding& binding,
                       VK_SHADER_STAGE_MESH_BIT_EXT
                 : VK_SHADER_STAGE_ALL_GRAPHICS;
         cmdbuf.PushConstants(*pipeline_layout, push_stages, RESCALING_LAYOUT_WORDS_OFFSET,
-                             sizeof(rescaling_data), rescaling_data.data());
+                             sizeof(binding.rescaling), binding.rescaling.data());
         if (update_rescaling || mesh_emulation) {
             const f32 config_down_factor{binding.down_factor ? *binding.down_factor
                                                            : Settings::values.resolution_info.down_factor};
@@ -2271,7 +2271,7 @@ void GraphicsPipeline::RecordBinding(const PreparedBinding& binding,
                     }
                     const VkDescriptorSet descriptor_set{stage_allocators[stage].Commit()};
                     dev.UpdateDescriptorSet(descriptor_set, *stage_templates[stage],
-                                            static_cast<const u8*>(descriptor_data) +
+                                            reinterpret_cast<const u8*>(descriptor_data) +
                                                 stage_descriptor_offsets[stage]);
                     cmdbuf.BindDescriptorSets(VK_PIPELINE_BIND_POINT_GRAPHICS, *pipeline_layout,
                                               static_cast<u32>(stage), descriptor_set, nullptr);
