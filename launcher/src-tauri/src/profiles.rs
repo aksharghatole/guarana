@@ -78,6 +78,10 @@ struct Defaults {
     resolution: &'static str,
     fps_cap: &'static str,
     fluid_presenter: bool,
+    /// Interpolated in-betweens (EDEN_NX2_FLUID_INTERP=1). Only for GPUs that sustain 60+ real
+    /// fps: at low real fps the prediction ghosts every moving edge. Off writes the measured
+    /// crisp set instead: FLUID_INTERP=0, CADENCE=3, SHOWN_RATE=120.
+    fluid_interp: bool,
     /// Proven on Intel Arc iGPUs only.
     fluid_experimental: bool,
     hdr_auto: bool,
@@ -105,6 +109,7 @@ const PROFILES: [ProfileDef; 5] = [
             resolution: "1x",
             fps_cap: "off",
             fluid_presenter: true,
+            fluid_interp: false,
             fluid_experimental: false,
             hdr_auto: true,
         },
@@ -123,6 +128,7 @@ const PROFILES: [ProfileDef; 5] = [
             resolution: "1x",
             fps_cap: "off",
             fluid_presenter: true,
+            fluid_interp: false,
             fluid_experimental: true,
             hdr_auto: true,
         },
@@ -141,6 +147,7 @@ const PROFILES: [ProfileDef; 5] = [
             resolution: "0.75x",
             fps_cap: "30",
             fluid_presenter: false,
+            fluid_interp: false,
             fluid_experimental: true,
             hdr_auto: true,
         },
@@ -159,6 +166,7 @@ const PROFILES: [ProfileDef; 5] = [
             resolution: "1x",
             fps_cap: "off",
             fluid_presenter: false,
+            fluid_interp: true,
             fluid_experimental: true,
             hdr_auto: true,
         },
@@ -177,6 +185,7 @@ const PROFILES: [ProfileDef; 5] = [
             resolution: "1x",
             fps_cap: "off",
             fluid_presenter: false,
+            fluid_interp: false,
             fluid_experimental: true,
             hdr_auto: false,
         },
@@ -244,6 +253,13 @@ fn toggles(d: &Defaults) -> Vec<Toggle> {
             "Shows frames on a steady vblank clock (16.7 ms apart at 60 Hz) instead of as soon as each is ready. Measured on an Arc iGPU: the fastest 5% of frame times went from about 11 ms to 16.4 ms, so motion looks even (EDEN_NX2_FLUID=1).",
             d.fluid_presenter,
             d.fluid_experimental,
+        ),
+        b(
+            "fluid_interp",
+            "Interpolated in-betweens",
+            "Draws predicted frames between the game's own. Only for GPUs that hold 60+ real fps: at low real fps the prediction ghosts every moving edge (measured on an Arc 140T at ~20 real fps). Off shows crisp repeated real frames at even 120 Hz pacing (EDEN_NX2_FLUID_INTERP=0, CADENCE=3, SHOWN_RATE=120).",
+            d.fluid_interp,
+            false,
         ),
         b(
             "hdr_auto",
@@ -424,8 +440,23 @@ fn outputs(values: &BTreeMap<String, ToggleValue>, gpus: &[Gpu]) -> Outputs {
     }
     // Intel iGPU: Ocarina's measured set is FLUID=2. A 1 in the player's file wins over it
     // and turns that set off, the same way EXTRAPOLATE=1 does (issue #119). Leave the line out.
-    if flag("fluid_presenter") && !has_intel_igpu(gpus) {
-        switches.push(("EDEN_NX2_FLUID".to_string(), "1".to_string()));
+    if flag("fluid_presenter") {
+        if !has_intel_igpu(gpus) {
+            switches.push(("EDEN_NX2_FLUID".to_string(), "1".to_string()));
+        }
+        if flag("fluid_interp") {
+            switches.push(("EDEN_NX2_FLUID_INTERP".to_string(), "1".to_string()));
+        } else {
+            // The measured low-end set (Arc 140T, ~20 real fps): interpolated in-betweens ghost
+            // every moving edge there, so show crisp repeated real frames instead, at an even
+            // 120 Hz share (CADENCE=3: 20 real x 6 shown). These lines live in the managed
+            // block, so every apply rewrites them and a profile switch cannot lose them. With
+            // EDEN_NX2_EXTRAPOLATE=1 the presenter extrapolates and FLUID_INTERP does nothing;
+            // the crisp set governs the interpolation path (docs/switches.md).
+            switches.push(("EDEN_NX2_FLUID_INTERP".to_string(), "0".to_string()));
+            switches.push(("EDEN_NX2_CADENCE".to_string(), "3".to_string()));
+            switches.push(("EDEN_NX2_SHOWN_RATE".to_string(), "120".to_string()));
+        }
     }
 
     // HdrMode: Off=0, On=1, Auto=2 (HDR only while Windows runs the display in HDR);
@@ -749,13 +780,40 @@ mod tests {
     #[test]
     fn block_switches_are_what_the_block_gets() {
         let intel = block_switches("intel-arc-igpu", &BTreeMap::new(), &[ptl()]).unwrap();
-        assert!(intel.is_empty());
+        // The crisp low-end set is the Intel iGPU default now; EXTRAPOLATE and FLUID stay out
+        // so the emulator's measured per-title set keeps governing them (issue #119).
+        assert!(intel.contains(&("EDEN_NX2_FLUID_INTERP".to_string(), "0".to_string())));
+        assert!(intel.contains(&("EDEN_NX2_CADENCE".to_string(), "3".to_string())));
+        assert!(intel.contains(&("EDEN_NX2_SHOWN_RATE".to_string(), "120".to_string())));
+        assert!(!intel.iter().any(|(k, _)| k == EXTRAPOLATE || k == "EDEN_NX2_FLUID"));
         let dgpu = block_switches("intel-arc-igpu", &BTreeMap::new(), &[rtx()]).unwrap();
         assert!(dgpu.contains(&(EXTRAPOLATE.to_string(), "1".to_string())));
         assert!(block_switches("no-such-profile", &BTreeMap::new(), &[]).is_err());
         let mut unknown = BTreeMap::new();
         unknown.insert("from_a_newer_launcher".to_string(), ToggleValue::Bool(true));
         assert!(block_switches("intel-arc-igpu", &unknown, &[]).is_err());
+    }
+
+    #[test]
+    fn crisp_pacing_is_the_igpu_default_and_interp_is_opt_in() {
+        // iGPU profiles default to crisp repeated real frames; the desktop profile interpolates.
+        for id in ["intel-arc-igpu", "amd-igpu-handheld"] {
+            let sw = block_switches(id, &BTreeMap::new(), &[ptl()]).unwrap();
+            assert!(sw.contains(&("EDEN_NX2_FLUID_INTERP".to_string(), "0".to_string())), "{id}");
+            assert!(sw.contains(&("EDEN_NX2_CADENCE".to_string(), "3".to_string())), "{id}");
+            assert!(sw.contains(&("EDEN_NX2_SHOWN_RATE".to_string(), "120".to_string())), "{id}");
+        }
+        let mut on = BTreeMap::new();
+        on.insert("fluid_presenter".to_string(), ToggleValue::Bool(true));
+        on.insert("fluid_interp".to_string(), ToggleValue::Bool(true));
+        let sw = block_switches("desktop-dgpu", &on, &[rtx()]).unwrap();
+        assert!(sw.contains(&("EDEN_NX2_FLUID_INTERP".to_string(), "1".to_string())));
+        assert!(!sw.iter().any(|(k, _)| k == "EDEN_NX2_CADENCE" || k == "EDEN_NX2_SHOWN_RATE"));
+        // With the presenter off none of the pacing lines are written.
+        let mut off = BTreeMap::new();
+        off.insert("fluid_presenter".to_string(), ToggleValue::Bool(false));
+        let sw = block_switches("intel-arc-igpu", &off, &[ptl()]).unwrap();
+        assert!(!sw.iter().any(|(k, _)| k.starts_with("EDEN_NX2_FLUID") || k == "EDEN_NX2_CADENCE" || k == "EDEN_NX2_SHOWN_RATE"));
     }
 
     #[test]

@@ -1,0 +1,1 @@
+- Install downloads resume from the bytes already on disk after an interruption and retry up to three times; the finished file is still checked against the release's SHA-256 before anything is unpacked.
