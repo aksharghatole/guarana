@@ -1199,6 +1199,7 @@ std::string GetUpdateVersionStringFromSlot(const ContentProvider* provider, u64 
 LICHII_NO_INLINE std::optional<u64> GetParentApplicationId(const ContentProvider* provider, u64 title_id) {
     return provider == nullptr ? std::nullopt : provider->GetParentApplicationId(title_id);
 }
+} // Anonymous namespace
 
 std::vector<BuiltinPatchRange> BuiltinPatchRanges() {
     const auto builtins = CurrentBuiltinPatches();
@@ -1321,8 +1322,6 @@ std::vector<BuiltinCheatOverlap> FindBuiltinCheatOverlaps(
     }
     return overlaps;
 }
-
-} // Anonymous namespace
 
 std::vector<BuiltinCheatOverlap> FindBuiltinCheatOverlaps(
     u64 title_id, std::span<const std::string_view> applied_patches,
