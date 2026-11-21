@@ -1859,6 +1859,67 @@ std::vector<u8> PatchManager::PatchNSO(const std::vector<u8>& nso, const std::st
             std::memcpy(out.data() + sizeof(Loader::NSOHeader) + record.module_offset,
                         record.bytes.data(), record.bytes.size());
         }
+        // A hook whose site is missing, duplicated, or already modified is left out. The rest of
+        // the patch still applies; the game keeps its own instruction and the cave is never
+        // reached.
+        for (const auto& hook : patch.hooks) {
+            const auto& text = header.segments[0];
+            const u64 text_end = u64{text.location} + text.size;
+            const u64 executable_end = (text_end + 0xFFF) & ~u64{0xFFF};
+            const u64 function_end =
+                (std::min<u64>)(hook.function_offset + hook.function_size, text_end);
+            size_t site = 0;
+            size_t found = 0;
+            for (u64 at = hook.function_offset;
+                 at + hook.pattern.size() <= function_end && fits(nso, at, hook.pattern.size());
+                 at += sizeof(u32)) {
+                if (std::equal(hook.pattern.begin(), hook.pattern.end(),
+                               nso.begin() + sizeof(Loader::NSOHeader) + at)) {
+                    site = at;
+                    ++found;
+                }
+            }
+            const size_t cave = sizeof(Loader::NSOHeader) + hook.cave_offset;
+            const auto untouched = [&](size_t offset, size_t size) {
+                return std::equal(nso.begin() + offset, nso.begin() + offset + size,
+                                  out.begin() + offset);
+            };
+            const char* problem = nullptr;
+            if (found != 1) {
+                problem = found == 0 ? "its instruction is not in the function"
+                                     : "its instruction is in the function more than once";
+            } else if (hook.cave_offset < text_end ||
+                       hook.cave_offset + hook.cave.size() > executable_end ||
+                       hook.cave_offset + hook.cave.size() > header.segments[1].location ||
+                       !fits(nso, hook.cave_offset, hook.cave.size()) ||
+                       !fits(out, hook.cave_offset, hook.cave.size()) ||
+                       !std::all_of(nso.begin() + cave, nso.begin() + cave + hook.cave.size(),
+                                    [](u8 byte) { return byte == 0; })) {
+                problem = "its code cave is not executable padding";
+            } else if (!fits(out, site, hook.pattern.size()) ||
+                       !untouched(cave, hook.cave.size()) ||
+                       !untouched(sizeof(Loader::NSOHeader) + site, hook.pattern.size())) {
+                problem = "a user mod already patched it";
+            }
+            if (problem != nullptr) {
+                LOG_WARNING(Loader, "    - \"{}\" leaves out its {} hook in {}+{:#x}: {}",
+                            patch.name, hook.name, name, hook.function_offset, problem);
+                continue;
+            }
+            const auto branch = [](u64 from, u64 to) {
+                const auto words = static_cast<s64>(to - from) >> 2;
+                return static_cast<u32>(0x14000000 | (words & 0x03FFFFFF));
+            };
+            const u64 back = hook.cave_offset + hook.cave.size() - sizeof(u32);
+            const u32 to_cave = branch(site, hook.cave_offset);
+            const u32 to_site = branch(back, site + sizeof(u32));
+            std::memcpy(out.data() + cave, hook.cave.data(), hook.cave.size() - sizeof(u32));
+            std::memcpy(out.data() + sizeof(Loader::NSOHeader) + back, &to_site, sizeof(u32));
+            std::memcpy(out.data() + sizeof(Loader::NSOHeader) + site, &to_cave, sizeof(u32));
+            installed_hooks.push_back({patch.name, site, hook.cave_offset, hook.cave.size()});
+            LOG_INFO(Loader, "    - \"{}\": {} hook at {}+{:#x}", patch.name, hook.name, name,
+                     site);
+        }
         note_result(patch, BuiltinPatchResult::Applied);
         LOG_INFO(Loader, "    - Applying built-in patch \"{}\" ({} records) to {}", patch.name,
                  patch.records.size(), name);
