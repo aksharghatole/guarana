@@ -129,8 +129,13 @@ object AdpfBooster {
         val listener = PowerManager.OnThermalStatusChangedListener { status ->
             onThermalStatus(status)
         }
+        try {
+            powerManager.addThermalStatusListener(context.mainExecutor, listener)
+        } catch (e: RuntimeException) {
+            Log.warning("ADPF thermal listener was not registered: ${e.message}")
+            return
+        }
         thermalListener = listener
-        powerManager.addThermalStatusListener(context.mainExecutor, listener)
         onThermalStatus(powerManager.currentThermalStatus)
     }
 
@@ -140,7 +145,11 @@ object AdpfBooster {
         thermalListener = null
         val context = appContext ?: return
         val powerManager = context.getSystemService(PowerManager::class.java) ?: return
-        powerManager.removeThermalStatusListener(listener)
+        try {
+            powerManager.removeThermalStatusListener(listener)
+        } catch (e: RuntimeException) {
+            Log.warning("ADPF thermal listener remove failed: ${e.message}")
+        }
     }
 }
 
