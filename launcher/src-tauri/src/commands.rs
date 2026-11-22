@@ -70,6 +70,11 @@ pub async fn set_current_version(app: AppHandle, version: String) -> CmdResult<L
 }
 
 #[tauri::command(rename_all = "snake_case")]
+pub async fn prune_versions(app: AppHandle, keep: Option<usize>) -> CmdResult<Vec<String>> {
+    install::prune_versions(&app, keep.unwrap_or(install::KEEP_VERSIONS)).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
 pub async fn locate_files(app: AppHandle, scope: String, roots: Option<Vec<String>>) -> CmdResult<Found> {
     let roots = roots.unwrap_or_default();
     let deep = match scope.as_str() {

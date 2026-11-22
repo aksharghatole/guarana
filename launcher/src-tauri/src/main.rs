@@ -107,6 +107,7 @@ fn main() {
             commands::check_updates,
             commands::install_version,
             commands::set_current_version,
+            commands::prune_versions,
             commands::locate_files,
             commands::import_keys,
             commands::add_game_folder,

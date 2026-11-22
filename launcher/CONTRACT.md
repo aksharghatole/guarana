@@ -22,13 +22,14 @@ Hard rules (legal and trust):
 | `list_profiles` | – | `Profile[]` (with `recommended` set from `detect_system`) |
 | `get_state` | – | `LauncherState` |
 | `check_updates` | `{ channel?: "stable" \| "nightly" }` (default: the installed version's channel) | `UpdateInfo` |
-| `install_version` | `{ version: string, channel: "stable" \| "nightly" }` | `InstallResult`; streams `install://progress` events. The version becomes current and the program folder switches to it (see "Program folder"); `path` is its own folder in `versions\` |
+| `install_version` | `{ version: string, channel: "stable" \| "nightly" }` | `InstallResult`; streams `install://progress` events. The version becomes current and the program folder switches to it (see "Program folder"); `path` is its own folder in `versions\`. The asset matches the host architecture (native `windows-arm64` on ARM64 PCs, x86_64 as the fallback); the download resumes a partial `.part` file and retries up to 3 times, and the finished file is checked against the release's SHA-256 before anything is unpacked. After a successful install, old versions are auto-pruned (see `prune_versions`) |
 | `set_current_version` | `{ version }` | `LauncherState` (rollback = set an older installed version). The program folder switches to it now, or at the next Play while Guarana or a warm-up runs (see "Program folder") |
+| `prune_versions` | `{ keep?: number }` (default 3) | `string[]` (the versions removed). Keeps the current version and the newest `keep` installed versions (the current one counts); only folders inside `versions\` are deleted, never the running `app` folder. Runs automatically after every successful install; the Updates screen also offers it as "Clean up old versions" |
 | `locate_files` | `{ scope: "quick" \| "deep", roots?: string[] }` | `Found`; streams `locate://progress`. A deep search with no `roots` covers every fixed drive |
 | `import_keys` | `{ path }` | `ImportResult` |
 | `add_game_folder` | `{ path }` | `Game[]` |
 | `list_games` | – | `Game[]` |
-| `apply_profile` | `{ profile_id, overrides?: Record<string,string\|number\|boolean> }` | `AppliedProfile`. `overrides` holds only the toggles that differ from `Toggle.default`. A manual apply sets the mode to `custom` |
+| `apply_profile` | `{ profile_id, overrides?: Record<string,string\|number\|boolean> }` | `AppliedProfile`. `overrides` holds only the toggles that differ from `Toggle.default`. A manual apply sets the mode to `custom`. Every apply (also a mode's at each start) removes the emulator settings page's mode block (`# >>> Guarana mode`) from `nx2_switches.txt` and sets the page's `[UI] guarana_mode` to `custom`, so the launcher is the one place the mode is set; `changed` says so. Custom mode's rewrite of the launcher's block at each start leaves them |
 | `run_doctor` | – | `Check[]`; streams `doctor://progress` |
 | `apply_fix` | `{ fix_id }` | `Check` |
 | `prefetch_caches` | `{ title_id }` | `{ bytes_warmed: number }` (reads shader/pipeline cache files into the OS file cache in the background) |
@@ -147,7 +148,9 @@ interface StopResult { was_running: boolean; title_id: string | null; stopped: b
 interface AskAi { service: "claude" | "chatgpt"; url: string; prompt: string; url_chars: number; }
 interface LaunchRequest { source: "file" | "link";  // Explorer, a shortcut or a second start; or guarana://
   game: Game | null;                  // checked; `container` is "other" and `title_id` may be "" for an .nca
-  error: string | null; }             // why it can't start, to show as is
+  error: string | null;               // why it can't start, to show as is
+  screen?: "updates";                 // guarana://updates: show the Updates screen instead of a game
+  channel?: "stable" | "nightly"; }   // the channel that link names
 interface Notifications { enabled: boolean; }
 
 interface BoosterLevelInfo { level: number; title: string; summary: string;
@@ -387,9 +390,14 @@ launcher.
     (`CON`, `NUL`, `COM1` …), extension `.nsp` `.xci` `.nup` or `.nca`; it must sit inside one of the
     game folders the user added, and only then is the disk read: a regular file, not a link to one.
     `%20` is a space and `+` stays a plus.
+  - `guarana://updates` (optionally `?channel=stable` or `?channel=nightly`): shows the Updates
+    screen, which checks for an update as it opens. The emulator's Help > Check for Updates opens it
+    on Windows (`src/lichii/main_window.cpp`; the releases page when the scheme is not registered).
+    It never installs anything by itself.
   - Refused: any other scheme, action or parameter, a user name, password, port or fragment, repeated
     parameters, both or neither of a title id and a path, links over 2048 characters. A link only
-    ever picks a game for `launch_game`; it never names a program, an argument or a setting.
+    ever picks a game for `launch_game` or shows the Updates screen; it never names a program, an
+    argument or a setting.
 - **The UI** takes the request with `take_launch_request` and opens the launch screen, which calls
   `launch_game` with the `path` (and `title_id` when known), the same start as a library game. It
   shows `error` instead, and does not navigate while a game starts or runs, before the first run is
@@ -493,7 +501,18 @@ says "removed, left to the emulator on an Intel integrated GPU" when it removes 
 goes; `qt-config.ini` stays as the player left it), `gm_routing` → `EDEN_NX2_GM=11`,
 `igpu_power_policy` (experimental) → `EDEN_NX2_POWER_POLICY=igpu`, `async_shaders`, `vram_mode`.
 Also: `fluid_presenter` → `EDEN_NX2_FLUID=1` (on for `intel-arc-igpu` and `amd-igpu-handheld`;
-experimental except on `intel-arc-igpu`), `hdr_auto` → `[Renderer] hdr_mode=2, hdr_swapchain=0`
+experimental except on `intel-arc-igpu`; on an Intel integrated GPU the line is left out so the
+emulator's measured per-title set applies), `fluid_interp` → `EDEN_NX2_FLUID_INTERP` (off for
+`intel-arc-igpu`, `amd-igpu-handheld`, `low-power-handheld` and `safe-defaults`; on for
+`desktop-dgpu`). `fluid_interp` writes only while `fluid_presenter` is on: off writes the measured
+low-end set `EDEN_NX2_FLUID_INTERP=0`, `EDEN_NX2_CADENCE=3`, `EDEN_NX2_SHOWN_RATE=120` — crisp
+repeated real frames at an even 120 Hz share, because interpolated in-betweens ghost every moving
+edge at low real fps (measured on an Arc 140T at ~20 real fps); on writes `EDEN_NX2_FLUID_INTERP=1`
+and leaves the cadence to the emulator, for GPUs that sustain 60+ real fps. With
+`EDEN_NX2_EXTRAPOLATE=1` the presenter extrapolates and `FLUID_INTERP` does nothing; the set
+governs the interpolation path. The lines live inside the managed block, so every apply rewrites
+them and they survive profile switches; user edits stay outside the block as always.
+`hdr_auto` → `[Renderer] hdr_mode=2, hdr_swapchain=0`
 (on except in `safe-defaults`), `resolution` (choice `0.5x`…`2x` → `resolution_setup`) and
 `fps_cap` (choice `off`/`30`/`40`/`45`/`60` → `fps_limit`; `low-power-handheld` uses `0.75x` and
 `30`).

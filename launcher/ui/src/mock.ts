@@ -145,6 +145,7 @@ interface Defaults {
   resolution: string;
   fps_cap: string;
   fluid_presenter: boolean;
+  fluid_interp: boolean;
   fluid_experimental: boolean;
   hdr_auto: boolean;
 }
@@ -154,31 +155,31 @@ const PROFILE_DEFS: { id: string; name: string; description: string; d: Defaults
     id: "intel-arc-igpu",
     name: "Intel Arc integrated",
     description: "Arc 130T/140T/140V and Meteor Lake or Panther Lake Arc graphics: asynchronous shaders, aggressive VRAM use, frame generation off (Ocarina of Time's own preset handles it).",
-    d: { frame_generation: false, ocarina_extrapolation: true, gm_routing: false, igpu_power_policy: false, async_shaders: true, vram_mode: "aggressive", resolution: "1x", fps_cap: "off", fluid_presenter: true, fluid_experimental: false, hdr_auto: true },
+    d: { frame_generation: false, ocarina_extrapolation: true, gm_routing: false, igpu_power_policy: false, async_shaders: true, vram_mode: "aggressive", resolution: "1x", fps_cap: "off", fluid_presenter: true, fluid_interp: false, fluid_experimental: false, hdr_auto: true },
   },
   {
     id: "amd-igpu-handheld",
     name: "AMD Radeon integrated",
     description: "Radeon 780M, 880M and 890M, Ryzen Z1 and Z2 handhelds: asynchronous shaders, conservative VRAM use.",
-    d: { frame_generation: false, ocarina_extrapolation: true, gm_routing: false, igpu_power_policy: false, async_shaders: true, vram_mode: "conservative", resolution: "1x", fps_cap: "off", fluid_presenter: true, fluid_experimental: true, hdr_auto: true },
+    d: { frame_generation: false, ocarina_extrapolation: true, gm_routing: false, igpu_power_policy: false, async_shaders: true, vram_mode: "conservative", resolution: "1x", fps_cap: "off", fluid_presenter: true, fluid_interp: false, fluid_experimental: true, hdr_auto: true },
   },
   {
     id: "low-power-handheld",
     name: "Low power (on battery)",
     description: "Any integrated GPU on battery: a 30 fps cap and 0.75x resolution for steadier frames and longer play.",
-    d: { frame_generation: false, ocarina_extrapolation: true, gm_routing: false, igpu_power_policy: false, async_shaders: true, vram_mode: "conservative", resolution: "0.75x", fps_cap: "30", fluid_presenter: false, fluid_experimental: true, hdr_auto: true },
+    d: { frame_generation: false, ocarina_extrapolation: true, gm_routing: false, igpu_power_policy: false, async_shaders: true, vram_mode: "conservative", resolution: "0.75x", fps_cap: "30", fluid_presenter: false, fluid_interp: false, fluid_experimental: true, hdr_auto: true },
   },
   {
     id: "desktop-dgpu",
     name: "Dedicated GPU",
     description: "A desktop or laptop graphics card with its own memory: asynchronous shaders, aggressive VRAM use.",
-    d: { frame_generation: false, ocarina_extrapolation: true, gm_routing: false, igpu_power_policy: false, async_shaders: true, vram_mode: "aggressive", resolution: "1x", fps_cap: "off", fluid_presenter: false, fluid_experimental: true, hdr_auto: true },
+    d: { frame_generation: false, ocarina_extrapolation: true, gm_routing: false, igpu_power_policy: false, async_shaders: true, vram_mode: "aggressive", resolution: "1x", fps_cap: "off", fluid_presenter: false, fluid_interp: true, fluid_experimental: true, hdr_auto: true },
   },
   {
     id: "safe-defaults",
     name: "Safe defaults",
     description: "The emulator's own defaults and no experiments: the profile to compare against when something looks wrong.",
-    d: { frame_generation: false, ocarina_extrapolation: true, gm_routing: false, igpu_power_policy: false, async_shaders: false, vram_mode: "conservative", resolution: "1x", fps_cap: "off", fluid_presenter: false, fluid_experimental: true, hdr_auto: false },
+    d: { frame_generation: false, ocarina_extrapolation: true, gm_routing: false, igpu_power_policy: false, async_shaders: false, vram_mode: "conservative", resolution: "1x", fps_cap: "off", fluid_presenter: false, fluid_interp: false, fluid_experimental: true, hdr_auto: false },
   },
 ];
 
@@ -191,6 +192,7 @@ function toggles(d: Defaults): Toggle[] {
     b("gm_routing", "Global-memory routing in every game", "Cheaper global memory access in Switch 2 shaders (EDEN_NX2_GM=11). Ocarina of Time uses it already; this turns it on for every game.", d.gm_routing),
     b("igpu_power_policy", "Give the power budget to the GPU", "While a game runs, the emulator turns processor boost off in the active power plan so an integrated GPU gets more of the shared power, and restores the plan at exit (EDEN_NX2_POWER_POLICY=igpu).", d.igpu_power_policy, true),
     b("fluid_presenter", "Even frame pacing", "Shows frames on a steady vblank clock (16.7 ms apart at 60 Hz) instead of as soon as each is ready. Measured on an Arc iGPU: the fastest 5% of frame times went from about 11 ms to 16.4 ms, so motion looks even (EDEN_NX2_FLUID=1).", d.fluid_presenter, d.fluid_experimental),
+    b("fluid_interp", "Interpolated in-betweens", "Draws predicted frames between the game's own. Only for GPUs that hold 60+ real fps: at low real fps the prediction ghosts every moving edge (measured on an Arc 140T at ~20 real fps). Off shows crisp repeated real frames at even 120 Hz pacing (EDEN_NX2_FLUID_INTERP=0, CADENCE=3, SHOWN_RATE=120).", d.fluid_interp, false),
     b("hdr_auto", "HDR when Windows HDR is on", "Uses the game's native HDR when Windows HDR is on (Win+Alt+B). Does nothing otherwise.", d.hdr_auto),
     b("async_shaders", "Asynchronous shaders", "Builds shaders in the background instead of pausing the game. Less stutter on first sight of new effects, which can be missing for a moment.", d.async_shaders),
     c("vram_mode", "Video memory use", "Aggressive keeps more textures and buffers in GPU memory: faster when there is room, more page-file use when there is not.", d.vram_mode, ["conservative", "aggressive"]),
