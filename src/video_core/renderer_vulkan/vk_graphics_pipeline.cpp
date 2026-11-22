@@ -2079,8 +2079,11 @@ bool GraphicsPipeline::ConfigureDraw(const RescalingPushConstant& rescaling,
     }
     const u64 render_pass = deferred != nullptr ? scheduler.RenderPassSerial() : 0;
     scheduler.RequestRenderpass(texture_cache.GetFramebuffer());
+    // Stage-set (GPL) draws stay on the direct path: deferring their per-stage descriptor
+    // commits crashed the Intel driver at the worker's UpdateDescriptorSet (issue #321).
     const bool can_defer = deferred != nullptr && IsBuilt() && !Failed() && !IsMeshPipeline() &&
-                           !writes_storage && scheduler.RenderPassSerial() == render_pass &&
+                           !writes_storage && !has_stage_sets &&
+                           scheduler.RenderPassSerial() == render_pass &&
                            scheduler.BoundGraphicsPipeline() == this &&
                            (!descriptor_set_layout || num_descriptor_entries != 0);
     const PreparedBinding binding{
