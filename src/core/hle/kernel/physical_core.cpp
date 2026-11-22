@@ -171,13 +171,17 @@ void PhysicalCore::RunThread(KernelCore& kernel, Kernel::KThread* thread) {
             // pending continues the JIT loop in place. The outer guest-thread loop re-enters
             // RunThread with the same thread under exactly these conditions, so this skips
             // only the scheduler round trip. A SVC that blocks or yields to another thread
-            // already switched fibers inside the call; one that terminates, suspends or
-            // migrates leaves the thread non-runnable or the core interrupted, and still
-            // returns to the scheduler. Multicore only: the single-core loop must advance
-            // CoreTiming after every return.
+            // already switched fibers inside the call; one that terminates or suspends leaves
+            // the thread non-runnable and still returns to the scheduler. The same_core gate
+            // covers a migration of the current thread inside the call: the fiber then resumes
+            // on another host core and the outer loop would re-enter via CurrentPhysicalCore(),
+            // not this core (see nx2_svc_fastpath.h). Multicore only: the single-core loop must
+            // advance CoreTiming after every return.
             if (Nx2SvcFastpath::ContinueAfterSvc(Nx2SvcFastpath::Enabled(), m_is_single_core,
                                                  IsInterrupted(),
-                                                 thread->GetState() == ThreadState::Runnable)) {
+                                                 thread->GetState() == ThreadState::Runnable,
+                                                 kernel.CurrentPhysicalCoreIndex() ==
+                                                     m_core_index)) {
                 Nx2SvcFastpath::g_continues[m_core_index].fetch_add(1, std::memory_order_relaxed);
                 continue;
             }
