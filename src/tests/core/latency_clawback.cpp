@@ -230,7 +230,7 @@ TEST_CASE("Latency clawback: unmatched presents stop the sleep", "[latency]") {
 
 TEST_CASE("Latency tracker: the pending queue drops the oldest past eight", "[latency]") {
     State state;
-    for (int index = 0; index < PendingCap + 3; ++index) {
+    for (u32 index = 0; index < PendingCap + 3; ++index) {
         const s64 submit = 1'000'000'000 + static_cast<s64>(index) * Interval;
         REQUIRE(NoteInput(state, submit - 1'000'000));
         NoteSubmit(state, submit);
