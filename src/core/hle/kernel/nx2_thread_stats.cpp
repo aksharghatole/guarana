@@ -254,7 +254,7 @@ void Report(u64 now) {
         LOG_INFO(Kernel, "Guest core {} x64 fastmem over {:.1f} s: {} handled faults, {} invalidation requests",
                  core, seconds, d[FastmemFaults], d[FastmemRecompiles]);
 #endif
-        static std::array<u64, Hardware::NUM_CPU_CORES> last_svc_continues{};
+        static std::array<u64, Core::Hardware::NUM_CPU_CORES> last_svc_continues{};
         const u64 now_svc_continues =
             Nx2SvcFastpath::g_continues[core].load(std::memory_order_relaxed);
         const u64 d_svc_continues = now_svc_continues - last_svc_continues[core];
