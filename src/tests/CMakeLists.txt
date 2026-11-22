@@ -49,6 +49,7 @@ add_executable(tests
     core/nce_readiness.cpp
     core/ldn_lan_protocol.cpp
     core/perf_stats.cpp
+    core/svc_fastpath.cpp
     lichii/performance_overlay_model.cpp
     core/game_presets.cpp
     core/game_resolver.cpp
