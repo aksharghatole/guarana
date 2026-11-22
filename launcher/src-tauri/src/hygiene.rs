@@ -1065,14 +1065,15 @@ mod tests {
         assert_eq!(found[0].status, CheckStatus::Warn);
         assert!(found[0].text.contains("EDEN_NX2_EXTRAPOLATE=1 (this launcher leaves it out)"), "{}", found[0].text);
         assert!(found[0].text.contains("issue #119"), "{}", found[0].text);
-        // What this launcher writes now (no switch lines: extrapolation and fluid stay with
-        // the emulator) is not reported.
-        let now = block(&[]);
+        // What this launcher writes now (the crisp low-end set; extrapolation and fluid stay
+        // with the emulator) is not reported.
+        let now = block(&["EDEN_NX2_FLUID_INTERP=0", "EDEN_NX2_CADENCE=3", "EDEN_NX2_SHOWN_RATE=120"]);
         assert!(switch_file(&input(&now, Some(expected.as_slice()), &gpus)).is_empty());
-        // On a PC without an Intel iGPU the launcher still writes EXTRAPOLATE=1.
+        // On a PC without an Intel iGPU the launcher still writes EXTRAPOLATE=1 and FLUID=1.
         let dgpu = [rtx()];
         let expected = profiles::block_switches("intel-arc-igpu", &BTreeMap::new(), &dgpu).unwrap();
-        assert!(switch_file(&input(&old, Some(expected.as_slice()), &dgpu)).is_empty());
+        let old_dgpu = block(&["EDEN_NX2_EXTRAPOLATE=1", "EDEN_NX2_FLUID=1", "EDEN_NX2_FLUID_INTERP=0", "EDEN_NX2_CADENCE=3", "EDEN_NX2_SHOWN_RATE=120"]);
+        assert!(switch_file(&input(&old_dgpu, Some(expected.as_slice()), &dgpu)).is_empty());
     }
 
     #[test]

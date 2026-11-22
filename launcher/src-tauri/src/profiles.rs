@@ -10,6 +10,12 @@
 //!   (`Config::ReadSettingGeneric`, `src/frontend_common/config.cpp`).
 //!
 //! Both files are backed up to `guarana-backups\` beside them before they change.
+//!
+//! One place per setting: the emulator's own Guarana settings page writes a mode block of its own
+//! at the top of `nx2_switches.txt` and `[UI] guarana_mode` in `qt-config.ini`
+//! (`src/common/guarana_modes.cpp`). When the launcher applies a mode it removes that block and
+//! sets the page's mode to Custom (which writes none), so the two never mix. Custom mode in the
+//! launcher, a hand-made profile, leaves the page's block alone.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -20,6 +26,9 @@ use crate::{paths, util};
 
 pub const BLOCK_BEGIN: &str = "# >>> Guarana launcher";
 pub const BLOCK_END: &str = "# <<< Guarana launcher";
+/// The emulator settings page's block (`BlockBegin` in `src/common/guarana_modes.cpp`).
+const PAGE_BLOCK_BEGIN: &str = "# >>> Guarana mode";
+const PAGE_BLOCK_END: &str = "# <<< Guarana mode";
 
 const EXTRAPOLATE: &str = "EDEN_NX2_EXTRAPOLATE";
 
@@ -78,6 +87,10 @@ struct Defaults {
     resolution: &'static str,
     fps_cap: &'static str,
     fluid_presenter: bool,
+    /// Interpolated in-betweens (EDEN_NX2_FLUID_INTERP=1). Only for GPUs that sustain 60+ real
+    /// fps: at low real fps the prediction ghosts every moving edge. Off writes the measured
+    /// crisp set instead: FLUID_INTERP=0, CADENCE=3, SHOWN_RATE=120.
+    fluid_interp: bool,
     /// Proven on Intel Arc iGPUs only.
     fluid_experimental: bool,
     hdr_auto: bool,
@@ -105,6 +118,7 @@ const PROFILES: [ProfileDef; 5] = [
             resolution: "1x",
             fps_cap: "off",
             fluid_presenter: true,
+            fluid_interp: false,
             fluid_experimental: false,
             hdr_auto: true,
         },
@@ -123,6 +137,7 @@ const PROFILES: [ProfileDef; 5] = [
             resolution: "1x",
             fps_cap: "off",
             fluid_presenter: true,
+            fluid_interp: false,
             fluid_experimental: true,
             hdr_auto: true,
         },
@@ -141,6 +156,7 @@ const PROFILES: [ProfileDef; 5] = [
             resolution: "0.75x",
             fps_cap: "30",
             fluid_presenter: false,
+            fluid_interp: false,
             fluid_experimental: true,
             hdr_auto: true,
         },
@@ -159,6 +175,7 @@ const PROFILES: [ProfileDef; 5] = [
             resolution: "1x",
             fps_cap: "off",
             fluid_presenter: false,
+            fluid_interp: true,
             fluid_experimental: true,
             hdr_auto: true,
         },
@@ -177,6 +194,7 @@ const PROFILES: [ProfileDef; 5] = [
             resolution: "1x",
             fps_cap: "off",
             fluid_presenter: false,
+            fluid_interp: false,
             fluid_experimental: true,
             hdr_auto: false,
         },
@@ -244,6 +262,13 @@ fn toggles(d: &Defaults) -> Vec<Toggle> {
             "Shows frames on a steady vblank clock (16.7 ms apart at 60 Hz) instead of as soon as each is ready. Measured on an Arc iGPU: the fastest 5% of frame times went from about 11 ms to 16.4 ms, so motion looks even (EDEN_NX2_FLUID=1).",
             d.fluid_presenter,
             d.fluid_experimental,
+        ),
+        b(
+            "fluid_interp",
+            "Interpolated in-betweens",
+            "Draws predicted frames between the game's own. Only for GPUs that hold 60+ real fps: at low real fps the prediction ghosts every moving edge (measured on an Arc 140T at ~20 real fps). Off shows crisp repeated real frames at even 120 Hz pacing (EDEN_NX2_FLUID_INTERP=0, CADENCE=3, SHOWN_RATE=120).",
+            d.fluid_interp,
+            false,
         ),
         b(
             "hdr_auto",
@@ -424,8 +449,23 @@ fn outputs(values: &BTreeMap<String, ToggleValue>, gpus: &[Gpu]) -> Outputs {
     }
     // Intel iGPU: Ocarina's measured set is FLUID=2. A 1 in the player's file wins over it
     // and turns that set off, the same way EXTRAPOLATE=1 does (issue #119). Leave the line out.
-    if flag("fluid_presenter") && !has_intel_igpu(gpus) {
-        switches.push(("EDEN_NX2_FLUID".to_string(), "1".to_string()));
+    if flag("fluid_presenter") {
+        if !has_intel_igpu(gpus) {
+            switches.push(("EDEN_NX2_FLUID".to_string(), "1".to_string()));
+        }
+        if flag("fluid_interp") {
+            switches.push(("EDEN_NX2_FLUID_INTERP".to_string(), "1".to_string()));
+        } else {
+            // The measured low-end set (Arc 140T, ~20 real fps): interpolated in-betweens ghost
+            // every moving edge there, so show crisp repeated real frames instead, at an even
+            // 120 Hz share (CADENCE=3: 20 real x 6 shown). These lines live in the managed
+            // block, so every apply rewrites them and a profile switch cannot lose them. With
+            // EDEN_NX2_EXTRAPOLATE=1 the presenter extrapolates and FLUID_INTERP does nothing;
+            // the crisp set governs the interpolation path (docs/switches.md).
+            switches.push(("EDEN_NX2_FLUID_INTERP".to_string(), "0".to_string()));
+            switches.push(("EDEN_NX2_CADENCE".to_string(), "3".to_string()));
+            switches.push(("EDEN_NX2_SHOWN_RATE".to_string(), "120".to_string()));
+        }
     }
 
     // HdrMode: Off=0, On=1, Auto=2 (HDR only while Windows runs the display in HDR);
@@ -523,6 +563,22 @@ pub fn replace_block(original: &str, block: &[String]) -> String {
     out
 }
 
+/// `text` without the settings page's mode block and the blank line the page puts after it, or
+/// `None` when it has no whole block. Every other line stays as it was, line endings included.
+fn without_page_block(text: &str) -> Option<String> {
+    let lines: Vec<&str> = text.split('\n').collect();
+    let begin = lines.iter().position(|l| l.trim_start().starts_with(PAGE_BLOCK_BEGIN))?;
+    let end = begin + 1 + lines[begin + 1..].iter().position(|l| l.trim_start().starts_with(PAGE_BLOCK_END))?;
+    let mut stop = end + 1;
+    // The last element is what follows the final newline: never take it as the blank line.
+    if stop + 1 < lines.len() && lines[stop].trim().is_empty() {
+        stop += 1;
+    }
+    let mut kept = lines[..begin].to_vec();
+    kept.extend_from_slice(&lines[stop..]);
+    Some(kept.join("\n"))
+}
+
 /// `NAME=VALUE` pairs currently inside the managed block.
 fn block_values(text: &str) -> BTreeMap<String, String> {
     let mut inside = false;
@@ -558,17 +614,23 @@ fn profile_values(def: &ProfileDef, overrides: &BTreeMap<String, ToggleValue>) -
 
 /// `old_text` (the player's `nx2_switches.txt`, empty when there is none) with the launcher's block
 /// replaced by these switches, and what changed in the block. Equal text means nothing to write.
-fn rewrite_block(old_text: &str, profile_id: &str, switches: &[(String, String)]) -> (String, Vec<String>) {
+/// `drop_page` also removes the settings page's mode block: the launcher's mode decides.
+fn rewrite_block(old_text: &str, profile_id: &str, switches: &[(String, String)], drop_page: bool) -> (String, Vec<String>) {
     let mut block = vec![format!("{BLOCK_BEGIN} (profile {profile_id}; this block is rewritten by the launcher, edit lines outside it)")];
     block.extend(switches.iter().map(|(k, v)| format!("{k}={v}")));
     block.push(BLOCK_END.to_string());
-    let base = if old_text.is_empty() {
+    let without_page = if drop_page { without_page_block(old_text) } else { None };
+    let source = without_page.as_deref().unwrap_or(old_text);
+    let base = if source.is_empty() {
         "# Your own switches for Guarana (NAME=VALUE, one per line). Lines outside the launcher's\r\n# block are yours: the launcher never changes them.\r\n"
     } else {
-        old_text
+        source
     };
     let new_text = replace_block(base, &block);
     let mut changed = Vec::new();
+    if without_page.is_some() {
+        changed.push("nx2_switches.txt: the settings page's mode block removed, the launcher's mode decides".to_string());
+    }
     if new_text != old_text {
         let before = block_values(old_text);
         for (k, v) in switches {
@@ -591,10 +653,10 @@ fn rewrite_block(old_text: &str, profile_id: &str, switches: &[(String, String)]
 
 /// Writes the launcher's block into the player's `nx2_switches.txt` when it differs (backing the
 /// file up first). Returns the file's path and what changed.
-fn write_block(profile_id: &str, switches: &[(String, String)]) -> util::CmdResult<(std::path::PathBuf, Vec<String>)> {
+fn write_block(profile_id: &str, switches: &[(String, String)], drop_page: bool) -> util::CmdResult<(std::path::PathBuf, Vec<String>)> {
     let switches_path = paths::user_switches();
     let old_text = fs::read(&switches_path).map(|b| String::from_utf8_lossy(&b).into_owned()).unwrap_or_default();
-    let (new_text, changed) = rewrite_block(&old_text, profile_id, switches);
+    let (new_text, changed) = rewrite_block(&old_text, profile_id, switches, drop_page);
     if new_text != old_text {
         util::backup_file(&switches_path).map_err(|e| format!("Could not back up nx2_switches.txt: {e}"))?;
         util::write_atomic(&switches_path, new_text.as_bytes())
@@ -615,7 +677,7 @@ fn write_block(profile_id: &str, switches: &[(String, String)]) -> util::CmdResu
 pub fn write_switches(profile_id: &str, overrides: &BTreeMap<String, ToggleValue>, sys: &SystemInfo) -> util::CmdResult<Vec<String>> {
     let def = find(profile_id).ok_or_else(|| format!("Unknown profile {profile_id}"))?;
     let out = outputs(&profile_values(def, overrides)?, &sys.gpus);
-    write_block(profile_id, &out.switches).map(|(_, changed)| changed)
+    write_block(profile_id, &out.switches, false).map(|(_, changed)| changed)
 }
 
 /// `sys` gives the machine's GPUs (`extrapolate_switch`).
@@ -628,7 +690,7 @@ pub fn apply(profile_id: &str, overrides: &BTreeMap<String, ToggleValue>, sys: &
         return Err("Shaders are being prepared, and that saves the settings when it ends: apply the profile once it finishes.".into());
     }
     let out = outputs(&profile_values(def, overrides)?, &sys.gpus);
-    let (switches_path, mut changed) = write_block(profile_id, &out.switches)?;
+    let (switches_path, mut changed) = write_block(profile_id, &out.switches, true)?;
 
     // qt-config.ini
     let config_path = paths::qt_config();
@@ -656,6 +718,12 @@ pub fn apply(profile_id: &str, overrides: &BTreeMap<String, ToggleValue>, sys: &
             changed.push(format!("qt-config.ini [Renderer] {}: {} -> {}", w.key, was, w.value));
         }
     }
+    // The settings page shows Custom, which writes no block, now that the launcher's mode decides.
+    if let Some(page_mode) = page_mode_to_reset(&doc) {
+        doc.set("UI", "guarana_mode\\default", "true");
+        doc.set("UI", "guarana_mode", "custom");
+        changed.push(format!("qt-config.ini [UI] guarana_mode: {page_mode} -> custom, the launcher's mode decides"));
+    }
     let new_ini = doc.render();
     if new_ini != old_ini {
         util::backup_file(&config_path).map_err(|e| format!("Could not back up qt-config.ini: {e}"))?;
@@ -670,6 +738,16 @@ pub fn apply(profile_id: &str, overrides: &BTreeMap<String, ToggleValue>, sys: &
         config_path: config_path.to_string_lossy().into_owned(),
         changed,
     })
+}
+
+/// The settings page's own mode in `qt-config.ini` when it is set to one other than Custom
+/// (`guarana_mode` in `src/qt_common/config/uisettings.h`; with `\default=true` the page uses
+/// Custom, its default).
+fn page_mode_to_reset(doc: &IniDoc) -> Option<String> {
+    if doc.get("UI", "guarana_mode\\default").as_deref() != Some("false") {
+        return None;
+    }
+    doc.get("UI", "guarana_mode").filter(|m| !m.trim().is_empty() && m.trim() != "custom")
 }
 
 pub fn is_known(id: &str) -> bool {
@@ -749,13 +827,40 @@ mod tests {
     #[test]
     fn block_switches_are_what_the_block_gets() {
         let intel = block_switches("intel-arc-igpu", &BTreeMap::new(), &[ptl()]).unwrap();
-        assert!(intel.is_empty());
+        // The crisp low-end set is the Intel iGPU default now; EXTRAPOLATE and FLUID stay out
+        // so the emulator's measured per-title set keeps governing them (issue #119).
+        assert!(intel.contains(&("EDEN_NX2_FLUID_INTERP".to_string(), "0".to_string())));
+        assert!(intel.contains(&("EDEN_NX2_CADENCE".to_string(), "3".to_string())));
+        assert!(intel.contains(&("EDEN_NX2_SHOWN_RATE".to_string(), "120".to_string())));
+        assert!(!intel.iter().any(|(k, _)| k == EXTRAPOLATE || k == "EDEN_NX2_FLUID"));
         let dgpu = block_switches("intel-arc-igpu", &BTreeMap::new(), &[rtx()]).unwrap();
         assert!(dgpu.contains(&(EXTRAPOLATE.to_string(), "1".to_string())));
         assert!(block_switches("no-such-profile", &BTreeMap::new(), &[]).is_err());
         let mut unknown = BTreeMap::new();
         unknown.insert("from_a_newer_launcher".to_string(), ToggleValue::Bool(true));
         assert!(block_switches("intel-arc-igpu", &unknown, &[]).is_err());
+    }
+
+    #[test]
+    fn crisp_pacing_is_the_igpu_default_and_interp_is_opt_in() {
+        // iGPU profiles default to crisp repeated real frames; the desktop profile interpolates.
+        for id in ["intel-arc-igpu", "amd-igpu-handheld"] {
+            let sw = block_switches(id, &BTreeMap::new(), &[ptl()]).unwrap();
+            assert!(sw.contains(&("EDEN_NX2_FLUID_INTERP".to_string(), "0".to_string())), "{id}");
+            assert!(sw.contains(&("EDEN_NX2_CADENCE".to_string(), "3".to_string())), "{id}");
+            assert!(sw.contains(&("EDEN_NX2_SHOWN_RATE".to_string(), "120".to_string())), "{id}");
+        }
+        let mut on = BTreeMap::new();
+        on.insert("fluid_presenter".to_string(), ToggleValue::Bool(true));
+        on.insert("fluid_interp".to_string(), ToggleValue::Bool(true));
+        let sw = block_switches("desktop-dgpu", &on, &[rtx()]).unwrap();
+        assert!(sw.contains(&("EDEN_NX2_FLUID_INTERP".to_string(), "1".to_string())));
+        assert!(!sw.iter().any(|(k, _)| k == "EDEN_NX2_CADENCE" || k == "EDEN_NX2_SHOWN_RATE"));
+        // With the presenter off none of the pacing lines are written.
+        let mut off = BTreeMap::new();
+        off.insert("fluid_presenter".to_string(), ToggleValue::Bool(false));
+        let sw = block_switches("intel-arc-igpu", &off, &[ptl()]).unwrap();
+        assert!(!sw.iter().any(|(k, _)| k.starts_with("EDEN_NX2_FLUID") || k == "EDEN_NX2_CADENCE" || k == "EDEN_NX2_SHOWN_RATE"));
     }
 
     #[test]
@@ -846,6 +951,51 @@ mod tests {
     }
 
     #[test]
+    fn the_settings_pages_block_goes_when_the_launcher_decides() {
+        // What the emulator's settings page writes: its block at the top, LF endings, a blank line
+        // after it. The page's EXTRAPOLATE=1 is the line issue #119 keeps off an Intel iGPU.
+        let old = "# >>> Guarana mode (written by the Guarana settings page)\nEDEN_NX2_FLUID=2\nEDEN_NX2_EXTRAPOLATE=1\n# <<< Guarana mode\n\n# mine\r\nEDEN_NX2_SPLIT=2\r\n";
+        let switches = vec![("EDEN_NX2_GM".to_string(), "11".to_string())];
+        let (new_text, changed) = rewrite_block(old, "intel-arc-igpu", &switches, true);
+        assert!(!new_text.contains("Guarana mode"), "{new_text}");
+        assert!(!new_text.contains("EDEN_NX2_FLUID=2") && !new_text.contains("EDEN_NX2_EXTRAPOLATE"), "{new_text}");
+        assert!(new_text.starts_with("# mine\r\nEDEN_NX2_SPLIT=2\r\n"), "{new_text}");
+        assert!(block_values(&new_text).get("EDEN_NX2_GM").map(String::as_str) == Some("11"), "{new_text}");
+        assert_eq!(changed[0], "nx2_switches.txt: the settings page's mode block removed, the launcher's mode decides");
+        // A hand-made profile (Custom in the launcher) leaves it.
+        let (kept, _) = rewrite_block(old, "intel-arc-igpu", &switches, false);
+        assert!(kept.starts_with("# >>> Guarana mode"), "{kept}");
+        // The next start finds nothing more to do.
+        let (again, changed_again) = rewrite_block(&new_text, "intel-arc-igpu", &switches, true);
+        assert_eq!(again, new_text);
+        assert!(changed_again.is_empty(), "{changed_again:?}");
+    }
+
+    #[test]
+    fn only_a_whole_page_block_is_removed() {
+        assert_eq!(without_page_block("# >>> Guarana mode (x)\nA=1\n# <<< Guarana mode\n").as_deref(), Some(""));
+        assert_eq!(without_page_block("# >>> Guarana mode (x)\nA=1\nB=2\n"), None, "no end marker: nothing goes");
+        assert_eq!(without_page_block("A=1\n"), None);
+        assert_eq!(
+            without_page_block("X=1\r\n# >>> Guarana mode\r\nA=1\r\n# <<< Guarana mode\r\nY=2\r\n").as_deref(),
+            Some("X=1\r\nY=2\r\n")
+        );
+    }
+
+    #[test]
+    fn the_pages_own_mode_is_set_back_to_custom() {
+        let doc = IniDoc::parse("[UI]\r\nguarana_mode\\default=false\r\nguarana_mode=smooth\r\n");
+        assert_eq!(page_mode_to_reset(&doc).as_deref(), Some("smooth"));
+        for unchanged in [
+            "[UI]\r\nguarana_mode\\default=false\r\nguarana_mode=custom\r\n",
+            "[UI]\r\nguarana_mode\\default=true\r\nguarana_mode=battery\r\n",
+            "[Renderer]\r\nfps_limit=60\r\n",
+        ] {
+            assert_eq!(page_mode_to_reset(&IniDoc::parse(unchanged)), None, "{unchanged}");
+        }
+    }
+
+    #[test]
     fn an_old_block_with_extrapolate_is_rewritten_without_it() {
         // What an older launcher wrote (or this one at 60 Hz before the rule stopped reading the
         // rate): the line that defeats the emulator's 144 Hz set. Custom mode rewrites the block
@@ -854,7 +1004,7 @@ mod tests {
         let mut values = defaults_of("low-power-handheld").unwrap();
         values.insert("ocarina_extrapolation".to_string(), ToggleValue::Bool(true));
         let out = outputs(&values, &[ptl()]);
-        let (new_text, changed) = rewrite_block(old, "low-power-handheld", &out.switches);
+        let (new_text, changed) = rewrite_block(old, "low-power-handheld", &out.switches, false);
         assert!(!block_values(&new_text).contains_key(EXTRAPOLATE), "{new_text}");
         assert!(!new_text.contains("EDEN_NX2_EXTRAPOLATE"), "{new_text}");
         // The player's own lines stay where they were.
@@ -865,12 +1015,12 @@ mod tests {
             "{changed:?}"
         );
         // The next start finds nothing to write.
-        let (again, changed_again) = rewrite_block(&new_text, "low-power-handheld", &out.switches);
+        let (again, changed_again) = rewrite_block(&new_text, "low-power-handheld", &out.switches, false);
         assert_eq!(again, new_text);
         assert!(changed_again.is_empty(), "{changed_again:?}");
         // Without an Intel iGPU the same block keeps its 1 and nothing changes.
         let other = outputs(&values, &[rtx()]);
-        let (kept, kept_changed) = rewrite_block(old, "low-power-handheld", &other.switches);
+        let (kept, kept_changed) = rewrite_block(old, "low-power-handheld", &other.switches, false);
         assert_eq!(block_values(&kept).get(EXTRAPOLATE).map(String::as_str), Some("1"));
         assert!(kept_changed.iter().all(|c| !c.contains("EXTRAPOLATE")), "{kept_changed:?}");
     }

@@ -30,6 +30,14 @@ namespace Common::FS {
 std::filesystem::path GetDataDirectory(const std::string&) {
     return std::getenv("XDG_CONFIG_HOME");
 }
+#ifdef __APPLE__
+// The Apple branch of GetSwitchPortableDirectory in nx2_switches.h calls this;
+// the probe only exercises switch loading, so a harmless stub keeps the probe
+// free of path_util.cpp and the CoreFoundation framework.
+std::filesystem::path GetBundleDirectory() {
+    return std::filesystem::path("/tmp");
+}
+#endif
 }
 int main(int argc, char** argv) {
     LoadNx2Switches(argv[0]);
