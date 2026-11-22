@@ -309,7 +309,7 @@ listed apart as tools. Rebuilt daily by [`tools/ci/legacy.py`](tools/ci/legacy.p
   <a href="https://github.com/thatrandomalt"><img src="https://github.com/thatrandomalt.png?size=96" width="48" height="48" alt="thatrandomalt" title="thatrandomalt"></a>
 </p>
 
-**104 people credited for good**, 44 of them not shown here. Everyone: [CONTRIBUTORS.md](CONTRIBUTORS.md) and the [Hall of fame](https://karimalsalah.github.io/guarana/legacy.html).
+**105 people credited for good**, 45 of them not shown here. Everyone: [CONTRIBUTORS.md](CONTRIBUTORS.md) and the [Hall of fame](https://karimalsalah.github.io/guarana/legacy.html).
 
 <!-- legacy:end -->
 
