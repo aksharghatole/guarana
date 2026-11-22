@@ -2079,8 +2079,11 @@ bool GraphicsPipeline::ConfigureDraw(const RescalingPushConstant& rescaling,
     }
     const u64 render_pass = deferred != nullptr ? scheduler.RenderPassSerial() : 0;
     scheduler.RequestRenderpass(texture_cache.GetFramebuffer());
+    // Stage-set (GPL) draws stay on the direct path: deferring their per-stage descriptor
+    // commits crashed the Intel driver at the worker's UpdateDescriptorSet (issue #321).
     const bool can_defer = deferred != nullptr && IsBuilt() && !Failed() && !IsMeshPipeline() &&
-                           !writes_storage && scheduler.RenderPassSerial() == render_pass &&
+                           !writes_storage && !has_stage_sets &&
+                           scheduler.RenderPassSerial() == render_pass &&
                            scheduler.BoundGraphicsPipeline() == this &&
                            (!descriptor_set_layout || num_descriptor_entries != 0);
     const PreparedBinding binding{
@@ -2094,7 +2097,10 @@ bool GraphicsPipeline::ConfigureDraw(const RescalingPushConstant& rescaling,
         deferred->emplace(binding);
         (*deferred)->bind_pipeline = scheduler.UpdateGraphicsPipeline(this);
         (*deferred)->down_factor = Settings::values.resolution_info.down_factor;
-        if (descriptor_set_layout && !uses_descriptor_buffer && num_descriptor_entries != 0) {
+        if (((descriptor_set_layout && !uses_descriptor_buffer) || has_stage_sets) &&
+            num_descriptor_entries != 0) {
+            // Stage-set pipelines (GPL, one set per stage) read the same entries at their
+            // stage offsets; without the snapshot RecordBinding's dedup compares null.
             (*deferred)->descriptors = std::make_shared<const std::vector<DescriptorUpdateEntry>>(
                 descriptor_data, descriptor_data + num_descriptor_entries);
         }
@@ -2218,10 +2224,11 @@ void GraphicsPipeline::RecordBinding(const PreparedBinding& binding,
         has_stage_sets) {
         const auto* const entries = static_cast<const DescriptorUpdateEntry*>(descriptor_data);
         update_descriptors =
-            bind_pipeline || last_descriptor_payload.size() != num_descriptor_entries ||
+            bind_pipeline || entries == nullptr ||
+            last_descriptor_payload.size() != num_descriptor_entries ||
             std::memcmp(last_descriptor_payload.data(), entries,
                         num_descriptor_entries * sizeof(DescriptorUpdateEntry)) != 0;
-        if (update_descriptors) {
+        if (update_descriptors && entries != nullptr) {
             last_descriptor_payload.assign(entries, entries + num_descriptor_entries);
         }
     }
